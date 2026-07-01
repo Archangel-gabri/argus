@@ -5,7 +5,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
-import { X, TerminalSquare } from 'lucide-react'
+import { X, TerminalSquare, ShieldAlert } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 
@@ -33,9 +33,12 @@ export function TerminalPanel(): React.JSX.Element | null {
   const hostRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<SearchAddon | null>(null)
   const [status, setStatus] = useState<Status>('connecting')
+  const [errMsg, setErrMsg] = useState<string | null>(null)
+  const [retry, setRetry] = useState(0)
 
   useEffect(() => {
     if (!target || !hostRef.current) return
+    setErrMsg(null)
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: 13,
@@ -76,6 +79,7 @@ export function TerminalPanel(): React.JSX.Element | null {
         if (disposed) return
         if (!r.ok || !r.sessionId) {
           setStatus('error')
+          setErrMsg(r.error ?? 'Failed to connect')
           term.writeln(`\x1b[31m✖ ${r.error ?? 'Failed to connect'}\x1b[0m`)
           return
         }
@@ -114,10 +118,19 @@ export function TerminalPanel(): React.JSX.Element | null {
       if (sessionId && api) api.ssh.close(sessionId)
       term.dispose()
     }
-  }, [target])
+  }, [target, retry])
+
+  const trustNewKey = async (): Promise<void> => {
+    if (!target || !api) return
+    await api.ssh.forgetHostKey(target.ip, target.port)
+    setErrMsg(null)
+    setStatus('connecting')
+    setRetry((n) => n + 1)
+  }
 
   if (!target) return null
   const pill = PILL[status]
+  const hostKeyChanged = /host key changed/i.test(errMsg ?? '')
 
   return (
     <div
@@ -157,6 +170,20 @@ export function TerminalPanel(): React.JSX.Element | null {
             </button>
           </div>
         </div>
+        {hostKeyChanged && (
+          <div className="flex items-center gap-3 border-b border-rose-500/30 bg-rose-500/10 px-4 py-2.5">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-rose-400" />
+            <span className="min-w-0 flex-1 text-xs text-rose-200">
+              Ключ хоста изменился — возможен MITM. Доверяйте только если сервер переустанавливали/меняли ключ.
+            </span>
+            <button
+              onClick={() => void trustNewKey()}
+              className="shrink-0 rounded-md bg-rose-500/20 px-2.5 py-1 text-xs font-medium text-rose-100 ring-1 ring-rose-500/40 hover:bg-rose-500/30"
+            >
+              Доверять новому ключу и переподключиться
+            </button>
+          </div>
+        )}
         <div ref={hostRef} className="min-h-0 flex-1 overflow-hidden p-2" />
       </div>
     </div>

@@ -111,12 +111,19 @@ export function registerIpc(): void {
       host: asString(o.host),
       port: Number(o.port) || 22,
       user: asString(o.user),
-      password: asString(o.password)
+      password: asString(o.password),
+      privateKey: asString(o.privateKey) || undefined,
+      passphrase: asString(o.passphrase) || undefined
     })
   })
   ipcMain.handle('ssh:exec', (_e, deviceId: unknown, command: unknown) =>
     ssh.execOnce(asString(deviceId), asString(command))
   )
+  // TOFU recovery: forget a pinned host key so the next connect re-pins it ("trust new key").
+  ipcMain.handle('ssh:forgetHostKey', (_e, host: unknown, port: unknown) => {
+    if (vault.isUnlocked()) vault.forgetHostKey(asString(host), Number(port) || 22)
+    return { ok: true }
+  })
 
   // Snippets (saved commands) — stored in the encrypted vault
   ipcMain.handle('snippets:list', () => (vault.isUnlocked() ? vault.listSnippets() : []))

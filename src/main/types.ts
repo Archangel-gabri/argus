@@ -74,6 +74,10 @@ export interface DeviceInput {
   consoleUrl?: string
   authType?: AuthType
   password?: string | null
+  /** PEM/OpenSSH private key to STORE (encrypted). Never read back to the renderer. */
+  privateKey?: string | null
+  /** Passphrase protecting the private key, if any. Stored encrypted alongside it. */
+  passphrase?: string | null
   notes?: string | null
   jumpId?: string | null
 }

@@ -24,9 +24,17 @@ const api = {
       ipcRenderer.send('ssh:resize', sessionId, cols, rows),
     close: (sessionId: string) => ipcRenderer.send('ssh:close', sessionId),
     probe: (deviceId: string) => ipcRenderer.invoke('ssh:probe', deviceId),
-    probeHost: (opts: { host: string; port: number; user: string; password: string }) =>
-      ipcRenderer.invoke('ssh:probeHost', opts),
+    probeHost: (opts: {
+      host: string
+      port: number
+      user: string
+      password: string
+      privateKey?: string
+      passphrase?: string
+    }) => ipcRenderer.invoke('ssh:probeHost', opts),
     exec: (deviceId: string, command: string) => ipcRenderer.invoke('ssh:exec', deviceId, command),
+    forgetHostKey: (host: string, port: number) =>
+      ipcRenderer.invoke('ssh:forgetHostKey', host, port),
     onData: (cb: (p: { sessionId: string; data: string }) => void) => {
       const h = (_e: IpcRendererEvent, p: { sessionId: string; data: string }): void => cb(p)
       ipcRenderer.on('ssh:data', h)

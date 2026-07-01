@@ -48,7 +48,14 @@ export interface NexusApi {
     close: (sessionId: string) => void
     probe: (deviceId: string) => Promise<ProbeResult>
     exec: (deviceId: string, command: string) => Promise<{ ok: boolean; output: string; error?: string }>
-    probeHost: (opts: { host: string; port: number; user: string; password: string }) => Promise<{
+    probeHost: (opts: {
+      host: string
+      port: number
+      user: string
+      password: string
+      privateKey?: string
+      passphrase?: string
+    }) => Promise<{
       ok: boolean
       os?: string
       hostname?: string
@@ -58,6 +65,7 @@ export interface NexusApi {
       ramTotal?: number
       error?: string
     }>
+    forgetHostKey: (host: string, port: number) => Promise<{ ok: boolean }>
     onData: (cb: (p: { sessionId: string; data: string }) => void) => () => void
     onExit: (cb: (p: { sessionId: string }) => void) => () => void
   }

@@ -280,10 +280,10 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     cost_currency: cost.currency ?? 'USD',
     cost_usd: cost.usd || toUsd(cost.amount ?? 0, cost.currency ?? 'USD'),
     console_url: input.consoleUrl ?? '',
-    auth_type: input.authType ?? (input.password ? 'password' : 'none'),
+    auth_type: input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : 'none'),
     secret_password: input.password || null,
-    secret_key: null,
-    secret_passphrase: null,
+    secret_key: input.privateKey || null,
+    secret_passphrase: input.passphrase || null,
     notes: input.notes ?? null,
     jump_id: input.jumpId ?? null,
     sort: nextSort,
@@ -299,7 +299,12 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
   if (!cur) throw new Error('Device not found')
   const cost = input.cost ?? { amount: cur.cost_amount, currency: cur.cost_currency, usd: cur.cost_usd }
+  // Blank secret on edit = keep the stored one. A newly-pasted key also carries its passphrase.
   const newSecret = input.password ? input.password : cur.secret_password
+  const newKey = input.privateKey ? input.privateKey : cur.secret_key
+  const newPassphrase = input.privateKey ? input.passphrase ?? null : cur.secret_passphrase
+  const authType: AuthType =
+    input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : cur.auth_type)
   const next: DeviceRow = {
     ...cur,
     name: input.name?.trim() || cur.name,
@@ -319,8 +324,10 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     cost_currency: cost.currency,
     cost_usd: cost.usd || toUsd(cost.amount, cost.currency),
     console_url: input.consoleUrl ?? cur.console_url,
-    auth_type: input.password ? 'password' : input.authType ?? cur.auth_type,
+    auth_type: authType,
     secret_password: newSecret,
+    secret_key: newKey,
+    secret_passphrase: newPassphrase,
     notes: input.notes ?? cur.notes,
     jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
     updated_at: Date.now()
@@ -331,7 +338,8 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
        country=@country, flag=@flag, os=@os, status=@status, cpu=@cpu,
        ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
        cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
-       auth_type=@auth_type, secret_password=@secret_password, notes=@notes, jump_id=@jump_id, updated_at=@updated_at
+       auth_type=@auth_type, secret_password=@secret_password, secret_key=@secret_key,
+       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, updated_at=@updated_at
      WHERE id=@id`
   ).run(next)
   return toDTO(next)
@@ -341,22 +349,42 @@ export function deleteDevice(id: string): void {
   requireDb().prepare('DELETE FROM devices WHERE id = ?').run(id)
 }
 
+export interface JumpConn {
+  host: string
+  port: number
+  user: string
+  password: string | null
+  privateKey?: string | null
+  passphrase?: string | null
+}
+
 export interface DeviceConn {
   host: string
   port: number
   user: string
   authType: AuthType
   password: string | null
-  jump?: { host: string; port: number; user: string; password: string | null }
+  privateKey?: string | null
+  passphrase?: string | null
+  jump?: JumpConn
+}
+
+type ConnRow = {
+  ip: string
+  port: number
+  user: string
+  auth_type: AuthType
+  secret_password: string | null
+  secret_key: string | null
+  secret_passphrase: string | null
+  jump_id?: string | null
 }
 
 /** Main-process only: connection info + decrypted secret for SSH (+ single-hop jump). Never exposed to renderer. */
 export function getDeviceConn(id: string): DeviceConn | null {
   const r = requireDb()
-    .prepare('SELECT ip, port, user, auth_type, secret_password, jump_id FROM devices WHERE id = ?')
-    .get(id) as
-    | { ip: string; port: number; user: string; auth_type: AuthType; secret_password: string | null; jump_id: string | null }
-    | undefined
+    .prepare('SELECT ip, port, user, auth_type, secret_password, secret_key, secret_passphrase, jump_id FROM devices WHERE id = ?')
+    .get(id) as ConnRow | undefined
   if (!r) return null
   const conn: DeviceConn = {
     host: r.ip,
@@ -365,12 +393,21 @@ export function getDeviceConn(id: string): DeviceConn | null {
     authType: r.auth_type,
     password: r.secret_password
   }
+  // Key auth wins only when the device is configured for it AND a key is stored.
+  if (r.auth_type === 'key' && r.secret_key) {
+    conn.privateKey = r.secret_key
+    conn.passphrase = r.secret_passphrase
+  }
   if (r.jump_id) {
     const j = requireDb()
-      .prepare('SELECT ip, port, user, secret_password FROM devices WHERE id = ?')
-      .get(r.jump_id) as { ip: string; port: number; user: string; secret_password: string | null } | undefined
+      .prepare('SELECT ip, port, user, auth_type, secret_password, secret_key, secret_passphrase FROM devices WHERE id = ?')
+      .get(r.jump_id) as ConnRow | undefined
     if (j && j.ip && !j.ip.includes('x.x')) {
       conn.jump = { host: j.ip, port: j.port || 22, user: j.user || 'root', password: j.secret_password }
+      if (j.auth_type === 'key' && j.secret_key) {
+        conn.jump.privateKey = j.secret_key
+        conn.jump.passphrase = j.secret_passphrase
+      }
     }
   }
   return conn

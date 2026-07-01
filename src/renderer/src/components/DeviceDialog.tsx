@@ -1,9 +1,9 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { X, Loader2, Sparkles } from 'lucide-react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { X, Loader2, Sparkles, Upload } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
-import type { Currency, Status, DeviceInput } from '@/types'
+import type { AuthType, Currency, Status, DeviceInput } from '@/types'
 
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'RUB']
 const STATUSES: Status[] = ['online', 'degraded', 'offline', 'reboot', 'unknown', 'maintenance']
@@ -24,13 +24,17 @@ interface FormFields {
   amount: string
   currency: Currency
   consoleUrl: string
+  authMethod: AuthType
   password: string
+  privateKey: string
+  passphrase: string
   jumpId: string
 }
 
 const EMPTY: FormFields = {
   name: '', provider: '', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
-  status: 'online', amount: '', currency: 'USD', consoleUrl: '', password: '', jumpId: ''
+  status: 'online', amount: '', currency: 'USD', consoleUrl: '',
+  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: ''
 }
 
 function Field({ label, full, children }: { label: string; full?: boolean; children: ReactNode }): React.JSX.Element {
@@ -54,6 +58,7 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
   const [probeMsg, setProbeMsg] = useState<string | null>(null)
+  const keyFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setError(null)
@@ -63,12 +68,19 @@ export function DeviceDialog(): React.JSX.Element | null {
         name: d.name, provider: d.provider, ip: d.ip, port: String(d.port), user: d.user, os: d.os,
         country: d.country, flag: d.flag, status: d.status,
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
-        consoleUrl: d.consoleUrl, password: '', jumpId: d.jumpId ?? ''
+        consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
+        password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? ''
       })
     } else if (dialog.mode === 'new') {
       setF(EMPTY)
     }
   }, [dialog])
+
+  const loadKeyFile = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    const text = await file.text()
+    setF((p) => ({ ...p, privateKey: text, authMethod: 'key' }))
+  }
 
   if (dialog.mode === 'closed') return null
   const editing = dialog.mode === 'edit'
@@ -86,7 +98,9 @@ export function DeviceDialog(): React.JSX.Element | null {
       host: f.ip.trim(),
       port: parseInt(f.port, 10) || 22,
       user: f.user.trim() || 'root',
-      password: f.password
+      password: f.authMethod === 'password' ? f.password : '',
+      privateKey: f.authMethod === 'key' ? f.privateKey || undefined : undefined,
+      passphrase: f.authMethod === 'key' ? f.passphrase || undefined : undefined
     })
     setProbing(false)
     if (r.ok) {
@@ -117,7 +131,11 @@ export function DeviceDialog(): React.JSX.Element | null {
       status: f.status,
       cost: { amount: parseFloat(f.amount) || 0, currency: f.currency, usd: 0 },
       consoleUrl: f.consoleUrl.trim(),
-      password: f.password ? f.password : null,
+      authType: f.authMethod,
+      // Blank on edit = keep the stored secret; only send what belongs to the chosen method.
+      password: f.authMethod === 'password' ? (f.password ? f.password : null) : undefined,
+      privateKey: f.authMethod === 'key' ? (f.privateKey ? f.privateKey : undefined) : undefined,
+      passphrase: f.authMethod === 'key' ? (f.passphrase ? f.passphrase : undefined) : undefined,
       jumpId: f.jumpId || null
     }
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
@@ -201,15 +219,69 @@ export function DeviceDialog(): React.JSX.Element | null {
                   ))}
               </select>
             </Field>
-            <Field label={editing ? 'SSH password (blank = keep current)' : 'SSH password (optional)'} full>
-              <input
-                className={inputCls}
-                type="password"
-                value={f.password}
-                onChange={set('password')}
-                placeholder="stored encrypted in the vault"
-              />
+            <Field label="Авторизация" full>
+              <div className="flex gap-1 rounded-lg border border-border bg-bg/60 p-1">
+                {(['password', 'key'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setF((p) => ({ ...p, authMethod: m }))}
+                    className={cn(
+                      'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                      f.authMethod === m ? 'bg-accent text-bg' : 'text-slate-400 hover:text-slate-200'
+                    )}
+                  >
+                    {m === 'password' ? 'Пароль' : 'SSH-ключ'}
+                  </button>
+                ))}
+              </div>
             </Field>
+
+            {f.authMethod === 'password' ? (
+              <Field label={editing ? 'SSH password (blank = keep current)' : 'SSH password (optional)'} full>
+                <input
+                  className={inputCls}
+                  type="password"
+                  value={f.password}
+                  onChange={set('password')}
+                  placeholder="stored encrypted in the vault"
+                />
+              </Field>
+            ) : (
+              <>
+                <Field label={editing ? 'Приватный ключ (пусто = оставить текущий)' : 'Приватный ключ (PEM / OpenSSH)'} full>
+                  <textarea
+                    className={cn(inputCls, 'h-24 resize-y font-mono text-[11px] leading-tight')}
+                    value={f.privateKey}
+                    onChange={set('privateKey')}
+                    placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                    spellCheck={false}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => keyFileRef.current?.click()}
+                    className="mt-1.5 inline-flex items-center gap-1.5 rounded-md bg-card px-2.5 py-1 text-[11px] font-medium text-slate-300 ring-1 ring-border hover:bg-card-hover"
+                  >
+                    <Upload className="h-3 w-3" /> Загрузить из файла
+                  </button>
+                  <input
+                    ref={keyFileRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => void loadKeyFile(e.target.files?.[0])}
+                  />
+                </Field>
+                <Field label="Passphrase ключа (если есть)" full>
+                  <input
+                    className={inputCls}
+                    type="password"
+                    value={f.passphrase}
+                    onChange={set('passphrase')}
+                    placeholder="optional"
+                  />
+                </Field>
+              </>
+            )}
           </div>
 
           {api && (
@@ -217,7 +289,11 @@ export function DeviceDialog(): React.JSX.Element | null {
               <button
                 type="button"
                 onClick={probe}
-                disabled={probing || !f.ip.trim() || !f.password}
+                disabled={
+                  probing ||
+                  !f.ip.trim() ||
+                  (f.authMethod === 'password' ? !f.password : !f.privateKey)
+                }
                 className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover disabled:opacity-50"
               >
                 {probing ? (

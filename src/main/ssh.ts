@@ -17,6 +17,19 @@ export function makeHostVerifier(
   }) as NonNullable<ConnectConfig['hostVerifier']>
 }
 
+/** Build the ssh2 auth fields from a credential bundle: private key wins, else password. */
+type AuthFields = Pick<ConnectConfig, 'password' | 'privateKey' | 'passphrase'>
+function authFields(c: {
+  password: string | null
+  privateKey?: string | null
+  passphrase?: string | null
+}): AuthFields {
+  if (c.privateKey) return { privateKey: c.privateKey, passphrase: c.passphrase || undefined }
+  return { password: c.password ?? undefined }
+}
+const hasCredential = (c: { password: string | null; privateKey?: string | null }): boolean =>
+  Boolean(c.password || c.privateKey)
+
 interface Session {
   id: string
   client: Client
@@ -41,8 +54,8 @@ export function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 2
   if (isPlaceholderHost(conn.host)) {
     return Promise.resolve({ ok: false, error: 'Placeholder IP — edit the device and set a real host first.' })
   }
-  if (!conn.password) {
-    return Promise.resolve({ ok: false, error: 'No SSH password stored. Edit the device to add one (key auth coming later).' })
+  if (!hasCredential(conn)) {
+    return Promise.resolve({ ok: false, error: 'No SSH credential stored. Edit the device and add a password or private key.' })
   }
 
   return new Promise<OpenResult>((resolve) => {
@@ -96,7 +109,7 @@ export function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 2
       try {
         const base = {
           username: conn.user,
-          password: conn.password ?? undefined,
+          ...authFields(conn),
           readyTimeout: 15000,
           keepaliveInterval: 20000,
           hostHash: 'sha256' as const,
@@ -136,7 +149,7 @@ export function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 2
           host: jump.host,
           port: jump.port,
           username: jump.user,
-          password: jump.password ?? undefined,
+          ...authFields(jump),
           readyTimeout: 15000
         })
       } catch (e) {
@@ -191,7 +204,7 @@ const PROBE_CMD = `cat /proc/loadavg | cut -d' ' -f1; nproc; free -m | awk '/^Me
 
 export function probe(deviceId: string): Promise<ProbeResult> {
   const conn = getDeviceConn(deviceId)
-  if (!conn || isPlaceholderHost(conn.host) || !conn.password) {
+  if (!conn || isPlaceholderHost(conn.host) || !hasCredential(conn)) {
     return Promise.resolve({ ok: false, status: 'offline', error: 'no host/credentials' })
   }
   return new Promise<ProbeResult>((resolve) => {
@@ -236,7 +249,7 @@ export function probe(deviceId: string): Promise<ProbeResult> {
       host: conn.host,
       port: conn.port,
       username: conn.user,
-      password: conn.password ?? undefined,
+      ...authFields(conn),
       readyTimeout: 10000,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(conn.host, conn.port)
@@ -269,9 +282,11 @@ export function probeHost(opts: {
   port: number
   user: string
   password: string
+  privateKey?: string
+  passphrase?: string
 }): Promise<ProbeHostResult> {
   if (!opts.host || opts.host.includes('x.x')) return Promise.resolve({ ok: false, error: 'Укажите реальный host' })
-  if (!opts.password) return Promise.resolve({ ok: false, error: 'Нужен пароль для SSH-проверки' })
+  if (!opts.password && !opts.privateKey) return Promise.resolve({ ok: false, error: 'Нужен пароль или ключ для SSH-проверки' })
   const port = opts.port || 22
   return new Promise<ProbeHostResult>((resolve) => {
     const client = new Client()
@@ -322,7 +337,7 @@ export function probeHost(opts: {
       host: opts.host,
       port,
       username: opts.user || 'root',
-      password: opts.password ?? undefined,
+      ...authFields({ password: opts.password, privateKey: opts.privateKey, passphrase: opts.passphrase }),
       readyTimeout: 12000,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(opts.host, port)
@@ -335,7 +350,7 @@ export function execOnce(deviceId: string, command: string): Promise<{ ok: boole
   const conn = getDeviceConn(deviceId)
   if (!conn) return Promise.resolve({ ok: false, output: '', error: 'device not found' })
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, output: '', error: 'placeholder IP' })
-  if (!conn.password) return Promise.resolve({ ok: false, output: '', error: 'no password' })
+  if (!hasCredential(conn)) return Promise.resolve({ ok: false, output: '', error: 'no credential' })
   return new Promise((resolve) => {
     const client = new Client()
     let settled = false
@@ -367,7 +382,7 @@ export function execOnce(deviceId: string, command: string): Promise<{ ok: boole
       host: conn.host,
       port: conn.port,
       username: conn.user,
-      password: conn.password ?? undefined,
+      ...authFields(conn),
       readyTimeout: 15000,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(conn.host, conn.port)
