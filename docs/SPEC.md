@@ -1,0 +1,64 @@
+# Nexus One — Locked Decisions (interactive Q&A)
+
+> Ответы владельца на раунды опроса. Дополняет `MASTER-PLAN.md`, кормит финальный спек и роадмап.
+> Обновляется по мере раундов.
+
+## Раунд 1 — Фундамент ✅
+- **Архитектура:** «один объект — много граней» — **ЯДРО**. Единая модель: одна сущность несёт
+  сервер + подписку + расход + credential + статус одновременно. Это ров проекта.
+- **Синк:** **local-only + шифрованный export/import** (v1). Облачный/self-hosted синк — позже.
+- **Секреты:** только **SQLCipher-vault** под мастер-паролем (как сейчас).
+- **Разлок:** **мастер-пароль** (без второго фактора пока; YubiKey/биометрия — опция на будущее).
+
+## Раунд 2 — Devices/SSH ✅
+- **SSH-движок:** **Hybrid** — ssh2 для основного + shell-out в системный `ssh` для ProxyCommand/экзотики/PQ-KEX.
+- **Durable-сессии:** **Mosh-lite** (авто-reconnect + восстановление буфера в приложении, без установки на серверы).
+- **Протоколы:** **ВСЁ** — SSH/SFTP (база, MVP) + RDP/VNC + контейнеры (Docker/Podman/LXD) + Telnet/Serial. Фазируем.
+- **MCP-поверхность:** **ДА** — default-off, per-action allowlist, confirm-to-run. Claude/Codex рулит серверами.
+
+## Раунд 3 — Авто-провижининг ✅
+- **Провижининг:** agentless-first (`nexus-probe.sh` по SSH) + опц. **Beszel-агент** по кнопке (история/темп/GPU/алерты).
+- **Discovery:** **Tailscale** `status --json` энумерация тайнета (весь парк сам) + ssh_config-импорт.
+- **~/.ssh/config:** авто-импорт **с превью+выбор** (тянем ProxyJump/IdentityFile — бьём Termius).
+- **IP-geo:** **локальный MaxMind** (GeoLite2, полностью офлайн).
+
+## Раунд 4 — Финансы ✅
+- **Валюта:** **USD** (нормализуем всё в доллары; RUB — вторично).
+- **Крипто-сети:** **BTC + ETH/EVM** (TON/SOL пока не держит → SDK не вшиваем).
+- **Крипто-API:** **прямой public RPC** per-chain (приватно, безлимит; viem+dRPC для EVM, bitcoinjs+mempool для BTC).
+- **T-Invest:** **ДА** — read-only токен через community `tinkoff-invest-api` (vitalets, gRPC).
+
+## Раунд 5 — Подписки / ИИ / выписки ✅
+- **Подписки-детект:** **Gmail on-device** (read-only API, локально; храним только факты, не письма) + ручное + CSV-детект.
+- **ИИ-провайдеры:** **ВСЕ** — OpenRouter (якорь) + Anthropic + OpenAI + Gemini/др.
+- **Учёт ИИ-трат:** **ОБА** — локальная таблица цен (tokens×price) + Admin-ключи где есть (точный spend OpenAI/Anthropic).
+- **Банк-выписки:** **T-Bank + Python-сайдкар** для табличных PDF (и Sber).
+
+## Раунд 6 — Устройства / стриминг ✅
+- **Телефон:** **полная KDE Connect** (батарея/сигнал/уведомления/SMS/буфер/команды/ping) — локально.
+- **Наушники:** **BudsLink** (KDE-апплет, батарея по-бут+кейс, ANC, мультибренд).
+- **HA-мост:** **ДА** — поднимет self-hosted Home Assistant → GPS телефона, Galaxy Watch health, батарея Apple-устройств.
+- **Стриминг:** **Apache Guacamole** — единый встроенный HTML5-пейн (RDP/VNC/SSH) + noVNC/KRDP под капотом.
+
+## Раунд 7 — UX / оболочка ✅
+- **Вид Devices:** только карточки (topology-canvas не нужен).
+- **Live:** **push/WebSocket сразу** → Beszel-агент (WS) становится частью ядра, не опцией.
+- **Recovery Kit:** **обязателен** (нельзя пройти онбординг без сохранённого Kit).
+- **Локальный ИИ:** Ollama по умолчанию + облачный опционально (выбор в настройках).
+
+---
+
+## Итог: что это значит для сборки
+- **Ядро — единая модель «объект-грани»**: рефактор БД под универсальную сущность (device/account/subscription/holding
+  как грани одного объекта со связями). Архитектурный приоритет №1.
+- **Devices** = hybrid SSH + Mosh-lite + все протоколы (фазы: SSH/SFTP → RDP/VNC/контейнеры/Telnet) + MCP-поверхность (default-off).
+- **Провижининг**: agentless probe + Tailscale-discovery + ssh_config-импорт + MaxMind-гео. Push-требование → **Beszel-агент (WS) в ядре**.
+- **Стриминг = Apache Guacamole** → нужно поднять **guacd** (Docker) как часть стека.
+- **Устройства**: KDE Connect (D-Bus) + BudsLink + **HA-мост** (владелец поднимет self-hosted HA → REST/WS для GPS/health/Apple).
+- **Финансы**: USD, прямой RPC (BTC+ETH), T-Invest (community), Gmail-парсинг подписок, T-Bank+Python-сайдкар для выписок.
+- **ИИ**: все провайдеры; учёт «оба» (локальная таблица + Admin-ключи); OpenRouter-якорь.
+- **Безопасность/UX**: SQLCipher-only, мастер-пароль, **обязательный Recovery Kit**, ⌘K-палитра, 6-статусов, локальный Ollama (+облако опц.).
+- **Новые обязательные зависимости** (из ответов): guacd · Home Assistant · Beszel-агент · Python-сайдкар · MaxMind GeoLite2.
+  Часть «опций» плана стала обязательной — учтено.
+
+_Готово для перехода к сборке Phase 2 (SSH-паритет + командная палитра + система статусов + agentless-провижининг)._

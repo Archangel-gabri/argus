@@ -1,0 +1,213 @@
+import { ipcMain, safeStorage } from 'electron'
+import * as vault from './vault'
+import * as ssh from './ssh'
+import * as sftp from './sftp'
+import * as forward from './forward'
+import { parseSshConfig, type ParsedHost } from './sshconfig'
+import { discoverTailscale } from './discovery'
+import { walletBalance } from './onchain'
+import { checkAccount } from './ai'
+import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
+
+/** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
+function keyringInfo(): { backend: string; canRemember: boolean } {
+  let backend = 'unknown'
+  try {
+    if (process.platform === 'linux' && 'getSelectedStorageBackend' in safeStorage) {
+      backend = safeStorage.getSelectedStorageBackend()
+    } else {
+      backend = safeStorage.isEncryptionAvailable() ? 'os-keychain' : 'unavailable'
+    }
+  } catch {
+    backend = 'unknown'
+  }
+  // basic_text = Electron's plaintext fallback (e.g. on bare Hyprland/Sway) — never trust it.
+  return { backend, canRemember: backend !== 'basic_text' && backend !== 'unavailable' }
+}
+
+function state(): VaultState {
+  const { backend, canRemember } = keyringInfo()
+  return { status: vault.vaultStatus(), keyringBackend: backend, canRemember }
+}
+
+const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
+
+export function registerIpc(): void {
+  ipcMain.handle('vault:state', () => state())
+
+  ipcMain.handle('vault:initialize', async (_e, password: unknown) => {
+    try {
+      await vault.initialize(asString(password))
+      return { ok: true, state: state() }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, state: state() }
+    }
+  })
+
+  ipcMain.handle('vault:unlock', async (_e, password: unknown) => {
+    try {
+      await vault.unlock(asString(password))
+      return { ok: true, state: state() }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, state: state() }
+    }
+  })
+
+  ipcMain.handle('vault:lock', () => {
+    vault.lock()
+    return state()
+  })
+
+  ipcMain.handle('devices:list', () => (vault.isUnlocked() ? vault.listDevices() : []))
+
+  ipcMain.handle('devices:create', (_e, input: DeviceInput) => {
+    try {
+      return { ok: true, device: vault.createDevice(input) }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle('devices:update', (_e, id: unknown, input: DeviceInput) => {
+    try {
+      return { ok: true, device: vault.updateDevice(asString(id), input) }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle('devices:delete', (_e, id: unknown) => {
+    try {
+      vault.deleteDevice(asString(id))
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
+  // SSH terminal — creds are read from the vault inside ssh.* and never leave main.
+  ipcMain.handle('ssh:open', (e, deviceId: unknown, cols: unknown, rows: unknown) =>
+    ssh.openShell(e.sender, asString(deviceId), Number(cols) || 80, Number(rows) || 24)
+  )
+  ipcMain.on('ssh:input', (_e, sessionId: unknown, data: unknown) =>
+    ssh.writeShell(asString(sessionId), asString(data))
+  )
+  ipcMain.on('ssh:resize', (_e, sessionId: unknown, cols: unknown, rows: unknown) =>
+    ssh.resizeShell(asString(sessionId), Number(cols) || 80, Number(rows) || 24)
+  )
+  ipcMain.on('ssh:close', (_e, sessionId: unknown) => ssh.closeShell(asString(sessionId)))
+  ipcMain.handle('ssh:probe', async (_e, deviceId: unknown) => {
+    const id = asString(deviceId)
+    const r = await ssh.probe(id)
+    if (vault.isUnlocked()) vault.recordSnapshot(id, r)
+    return r
+  })
+  ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
+    vault.isUnlocked() ? vault.getSnapshots(asString(deviceId), Number(limit) || 30) : []
+  )
+  ipcMain.handle('ssh:probeHost', (_e, opts: unknown) => {
+    const o = (opts ?? {}) as Record<string, unknown>
+    return ssh.probeHost({
+      host: asString(o.host),
+      port: Number(o.port) || 22,
+      user: asString(o.user),
+      password: asString(o.password)
+    })
+  })
+  ipcMain.handle('ssh:exec', (_e, deviceId: unknown, command: unknown) =>
+    ssh.execOnce(asString(deviceId), asString(command))
+  )
+
+  // Snippets (saved commands) — stored in the encrypted vault
+  ipcMain.handle('snippets:list', () => (vault.isUnlocked() ? vault.listSnippets() : []))
+  ipcMain.handle('snippets:create', (_e, name: unknown, command: unknown) =>
+    vault.createSnippet(asString(name), asString(command))
+  )
+  ipcMain.handle('snippets:delete', (_e, id: unknown) => {
+    vault.deleteSnippet(asString(id))
+    return { ok: true }
+  })
+
+  // Subscriptions — stored in the encrypted vault
+  ipcMain.handle('subs:list', () => (vault.isUnlocked() ? vault.listSubscriptions() : []))
+  ipcMain.handle('subs:create', (_e, input: unknown) => vault.createSubscription(input as SubscriptionInput))
+  ipcMain.handle('subs:update', (_e, id: unknown, input: unknown) =>
+    vault.updateSubscription(asString(id), input as SubscriptionInput)
+  )
+  ipcMain.handle('subs:delete', (_e, id: unknown) => {
+    vault.deleteSubscription(asString(id))
+    return { ok: true }
+  })
+
+  // Crypto wallets — addresses in the vault, balances from public keyless endpoints
+  ipcMain.handle('wallets:list', () => (vault.isUnlocked() ? vault.listWallets() : []))
+  ipcMain.handle('wallets:create', (_e, input: unknown) => vault.createWallet(input as WalletInput))
+  ipcMain.handle('wallets:delete', (_e, id: unknown) => {
+    vault.deleteWallet(asString(id))
+    return { ok: true }
+  })
+  ipcMain.handle('wallets:balance', (_e, chain: unknown, address: unknown) =>
+    walletBalance(asString(chain), asString(address))
+  )
+
+  // AI accounts — keys stay in the vault; only validity/quota verdicts cross IPC
+  ipcMain.handle('ai:list', () => (vault.isUnlocked() ? vault.listAiAccounts() : []))
+  ipcMain.handle('ai:create', (_e, input: unknown) => vault.createAiAccount(input as AiAccountInput))
+  ipcMain.handle('ai:delete', (_e, id: unknown) => {
+    vault.deleteAiAccount(asString(id))
+    return { ok: true }
+  })
+  ipcMain.handle('ai:check', (_e, id: unknown) => {
+    const acc = vault.listAiAccounts().find((a) => a.id === asString(id))
+    return checkAccount(acc?.provider ?? '', vault.getAiKey(asString(id)) ?? '')
+  })
+
+  // SFTP file browser
+  ipcMain.handle('sftp:open', (_e, deviceId: unknown) => sftp.sftpOpen(asString(deviceId)))
+  ipcMain.handle('sftp:list', (_e, sessionId: unknown, path: unknown) =>
+    sftp.sftpList(asString(sessionId), asString(path))
+  )
+  ipcMain.handle('sftp:download', (_e, sessionId: unknown, path: unknown) =>
+    sftp.sftpDownload(asString(sessionId), asString(path))
+  )
+  ipcMain.handle('sftp:upload', (_e, sessionId: unknown, remoteDir: unknown) =>
+    sftp.sftpUpload(asString(sessionId), asString(remoteDir))
+  )
+  ipcMain.handle('sftp:delete', (_e, sessionId: unknown, path: unknown, isDir: unknown) =>
+    sftp.sftpDelete(asString(sessionId), asString(path), Boolean(isDir))
+  )
+  ipcMain.on('sftp:close', (_e, sessionId: unknown) => sftp.sftpClose(asString(sessionId)))
+
+  // Local port forwarding
+  ipcMain.handle('forward:open', (_e, deviceId: unknown, lp: unknown, rh: unknown, rp: unknown) =>
+    forward.openLocalForward(asString(deviceId), Number(lp) || 0, asString(rh) || '127.0.0.1', Number(rp) || 0)
+  )
+  ipcMain.handle('forward:list', (_e, deviceId: unknown) => forward.listForwards(deviceId ? asString(deviceId) : undefined))
+  ipcMain.on('forward:close', (_e, id: unknown) => forward.closeForward(asString(id)))
+
+  // ~/.ssh/config import + Tailscale discovery
+  ipcMain.handle('sshconfig:parse', () => parseSshConfig())
+  ipcMain.handle('discovery:tailscale', () => discoverTailscale())
+  ipcMain.handle('sshconfig:import', (_e, hosts: unknown) => {
+    if (!Array.isArray(hosts)) return { ok: false, added: 0 }
+    let added = 0
+    for (const h of hosts as ParsedHost[]) {
+      try {
+        vault.createDevice({
+          name: String(h.name || h.host || 'host'),
+          provider: 'SSH',
+          ip: String(h.host || ''),
+          port: Number(h.port) || 22,
+          user: String(h.user || 'root'),
+          os: '',
+          country: '',
+          consoleUrl: ''
+        })
+        added++
+      } catch {
+        /* skip bad entry */
+      }
+    }
+    return { ok: true, added }
+  })
+}

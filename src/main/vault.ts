@@ -1,0 +1,583 @@
+import { app } from 'electron'
+import { join } from 'node:path'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import Database from 'better-sqlite3-multiple-ciphers'
+import { deriveKeyHex } from './crypto'
+import { SEED_DEVICES } from './seed'
+import type {
+  AuthType,
+  DeviceRow,
+  DeviceDTO,
+  DeviceInput,
+  VaultStatus,
+  Snippet,
+  Subscription,
+  SubscriptionInput,
+  Wallet,
+  WalletInput,
+  MetricSnapshot,
+  AiAccount,
+  AiAccountInput
+} from './types'
+
+type Meta = { salt: string; version: number; createdAt: number }
+
+let db: Database.Database | null = null
+
+// Rough static FX just to normalise mixed-currency totals (honest approximation).
+const FX: Record<string, number> = { USD: 1, EUR: 1.08, RUB: 0.0126 }
+const toUsd = (amount: number, currency: string): number =>
+  Math.round(amount * (FX[currency] ?? 1) * 100) / 100
+
+const COLUMNS = [
+  'id', 'name', 'provider', 'role', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
+  'cpu', 'ram_used', 'ram_total', 'cost_amount', 'cost_currency', 'cost_usd', 'console_url',
+  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'sort', 'created_at', 'updated_at'
+] as const
+const INSERT_SQL = `INSERT INTO devices (${COLUMNS.join(',')}) VALUES (${COLUMNS.map((c) => '@' + c).join(',')})`
+
+const dbPath = (): string => join(app.getPath('userData'), 'nexus-vault.db')
+const metaPath = (): string => join(app.getPath('userData'), 'nexus-vault.meta.json')
+
+export const isInitialized = (): boolean => existsSync(metaPath()) && existsSync(dbPath())
+export const isUnlocked = (): boolean => db !== null
+
+export function vaultStatus(): VaultStatus {
+  if (isUnlocked()) return 'unlocked'
+  return isInitialized() ? 'locked' : 'uninitialized'
+}
+
+function openEncrypted(keyHex: string): Database.Database {
+  const d = new Database(dbPath())
+  d.pragma(`cipher='sqlcipher'`)
+  d.pragma(`key="x'${keyHex}'"`)
+  d.pragma('journal_mode = WAL')
+  d.pragma('foreign_keys = ON')
+  return d
+}
+
+function migrate(d: Database.Database): void {
+  d.exec(`CREATE TABLE IF NOT EXISTS devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    role TEXT,
+    ip TEXT DEFAULT '',
+    port INTEGER DEFAULT 22,
+    user TEXT DEFAULT 'root',
+    country TEXT DEFAULT '',
+    flag TEXT DEFAULT '',
+    os TEXT DEFAULT '',
+    status TEXT DEFAULT 'online',
+    cpu REAL DEFAULT 0,
+    ram_used REAL DEFAULT 0,
+    ram_total REAL DEFAULT 0,
+    cost_amount REAL DEFAULT 0,
+    cost_currency TEXT DEFAULT 'USD',
+    cost_usd REAL DEFAULT 0,
+    console_url TEXT DEFAULT '',
+    auth_type TEXT DEFAULT 'none',
+    secret_password TEXT,
+    secret_key TEXT,
+    secret_passphrase TEXT,
+    notes TEXT,
+    jump_id TEXT,
+    sort INTEGER DEFAULT 0,
+    created_at INTEGER,
+    updated_at INTEGER
+  )`)
+  // Add jump_id to pre-existing device tables (fresh tables already have it → ALTER throws, ignored).
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN jump_id TEXT')
+  } catch {
+    /* column already exists */
+  }
+  d.exec(`CREATE TABLE IF NOT EXISTS known_hosts (
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 22,
+    key_hash TEXT NOT NULL,
+    first_seen INTEGER,
+    PRIMARY KEY (host, port)
+  )`)
+  d.exec(`CREATE TABLE IF NOT EXISTS snippets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    command TEXT NOT NULL,
+    created_at INTEGER
+  )`)
+  // "one object, many facets": cross-domain relations (device↔subscription↔holding↔credential).
+  d.exec(`CREATE TABLE IF NOT EXISTS links (
+    id TEXT PRIMARY KEY,
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    kind TEXT,
+    created_at INTEGER
+  )`)
+  d.exec(`CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    provider TEXT,
+    category TEXT,
+    amount REAL,
+    currency TEXT,
+    period TEXT,
+    next_renewal TEXT,
+    notes TEXT,
+    created_at INTEGER
+  )`)
+  d.exec(`CREATE TABLE IF NOT EXISTS wallets (
+    id TEXT PRIMARY KEY,
+    chain TEXT NOT NULL,
+    address TEXT NOT NULL,
+    label TEXT,
+    created_at INTEGER
+  )`)
+  d.exec(`CREATE TABLE IF NOT EXISTS metric_snapshots (
+    device_id TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    cpu REAL,
+    ram_used REAL,
+    ram_total REAL,
+    status TEXT
+  )`)
+  d.exec('CREATE INDEX IF NOT EXISTS idx_snap_dev ON metric_snapshots (device_id, ts)')
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_accounts (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    label TEXT,
+    api_key TEXT,
+    plan TEXT,
+    notes TEXT,
+    created_at INTEGER
+  )`)
+}
+
+function seedInto(d: Database.Database): void {
+  const now = Date.now()
+  const stmt = d.prepare(INSERT_SQL)
+  const insertAll = d.transaction((rows: DeviceRow[]) => {
+    for (const r of rows) stmt.run(r)
+  })
+  insertAll(
+    SEED_DEVICES.map(
+      (s, i): DeviceRow => ({
+        ...s,
+        auth_type: 'none',
+        secret_password: null,
+        secret_key: null,
+        secret_passphrase: null,
+        notes: null,
+        jump_id: null,
+        sort: i,
+        created_at: now,
+        updated_at: now
+      })
+    )
+  )
+}
+
+export async function initialize(password: string): Promise<void> {
+  if (isInitialized()) throw new Error('Vault already initialized')
+  if (!password || password.length < 6) throw new Error('Master password must be at least 6 characters')
+  const salt = randomBytes(16)
+  const keyHex = await deriveKeyHex(password, salt)
+  const d = openEncrypted(keyHex)
+  migrate(d)
+  seedInto(d)
+  const meta: Meta = { salt: salt.toString('hex'), version: 1, createdAt: Date.now() }
+  writeFileSync(metaPath(), JSON.stringify(meta), { mode: 0o600 })
+  db = d
+}
+
+export async function unlock(password: string): Promise<void> {
+  if (!isInitialized()) throw new Error('Vault not initialized')
+  if (isUnlocked()) return
+  const meta = JSON.parse(readFileSync(metaPath(), 'utf8')) as Meta
+  const keyHex = await deriveKeyHex(password, Buffer.from(meta.salt, 'hex'))
+  const d = openEncrypted(keyHex)
+  try {
+    // Force key verification: a wrong key makes the first read throw.
+    d.prepare('SELECT count(*) AS n FROM sqlite_master').get()
+    migrate(d) // idempotent — keeps schema current
+    db = d
+  } catch {
+    try {
+      d.close()
+    } catch {
+      /* ignore */
+    }
+    throw new Error('Invalid master password')
+  }
+}
+
+export function lock(): void {
+  if (db) {
+    try {
+      db.close()
+    } catch {
+      /* ignore */
+    }
+    db = null
+  }
+}
+
+function requireDb(): Database.Database {
+  if (!db) throw new Error('Vault is locked')
+  return db
+}
+
+function toDTO(r: DeviceRow): DeviceDTO {
+  return {
+    id: r.id,
+    name: r.name,
+    provider: r.provider,
+    role: r.role,
+    ip: r.ip,
+    port: r.port,
+    user: r.user,
+    country: r.country,
+    flag: r.flag,
+    os: r.os,
+    status: r.status,
+    cpu: r.cpu,
+    ram: { used: r.ram_used, total: r.ram_total },
+    cost: { amount: r.cost_amount, currency: r.cost_currency, usd: r.cost_usd },
+    consoleUrl: r.console_url,
+    authType: r.auth_type,
+    hasSecret: Boolean(r.secret_password || r.secret_key),
+    notes: r.notes,
+    jumpId: r.jump_id
+  }
+}
+
+export function listDevices(): DeviceDTO[] {
+  const rows = requireDb().prepare('SELECT * FROM devices ORDER BY sort, created_at').all() as DeviceRow[]
+  return rows.map(toDTO)
+}
+
+export function createDevice(input: DeviceInput): DeviceDTO {
+  const d = requireDb()
+  const now = Date.now()
+  const nextSort = (d.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS s FROM devices').get() as { s: number }).s
+  const cost = input.cost ?? { amount: 0, currency: 'USD' as const, usd: 0 }
+  const row: DeviceRow = {
+    id: randomUUID(),
+    name: input.name.trim(),
+    provider: input.provider.trim() || 'Custom',
+    role: input.role ?? null,
+    ip: input.ip ?? '',
+    port: input.port ?? 22,
+    user: input.user || 'root',
+    country: input.country ?? '',
+    flag: input.flag || '🖥️',
+    os: input.os ?? '',
+    status: input.status ?? 'online',
+    cpu: input.cpu ?? 0,
+    ram_used: input.ram?.used ?? 0,
+    ram_total: input.ram?.total ?? 0,
+    cost_amount: cost.amount ?? 0,
+    cost_currency: cost.currency ?? 'USD',
+    cost_usd: cost.usd || toUsd(cost.amount ?? 0, cost.currency ?? 'USD'),
+    console_url: input.consoleUrl ?? '',
+    auth_type: input.authType ?? (input.password ? 'password' : 'none'),
+    secret_password: input.password || null,
+    secret_key: null,
+    secret_passphrase: null,
+    notes: input.notes ?? null,
+    jump_id: input.jumpId ?? null,
+    sort: nextSort,
+    created_at: now,
+    updated_at: now
+  }
+  d.prepare(INSERT_SQL).run(row)
+  return toDTO(row)
+}
+
+export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
+  const d = requireDb()
+  const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
+  if (!cur) throw new Error('Device not found')
+  const cost = input.cost ?? { amount: cur.cost_amount, currency: cur.cost_currency, usd: cur.cost_usd }
+  const newSecret = input.password ? input.password : cur.secret_password
+  const next: DeviceRow = {
+    ...cur,
+    name: input.name?.trim() || cur.name,
+    provider: input.provider?.trim() || cur.provider,
+    role: input.role ?? cur.role,
+    ip: input.ip ?? cur.ip,
+    port: input.port ?? cur.port,
+    user: input.user ?? cur.user,
+    country: input.country ?? cur.country,
+    flag: input.flag ?? cur.flag,
+    os: input.os ?? cur.os,
+    status: input.status ?? cur.status,
+    cpu: input.cpu ?? cur.cpu,
+    ram_used: input.ram?.used ?? cur.ram_used,
+    ram_total: input.ram?.total ?? cur.ram_total,
+    cost_amount: cost.amount,
+    cost_currency: cost.currency,
+    cost_usd: cost.usd || toUsd(cost.amount, cost.currency),
+    console_url: input.consoleUrl ?? cur.console_url,
+    auth_type: input.password ? 'password' : input.authType ?? cur.auth_type,
+    secret_password: newSecret,
+    notes: input.notes ?? cur.notes,
+    jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
+    updated_at: Date.now()
+  }
+  d.prepare(
+    `UPDATE devices SET
+       name=@name, provider=@provider, role=@role, ip=@ip, port=@port, user=@user,
+       country=@country, flag=@flag, os=@os, status=@status, cpu=@cpu,
+       ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
+       cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
+       auth_type=@auth_type, secret_password=@secret_password, notes=@notes, jump_id=@jump_id, updated_at=@updated_at
+     WHERE id=@id`
+  ).run(next)
+  return toDTO(next)
+}
+
+export function deleteDevice(id: string): void {
+  requireDb().prepare('DELETE FROM devices WHERE id = ?').run(id)
+}
+
+export interface DeviceConn {
+  host: string
+  port: number
+  user: string
+  authType: AuthType
+  password: string | null
+  jump?: { host: string; port: number; user: string; password: string | null }
+}
+
+/** Main-process only: connection info + decrypted secret for SSH (+ single-hop jump). Never exposed to renderer. */
+export function getDeviceConn(id: string): DeviceConn | null {
+  const r = requireDb()
+    .prepare('SELECT ip, port, user, auth_type, secret_password, jump_id FROM devices WHERE id = ?')
+    .get(id) as
+    | { ip: string; port: number; user: string; auth_type: AuthType; secret_password: string | null; jump_id: string | null }
+    | undefined
+  if (!r) return null
+  const conn: DeviceConn = {
+    host: r.ip,
+    port: r.port || 22,
+    user: r.user || 'root',
+    authType: r.auth_type,
+    password: r.secret_password
+  }
+  if (r.jump_id) {
+    const j = requireDb()
+      .prepare('SELECT ip, port, user, secret_password FROM devices WHERE id = ?')
+      .get(r.jump_id) as { ip: string; port: number; user: string; secret_password: string | null } | undefined
+    if (j && j.ip && !j.ip.includes('x.x')) {
+      conn.jump = { host: j.ip, port: j.port || 22, user: j.user || 'root', password: j.secret_password }
+    }
+  }
+  return conn
+}
+
+/** TOFU host-key check: 'new' (just stored), 'match', or 'changed'. Main-process only. */
+export function checkHostKey(host: string, port: number, keyHash: string): 'new' | 'match' | 'changed' {
+  const d = requireDb()
+  const row = d.prepare('SELECT key_hash FROM known_hosts WHERE host = ? AND port = ?').get(host, port) as
+    | { key_hash: string }
+    | undefined
+  if (!row) {
+    d.prepare('INSERT INTO known_hosts (host, port, key_hash, first_seen) VALUES (?, ?, ?, ?)').run(
+      host,
+      port,
+      keyHash,
+      Date.now()
+    )
+    return 'new'
+  }
+  return row.key_hash === keyHash ? 'match' : 'changed'
+}
+
+/** Forget a saved host key so the next connect re-pins it (for the "trust new key" action). */
+export function forgetHostKey(host: string, port: number): void {
+  requireDb().prepare('DELETE FROM known_hosts WHERE host = ? AND port = ?').run(host, port)
+}
+
+export function listSnippets(): Snippet[] {
+  return requireDb().prepare('SELECT id, name, command FROM snippets ORDER BY name').all() as Snippet[]
+}
+
+export function createSnippet(name: string, command: string): Snippet {
+  const id = randomUUID()
+  requireDb()
+    .prepare('INSERT INTO snippets (id, name, command, created_at) VALUES (?, ?, ?, ?)')
+    .run(id, name.trim() || 'snippet', command, Date.now())
+  return { id, name: name.trim() || 'snippet', command }
+}
+
+export function deleteSnippet(id: string): void {
+  requireDb().prepare('DELETE FROM snippets WHERE id = ?').run(id)
+}
+
+export function listSubscriptions(): Subscription[] {
+  return requireDb()
+    .prepare(
+      'SELECT id, name, provider, category, amount, currency, period, next_renewal as nextRenewal, notes FROM subscriptions ORDER BY name'
+    )
+    .all() as Subscription[]
+}
+
+export function createSubscription(input: SubscriptionInput): Subscription {
+  const sub: Subscription = {
+    id: randomUUID(),
+    name: input.name.trim() || 'Подписка',
+    provider: input.provider ?? '',
+    category: input.category ?? 'Прочее',
+    amount: input.amount || 0,
+    currency: input.currency ?? 'USD',
+    period: input.period ?? 'mo',
+    nextRenewal: input.nextRenewal ?? null,
+    notes: input.notes ?? null
+  }
+  requireDb()
+    .prepare(
+      `INSERT INTO subscriptions (id, name, provider, category, amount, currency, period, next_renewal, notes, created_at)
+       VALUES (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @notes, @created_at)`
+    )
+    .run({ ...sub, created_at: Date.now() })
+  return sub
+}
+
+export function updateSubscription(id: string, input: SubscriptionInput): Subscription {
+  const cur = listSubscriptions().find((s) => s.id === id)
+  if (!cur) throw new Error('Subscription not found')
+  const sub: Subscription = {
+    id,
+    name: input.name?.trim() || cur.name,
+    provider: input.provider ?? cur.provider,
+    category: input.category ?? cur.category,
+    amount: input.amount ?? cur.amount,
+    currency: input.currency ?? cur.currency,
+    period: input.period ?? cur.period,
+    nextRenewal: input.nextRenewal !== undefined ? input.nextRenewal : cur.nextRenewal,
+    notes: input.notes !== undefined ? input.notes : cur.notes
+  }
+  requireDb()
+    .prepare(
+      `UPDATE subscriptions SET name=@name, provider=@provider, category=@category, amount=@amount,
+       currency=@currency, period=@period, next_renewal=@nextRenewal, notes=@notes WHERE id=@id`
+    )
+    .run(sub)
+  return sub
+}
+
+export function deleteSubscription(id: string): void {
+  requireDb().prepare('DELETE FROM subscriptions WHERE id = ?').run(id)
+}
+
+export function listWallets(): Wallet[] {
+  return requireDb().prepare('SELECT id, chain, address, label FROM wallets ORDER BY created_at').all() as Wallet[]
+}
+
+export function createWallet(input: WalletInput): Wallet {
+  const wallet: Wallet = {
+    id: randomUUID(),
+    chain: (input.chain || 'ETH').toUpperCase(),
+    address: input.address.trim(),
+    label: input.label?.trim() || input.chain.toUpperCase()
+  }
+  requireDb()
+    .prepare('INSERT INTO wallets (id, chain, address, label, created_at) VALUES (@id, @chain, @address, @label, @created_at)')
+    .run({ ...wallet, created_at: Date.now() })
+  return wallet
+}
+
+export function deleteWallet(id: string): void {
+  requireDb().prepare('DELETE FROM wallets WHERE id = ?').run(id)
+}
+
+/** Append a metric sample and keep only the most recent 200 per device. */
+export function recordSnapshot(
+  deviceId: string,
+  m: { cpu?: number; ramUsed?: number; ramTotal?: number; status?: string }
+): void {
+  const d = requireDb()
+  d.prepare(
+    'INSERT INTO metric_snapshots (device_id, ts, cpu, ram_used, ram_total, status) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(deviceId, Date.now(), m.cpu ?? null, m.ramUsed ?? null, m.ramTotal ?? null, m.status ?? 'unknown')
+  d.prepare(
+    `DELETE FROM metric_snapshots WHERE device_id = ? AND rowid NOT IN
+     (SELECT rowid FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT 200)`
+  ).run(deviceId, deviceId)
+}
+
+export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
+  const rows = requireDb()
+    .prepare(
+      'SELECT ts, cpu, ram_used as ramUsed, ram_total as ramTotal, status FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT ?'
+    )
+    .all(deviceId, limit) as MetricSnapshot[]
+  return rows.reverse()
+}
+
+// AI accounts — api_key lives in the SQLCipher DB; the DTO exposes only hasKey (never the key).
+export function listAiAccounts(): AiAccount[] {
+  const rows = requireDb()
+    .prepare('SELECT id, provider, label, api_key, plan, notes FROM ai_accounts ORDER BY created_at')
+    .all() as Array<{ id: string; provider: string; label: string; api_key: string | null; plan: string | null; notes: string | null }>
+  return rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    label: r.label || r.provider,
+    plan: r.plan || '',
+    hasKey: Boolean(r.api_key),
+    notes: r.notes
+  }))
+}
+
+export function createAiAccount(input: AiAccountInput): AiAccount {
+  const id = randomUUID()
+  requireDb()
+    .prepare('INSERT INTO ai_accounts (id, provider, label, api_key, plan, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(id, input.provider, input.label?.trim() || input.provider, input.apiKey || null, input.plan ?? '', input.notes ?? null, Date.now())
+  return {
+    id,
+    provider: input.provider,
+    label: input.label?.trim() || input.provider,
+    plan: input.plan ?? '',
+    hasKey: Boolean(input.apiKey),
+    notes: input.notes ?? null
+  }
+}
+
+export function deleteAiAccount(id: string): void {
+  requireDb().prepare('DELETE FROM ai_accounts WHERE id = ?').run(id)
+}
+
+/** Main-process only: decrypt the stored key for a validity/quota probe. Never exposed to the renderer. */
+export function getAiKey(id: string): string | null {
+  const r = requireDb().prepare('SELECT api_key FROM ai_accounts WHERE id = ?').get(id) as { api_key: string | null } | undefined
+  return r?.api_key ?? null
+}
+
+// Cross-domain links (foundation for "one object, many facets"). Populated as tabs move mock→DB.
+export interface Link {
+  id: string
+  from_id: string
+  to_id: string
+  kind: string | null
+}
+
+export function createLink(fromId: string, toId: string, kind: string): Link {
+  const id = randomUUID()
+  requireDb()
+    .prepare('INSERT INTO links (id, from_id, to_id, kind, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, fromId, toId, kind, Date.now())
+  return { id, from_id: fromId, to_id: toId, kind }
+}
+
+export function listLinks(entityId: string): Link[] {
+  return requireDb()
+    .prepare('SELECT id, from_id, to_id, kind FROM links WHERE from_id = ? OR to_id = ?')
+    .all(entityId, entityId) as Link[]
+}
+
+export function deleteLink(id: string): void {
+  requireDb().prepare('DELETE FROM links WHERE id = ?').run(id)
+}

@@ -1,0 +1,15 @@
+# Nexus One — local app state, never committed
+node_modules/
+out/
+dist/
+dist-electron/
+*.log
+
+# App data lives in Electron userData (encrypted vault), never in repo — guard anyway
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+.DS_Store
