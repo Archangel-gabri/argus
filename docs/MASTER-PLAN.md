@@ -50,9 +50,10 @@ Zustand · Recharts · xterm.js (`@xterm/xterm` + addon-fit) · `ssh2` · `bette
 **Дизайн:** тёмная тема `#10141d/#1a202c/#2d3748`, бирюза `#22d3ee`, Inter; общие примитивы
 (Page/PageHeader/Card/StatTile/SourceBadge/Donut). Контракт — `DESIGN.md` + `design/tokens.json`.
 
-**Известный долг:** `npm run typecheck` ругается на аннотации `React.JSX.Element` (сборка/работа не
-затронуты); host-key принимается без пиннинга (TOFU — в харднинг); только парольная SSH-авторизация
-(ключи — дальше); FirstByte-лого не нашлось (монограмма).
+**Известный долг (обновлено 2026-07-01):** typecheck и `electron-vite build` зелёные
+(React.JSX.Element-долг закрыт); host-key **пиннится TOFU** + recovery на смену ключа;
+SSH-авторизация — **пароль ИЛИ приватный ключ+passphrase** (импорт из файла/вставка). Остаётся:
+**генерация** SSH-ключей (Ed25519) и agent-auth/agent-forward; FirstByte-лого не нашлось (монограмма).
 
 ---
 
@@ -386,9 +387,11 @@ IP-geo: ip-api (без ключа) / ipinfo (страна) / **self-hosted MaxMi
 ## H. Роадмап по фазам
 - **✅ Phase 0–1 (сделано):** оболочка, зашифрованный vault + lock, SSH-терминал + agentless-метрики, CRUD устройств,
   6 вкладок (Devices функц., остальные каркасы), логотипы хостеров.
-- **Phase 2 — SSH-паритет + оболочка-премиум:** SFTP-браузер, jump-host цепочки, host-key TOFU, импорт `~/.ssh/config`,
-  порт-форвардинг, терминал QoL (split/поиск/темы), snippets+broadcast; **командная палитра ⌘K**; система статусов;
-  **авто-провижининг Flow 1** (`nexus-probe.sh` + импорт ssh_config + tailscale-discovery).
+- **✅ Phase 2 (в основном сделано) — SSH-паритет + оболочка-премиум:** SFTP-браузер ✅, jump-host цепочки ✅,
+  host-key TOFU ✅, импорт `~/.ssh/config` ✅, порт-форвардинг ✅, терминал (поиск ✅ / split — TODO),
+  snippets+broadcast ✅, **⌘K-палитра** ✅, 6-статусов ✅, метрики+история-спарклайны ✅, **SSH key auth** ✅,
+  tailscale-discovery ✅. Остаток Phase 2: **авто-провижининг Flow 1** (`nexus-probe.sh`), split-терминал,
+  генерация Ed25519-ключей.
 - **Phase 3 — мониторинг + деньги:** история метрик + пороговые алерты (ntfy); опц. Beszel-агент; Subscriptions IMAP/Gmail
   парсинг + recurring-детект + инфра-биллинг; Banks крипто-кошельки (viem/TON/BTC/SOL) + T-Invest + импорт выписок.
 - **Phase 4 — устройства + ИИ + стриминг:** KDE Connect (телефон), Galaxy Buds, WoL/ПК; AI Accounts вживую (OpenRouter
