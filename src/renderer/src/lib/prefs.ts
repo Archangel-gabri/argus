@@ -1,0 +1,17 @@
+// UI-настройки (НЕ секреты) — localStorage. Секреты живут только в vault.
+export type Prefs = { autolockMin: 0 | 5 | 15 | 30; reduceMotion: boolean }
+
+const KEY = 'argus.prefs'
+
+export function loadPrefs(): Prefs {
+  try {
+    return { autolockMin: 0, reduceMotion: false, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
+  } catch {
+    return { autolockMin: 0, reduceMotion: false }
+  }
+}
+
+export function savePrefs(p: Prefs): void {
+  localStorage.setItem(KEY, JSON.stringify(p))
+  document.documentElement.classList.toggle('reduce-motion', p.reduceMotion)
+}

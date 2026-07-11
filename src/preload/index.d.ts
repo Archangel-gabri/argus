@@ -34,6 +34,7 @@ export interface ArgusApi {
     initialize: (password: string) => Promise<VaultResult>
     unlock: (password: string) => Promise<VaultResult>
     lock: () => Promise<VaultState>
+    changePassword: (current: string, next: string) => Promise<{ ok: boolean; error?: string }>
   }
   devices: {
     list: () => Promise<DeviceDTO[]>

@@ -8,7 +8,9 @@ const api = {
     state: () => ipcRenderer.invoke('vault:state'),
     initialize: (password: string) => ipcRenderer.invoke('vault:initialize', password),
     unlock: (password: string) => ipcRenderer.invoke('vault:unlock', password),
-    lock: () => ipcRenderer.invoke('vault:lock')
+    lock: () => ipcRenderer.invoke('vault:lock'),
+    changePassword: (current: string, next: string) =>
+      ipcRenderer.invoke('vault:changePassword', current, next)
   },
   devices: {
     list: () => ipcRenderer.invoke('devices:list'),

@@ -4,8 +4,8 @@ import {
   Server,
   Landmark,
   Repeat,
-  MonitorPlay,
   Bot,
+  Settings,
   type LucideIcon
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -26,8 +26,8 @@ const INFRA: NavItem[] = [
   { id: 'devices', label: 'Fleet', icon: Server },
   { id: 'banks', label: 'Finance', icon: Landmark },
   { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
-  { id: 'streaming', label: 'Streaming', icon: MonitorPlay },
-  { id: 'ai', label: 'AI Accounts', icon: Bot }
+  { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'settings', label: 'Settings', icon: Settings }
 ]
 
 function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.Element {
@@ -67,6 +67,7 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.E
 export function Sidebar(): React.JSX.Element {
   const search = useUI((s) => s.search)
   const setSearch = useUI((s) => s.setSearch)
+  const setView = useUI((s) => s.setView)
   const deviceCount = useDevices((s) => s.devices.length)
   const aiCount = useAi((s) => s.accounts.length)
   const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: aiCount }
@@ -127,6 +128,13 @@ export function Sidebar(): React.JSX.Element {
             <div className="truncate text-sm font-medium text-white">Danya Kubrak</div>
             <div className="truncate text-[11px] text-slate-500">owner · HubVPN</div>
           </div>
+          <button
+            onClick={() => setView('settings')}
+            className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"
+            aria-label="Settings"
+          >
+            <Settings className="h-[18px] w-[18px]" />
+          </button>
         </div>
       </div>
     </aside>

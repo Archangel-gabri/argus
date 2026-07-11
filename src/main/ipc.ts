@@ -58,6 +58,15 @@ export function registerIpc(): void {
     return state()
   })
 
+  ipcMain.handle('vault:changePassword', async (_e, current: unknown, next: unknown) => {
+    try {
+      await vault.changePassword(asString(current), asString(next))
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
+
   ipcMain.handle('devices:list', () => (vault.isUnlocked() ? vault.listDevices() : []))
 
   ipcMain.handle('devices:create', (_e, input: DeviceInput) => {

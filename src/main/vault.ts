@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
 import { SEED_DEVICES } from './seed'
@@ -228,6 +228,41 @@ export function lock(): void {
     }
     db = null
   }
+}
+
+/** Смена мастер-пароля: проверка текущего отдельным подключением → WAL-checkpoint →
+ *  SQLCipher rekey → meta с новой солью. Порядок консервативный: новая meta пишется во
+ *  временный файл ДО rekey и переименовывается ПОСЛЕ (упавший rekey не портит meta;
+ *  упавший rename оставляет .new рядом для ручного восстановления). */
+export async function changePassword(current: string, next: string): Promise<void> {
+  if (!isInitialized()) throw new Error('Vault not initialized')
+  if (!next || next.length < 6) throw new Error('Новый пароль — минимум 6 символов')
+  const meta = JSON.parse(readFileSync(metaPath(), 'utf8')) as Meta
+  const curKey = await deriveKeyHex(current, Buffer.from(meta.salt, 'hex'))
+  const probe = new Database(dbPath())
+  try {
+    probe.pragma(`cipher='sqlcipher'`)
+    probe.pragma(`key="x'${curKey}'"`)
+    probe.prepare('SELECT count(*) AS n FROM sqlite_master').get()
+  } catch {
+    try {
+      probe.close()
+    } catch {
+      /* ignore */
+    }
+    throw new Error('Неверный текущий пароль')
+  }
+  probe.close()
+  const salt = randomBytes(16)
+  const newKey = await deriveKeyHex(next, salt)
+  const nextMeta: Meta = { ...meta, salt: salt.toString('hex') }
+  writeFileSync(metaPath() + '.new', JSON.stringify(nextMeta), { mode: 0o600 })
+  const d = db ?? openEncrypted(curKey)
+  d.pragma('wal_checkpoint(TRUNCATE)')
+  d.pragma(`rekey="x'${newKey}'"`)
+  renameSync(metaPath() + '.new', metaPath())
+  if (db) db = d
+  else d.close()
 }
 
 function requireDb(): Database.Database {

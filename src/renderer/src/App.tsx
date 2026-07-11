@@ -4,8 +4,8 @@ import { DashboardView } from './views/DashboardView'
 import { DevicesView } from './views/DevicesView'
 import { BanksView } from './views/BanksView'
 import { SubscriptionsView } from './views/SubscriptionsView'
-import { StreamingView } from './views/StreamingView'
 import { AIAccountsView } from './views/AIAccountsView'
+import { SettingsView } from './views/SettingsView'
 import { LockScreen } from './components/LockScreen'
 import { DeviceDrawer } from './components/DeviceDrawer'
 import { CommandPalette } from './components/CommandPalette'
@@ -14,6 +14,10 @@ import { BroadcastPanel } from './components/BroadcastPanel'
 import { useUI, type ViewId } from './store/ui'
 import { useVault } from './store/vault'
 import { useDevices } from './store/devices'
+import { useWallets } from './store/wallets'
+import { useSubs } from './store/subs'
+import { useAi } from './store/ai'
+import { loadPrefs, savePrefs } from './lib/prefs'
 
 function renderView(view: ViewId): React.JSX.Element {
   switch (view) {
@@ -23,10 +27,10 @@ function renderView(view: ViewId): React.JSX.Element {
       return <BanksView />
     case 'subscriptions':
       return <SubscriptionsView />
-    case 'streaming':
-      return <StreamingView />
     case 'ai':
       return <AIAccountsView />
+    case 'settings':
+      return <SettingsView />
     default:
       return <DashboardView />
   }
@@ -44,8 +48,37 @@ export default function App(): React.JSX.Element {
   }, [refresh])
 
   useEffect(() => {
-    if (status === 'unlocked') loadDevices()
+    if (status !== 'unlocked') return
+    loadDevices()
+    // Кросс-доменные сторы для Dashboard/палитры/бейджей.
+    useWallets.getState().load()
+    useSubs.getState().load()
+    useAi.getState().load()
   }, [status, loadDevices])
+
+  // UI-préfs (reduce-motion) применяются при старте.
+  useEffect(() => {
+    savePrefs(loadPrefs())
+  }, [])
+
+  // Авто-лок по бездействию (Settings → Security). 0 = выключен.
+  useEffect(() => {
+    if (status !== 'unlocked') return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const arm = (): void => {
+      if (timer) clearTimeout(timer)
+      const min = loadPrefs().autolockMin
+      if (!min) return
+      timer = setTimeout(() => useVault.getState().lock(), min * 60_000)
+    }
+    arm()
+    const events: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'wheel']
+    events.forEach((e) => window.addEventListener(e, arm, { passive: true }))
+    return () => {
+      if (timer) clearTimeout(timer)
+      events.forEach((e) => window.removeEventListener(e, arm))
+    }
+  }, [status])
 
   // Poll agentless metrics while unlocked so history + sparklines accumulate.
   useEffect(() => {

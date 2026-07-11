@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { DeviceDTO } from '@/types'
 
-export type ViewId = 'dashboard' | 'devices' | 'banks' | 'subscriptions' | 'streaming' | 'ai'
+export type ViewId = 'dashboard' | 'devices' | 'banks' | 'subscriptions' | 'ai' | 'settings'
 
 export type DialogState = { mode: 'closed' } | { mode: 'new' } | { mode: 'edit'; device: DeviceDTO }
 

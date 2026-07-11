@@ -48,4 +48,10 @@
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+
+  /* Settings → Appearance → reduce motion */
+  .reduce-motion * {
+    animation: none !important;
+    transition: none !important;
+  }
 }

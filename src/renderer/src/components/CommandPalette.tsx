@@ -6,8 +6,8 @@ import {
   LayoutDashboard,
   Landmark,
   Repeat,
-  MonitorPlay,
   Bot,
+  Settings,
   TerminalSquare,
   Plus,
   RefreshCw,
@@ -20,17 +20,17 @@ import {
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import { useVault } from '@/store/vault'
-import { MOCK_SUBSCRIPTIONS } from '@/data/subscriptions'
-import { MOCK_AI } from '@/data/ai'
-import { MOCK_HOLDINGS } from '@/data/finance'
+import { useSubs } from '@/store/subs'
+import { useAi } from '@/store/ai'
+import { useWallets } from '@/store/wallets'
 
 const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'devices', label: 'Devices', icon: Server },
-  { id: 'banks', label: 'Banks', icon: Landmark },
+  { id: 'devices', label: 'Fleet', icon: Server },
+  { id: 'banks', label: 'Finance', icon: Landmark },
   { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
-  { id: 'streaming', label: 'Streaming', icon: MonitorPlay },
-  { id: 'ai', label: 'AI Accounts', icon: Bot }
+  { id: 'ai', label: 'AI', icon: Bot },
+  { id: 'settings', label: 'Settings', icon: Settings }
 ]
 
 const GROUP =
@@ -73,6 +73,9 @@ export function CommandPalette(): React.JSX.Element | null {
   const setSshImport = useUI((s) => s.setSshImport)
   const setBroadcast = useUI((s) => s.setBroadcast)
   const lock = useVault((s) => s.lock)
+  const subs = useSubs((s) => s.subs)
+  const aiAccounts = useAi((s) => s.accounts)
+  const wallets = useWallets((s) => s.wallets)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -144,34 +147,46 @@ export function CommandPalette(): React.JSX.Element | null {
             ))}
           </Command.Group>
 
-          <Command.Group heading="Подписки" className={GROUP}>
-            {MOCK_SUBSCRIPTIONS.map((s) => (
-              <Item
-                key={s.id}
-                icon={Repeat}
-                value={`sub ${s.name} ${s.category}`}
-                onSelect={() => run(() => setView('subscriptions'))}
-              >
-                {s.name}
-              </Item>
-            ))}
-          </Command.Group>
+          {subs.length > 0 && (
+            <Command.Group heading="Подписки" className={GROUP}>
+              {subs.map((s) => (
+                <Item
+                  key={s.id}
+                  icon={Repeat}
+                  value={`sub ${s.name} ${s.category}`}
+                  onSelect={() => run(() => setView('subscriptions'))}
+                >
+                  {s.name}
+                </Item>
+              ))}
+            </Command.Group>
+          )}
 
-          <Command.Group heading="ИИ-аккаунты" className={GROUP}>
-            {MOCK_AI.map((a) => (
-              <Item key={a.id} icon={Bot} value={`ai ${a.provider} ${a.plan}`} onSelect={() => run(() => setView('ai'))}>
-                {a.provider}
-              </Item>
-            ))}
-          </Command.Group>
+          {aiAccounts.length > 0 && (
+            <Command.Group heading="ИИ-аккаунты" className={GROUP}>
+              {aiAccounts.map((a) => (
+                <Item key={a.id} icon={Bot} value={`ai ${a.provider} ${a.label}`} onSelect={() => run(() => setView('ai'))}>
+                  {a.label}
+                </Item>
+              ))}
+            </Command.Group>
+          )}
 
-          <Command.Group heading="Активы" className={GROUP}>
-            {MOCK_HOLDINGS.map((h) => (
-              <Item key={h.id} icon={Landmark} value={`holding ${h.name}`} onSelect={() => run(() => setView('banks'))}>
-                {h.name}
-              </Item>
-            ))}
-          </Command.Group>
+          {wallets.length > 0 && (
+            <Command.Group heading="Кошельки" className={GROUP}>
+              {wallets.map((w) => (
+                <Item
+                  key={w.id}
+                  icon={Landmark}
+                  value={`wallet ${w.label} ${w.chain}`}
+                  right={w.chain}
+                  onSelect={() => run(() => setView('banks'))}
+                >
+                  {w.label}
+                </Item>
+              ))}
+            </Command.Group>
+          )}
 
           <Command.Group heading="Команды" className={GROUP}>
             <Item
