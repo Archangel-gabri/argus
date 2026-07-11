@@ -18,6 +18,17 @@
 > `useUI.openTerminal/openSftp/openForwards` теперь открывают drawer на нужном табе.
 > Эталоны B2: `assets/screenshots/argus-b2-{fleet,drawer,drawer-metrics}.png`.
 >
+> **B3 применён (2026-07-11, ветка `feat/argus-b3`):** у устройств появился **kind**
+> (server/pc/phone/watch/buds/router/other; safe-миграция ALTER ADD COLUMN); экран Devices
+> стал **Fleet** с группами-чипами (Все/Servers/Personal/Network); не-SSH kind'ы — паспорт-
+> карточки (без CPU/RAM/SSH, drawer только Обзор). **AI живой** (стор + CRUD/check на готовом
+> `ai:*` IPC; §4.6 и §8-пункт про мок устарели). **Dashboard live** (net worth из кошельков,
+> AI из стора). **Streaming удалён** (§4.5 устарел) — Screen станет гранью в C. **Settings**
+> появился (§12.1 закрыт): авто-лок, смена мастер-пароля (`vault:changePassword`, SQLCipher
+> rekey), reduce-motion; шестерёнка футера работает. Онбординг: zxcvbn-гейт (score≥3) +
+> подтверждение «восстановления нет». Палитра читает живые сторы (моки §8 в палитре устарели).
+> Лейблы: Devices→Fleet, Banks→Finance. Эталоны: `argus-b3-{fleet-groups,dashboard,ai,settings}.png`.
+>
 > Делаешь редизайн — держи это рядом. Раздел §7 (карта кнопок) и §8 (живое vs мок) — самые
 > важные: не трать время на стилизацию мёртвых контролов, не думая, что они рабочие.
 >
