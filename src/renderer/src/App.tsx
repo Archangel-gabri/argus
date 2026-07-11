@@ -7,12 +7,10 @@ import { SubscriptionsView } from './views/SubscriptionsView'
 import { StreamingView } from './views/StreamingView'
 import { AIAccountsView } from './views/AIAccountsView'
 import { LockScreen } from './components/LockScreen'
-import { TerminalPanel } from './components/TerminalPanel'
+import { DeviceDrawer } from './components/DeviceDrawer'
 import { CommandPalette } from './components/CommandPalette'
 import { SshImportDialog } from './components/SshImportDialog'
-import { SftpBrowser } from './components/SftpBrowser'
 import { BroadcastPanel } from './components/BroadcastPanel'
-import { ForwardsPanel } from './components/ForwardsPanel'
 import { useUI, type ViewId } from './store/ui'
 import { useVault } from './store/vault'
 import { useDevices } from './store/devices'
@@ -63,12 +61,10 @@ export default function App(): React.JSX.Element {
     <div className="flex h-screen overflow-hidden bg-bg">
       <Sidebar />
       <main className="flex-1 overflow-hidden">{renderView(view)}</main>
-      <TerminalPanel />
+      <DeviceDrawer />
       <CommandPalette />
       <SshImportDialog />
-      <SftpBrowser />
       <BroadcastPanel />
-      <ForwardsPanel />
     </div>
   )
 }

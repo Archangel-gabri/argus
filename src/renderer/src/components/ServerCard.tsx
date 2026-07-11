@@ -88,6 +88,7 @@ export function ProviderBadge({
 
 export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
   const openEdit = useUI((st) => st.openEdit)
+  const openDetail = useUI((st) => st.openDetail)
   const openTerminal = useUI((st) => st.openTerminal)
   const openSftp = useUI((st) => st.openSftp)
   const openForwards = useUI((st) => st.openForwards)
@@ -111,9 +112,16 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
 
   return (
     <div className="group rounded-xl border border-border bg-card/80 p-4 shadow-lg shadow-black/20 transition-colors hover:border-slate-600/60 hover:bg-card">
-      {/* Сцена: изо-портрет + статус-кольцо + флаг + бейдж хостера */}
+      {/* Сцена: изо-портрет + статус-кольцо + флаг + бейдж хостера. Клик — детальный drawer. */}
       <div
-        className="relative h-44 overflow-hidden rounded-lg bg-bg"
+        onClick={() => openDetail(s)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') openDetail(s)
+        }}
+        aria-label={`Open ${s.name}`}
+        className="relative h-44 cursor-pointer overflow-hidden rounded-lg bg-bg"
         style={{ boxShadow: `inset 0 0 0 1px ${st.hex}33${st.ring ? `, inset 0 -24px 48px -32px ${st.hex}55` : ''}` }}
       >
         <div

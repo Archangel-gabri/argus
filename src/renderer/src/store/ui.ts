@@ -5,6 +5,8 @@ export type ViewId = 'dashboard' | 'devices' | 'banks' | 'subscriptions' | 'stre
 
 export type DialogState = { mode: 'closed' } | { mode: 'new' } | { mode: 'edit'; device: DeviceDTO }
 
+export type DrawerTab = 'overview' | 'terminal' | 'files' | 'forwards' | 'metrics'
+
 interface UIState {
   view: ViewId
   search: string
@@ -14,21 +16,21 @@ interface UIState {
   openCreate: () => void
   openEdit: (device: DeviceDTO) => void
   closeDialog: () => void
-  terminal: DeviceDTO | null
+  /** Детальный drawer устройства (грани: обзор/терминал/файлы/порты/метрики). */
+  detail: { device: DeviceDTO; tab: DrawerTab } | null
+  openDetail: (device: DeviceDTO, tab?: DrawerTab) => void
+  closeDetail: () => void
+  setDetailTab: (tab: DrawerTab) => void
+  /** Шорткаты-грани: сохраняют старые сигнатуры для карточки/палитры. */
   openTerminal: (device: DeviceDTO) => void
-  closeTerminal: () => void
+  openSftp: (device: DeviceDTO) => void
+  openForwards: (device: DeviceDTO) => void
   palette: boolean
   setPalette: (open: boolean) => void
   sshImport: 'ssh' | 'tailscale' | false
   setSshImport: (v: 'ssh' | 'tailscale' | false) => void
-  sftp: DeviceDTO | null
-  openSftp: (device: DeviceDTO) => void
-  closeSftp: () => void
   broadcast: boolean
   setBroadcast: (open: boolean) => void
-  forwards: DeviceDTO | null
-  openForwards: (device: DeviceDTO) => void
-  closeForwards: () => void
 }
 
 export const useUI = create<UIState>((set) => ({
@@ -40,19 +42,17 @@ export const useUI = create<UIState>((set) => ({
   openCreate: () => set({ dialog: { mode: 'new' } }),
   openEdit: (device) => set({ dialog: { mode: 'edit', device } }),
   closeDialog: () => set({ dialog: { mode: 'closed' } }),
-  terminal: null,
-  openTerminal: (terminal) => set({ terminal }),
-  closeTerminal: () => set({ terminal: null }),
+  detail: null,
+  openDetail: (device, tab = 'overview') => set({ detail: { device, tab } }),
+  closeDetail: () => set({ detail: null }),
+  setDetailTab: (tab) => set((s) => (s.detail ? { detail: { ...s.detail, tab } } : {})),
+  openTerminal: (device) => set({ detail: { device, tab: 'terminal' } }),
+  openSftp: (device) => set({ detail: { device, tab: 'files' } }),
+  openForwards: (device) => set({ detail: { device, tab: 'forwards' } }),
   palette: false,
   setPalette: (palette) => set({ palette }),
   sshImport: false,
   setSshImport: (sshImport) => set({ sshImport }),
-  sftp: null,
-  openSftp: (sftp) => set({ sftp }),
-  closeSftp: () => set({ sftp: null }),
   broadcast: false,
-  setBroadcast: (broadcast) => set({ broadcast }),
-  forwards: null,
-  openForwards: (forwards) => set({ forwards }),
-  closeForwards: () => set({ forwards: null })
+  setBroadcast: (broadcast) => set({ broadcast })
 }))
