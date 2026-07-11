@@ -15,7 +15,8 @@ function createWindow(): void {
     minHeight: 720,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#10141d',
+    backgroundColor: '#121110',
+    icon: join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -41,7 +42,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.nexusone.app')
+  electronApp.setAppUserModelId('com.argus.app')
 
   // Strict CSP in production only (dev stays relaxed so Vite HMR works).
   if (!is.dev) {

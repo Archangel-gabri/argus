@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Lock, ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react'
+import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react'
 import { useVault } from '@/store/vault'
+import wordmark from '@/assets/brand/argus-wordmark.png'
 
 export function LockScreen(): React.JSX.Element {
   const { status, error, busy, keyringBackend, initialize, unlock, refresh } = useVault()
@@ -35,11 +36,9 @@ export function LockScreen(): React.JSX.Element {
     <div className="flex min-h-screen items-center justify-center bg-bg p-6">
       <form onSubmit={submit} className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 text-accent ring-1 ring-accent/30">
-            <Lock className="h-6 w-6" />
-          </div>
+          <img src={wordmark} alt="Argus" className="mx-auto w-56 rounded-xl" />
           <h1 className="mt-4 text-xl font-semibold text-white">
-            {setup ? 'Create your vault' : 'Unlock Nexus One'}
+            {setup ? 'Create your vault' : 'Unlock Argus'}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {setup

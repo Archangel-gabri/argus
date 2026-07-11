@@ -1,7 +1,7 @@
 {
-  "name": "nexus-one",
+  "name": "argus",
   "version": "0.1.0",
-  "description": "Nexus One — personal cross-device command center (servers, finance, subscriptions, AI accounts).",
+  "description": "Argus — personal cross-device command center (servers, finance, subscriptions, devices, AI).",
   "type": "commonjs",
   "main": "./out/main/index.js",
   "author": "Danya Kubrak",

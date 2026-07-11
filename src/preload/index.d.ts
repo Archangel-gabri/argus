@@ -28,7 +28,7 @@ export type ProbeResult = {
   error?: string
 }
 
-export interface NexusApi {
+export interface ArgusApi {
   vault: {
     state: () => Promise<VaultState>
     initialize: (password: string) => Promise<VaultResult>
@@ -127,7 +127,7 @@ export interface NexusApi {
 
 declare global {
   interface Window {
-    api: NexusApi
+    api: ArgusApi
   }
 }
 

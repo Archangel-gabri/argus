@@ -12,6 +12,7 @@ import {
 import { cn } from '@/lib/cn'
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
+import eyeMark from '@/assets/brand/argus-eye.png'
 
 interface NavItem {
   id: ViewId
@@ -72,11 +73,11 @@ export function Sidebar(): React.JSX.Element {
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex items-center gap-3 px-5 pb-5 pt-6">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-lg font-bold text-accent ring-1 ring-accent/30">
-          N
+        <div className="h-9 w-9 shrink-0 overflow-hidden rounded-xl ring-1 ring-accent/30">
+          <img src={eyeMark} alt="" className="h-full w-full object-cover" />
         </div>
         <div className="leading-tight">
-          <div className="text-[15px] font-semibold text-white">Nexus One</div>
+          <div className="text-[15px] font-semibold text-white">Argus</div>
           <div className="text-[11px] text-slate-500">command center</div>
         </div>
       </div>
