@@ -167,9 +167,12 @@ unknown ◇ stone-серый · maintenance ⏸ violet. Никогда не «в
   Security (авто-лок, очистка буфера, смена мастер-пароля, regenerate Recovery Kit) ·
   Data (export/import `.nxs`) · Integrations (Ollama URL, ключи ИИ) · About. Остальные
   разделы дерева — по мере фич.
-- **Онбординг:** welcome → создание vault → **zxcvbn-метр** (гейт по скору) → **обязательный
-  Recovery Kit** (без сохранения не пройти — SPEC р.7) → импорты (ssh_config превью,
+- **Онбординг:** welcome → создание vault → **zxcvbn-метр** (гейт по скору ≥3, сделано в B3)
+  → блокирующее подтверждение «восстановления нет» (сделано в B3) → импорты (ssh_config превью,
   Tailscale) → dashboard с guided empty-states + coach-mark ⌘K.
+  **Recovery Kit → этап C:** требует envelope-архитектуры мастер-ключа (random DB-key,
+  обёрнутый паролем И recovery-фразой) с миграцией живого vault — не делается автономно,
+  только отдельной задачей с бэкапом. Export/import `.nxs` — тоже этап C (та же причина).
 
 ## 7. Инварианты (не ломать — §10 UX-MAP)
 

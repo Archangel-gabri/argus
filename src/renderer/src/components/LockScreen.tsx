@@ -1,14 +1,38 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react'
+import { ZxcvbnFactory } from '@zxcvbn-ts/core'
+import * as zxcvbnCommon from '@zxcvbn-ts/language-common'
+import * as zxcvbnEn from '@zxcvbn-ts/language-en'
+import { cn } from '@/lib/cn'
 import { useVault } from '@/store/vault'
 import wordmark from '@/assets/brand/argus-wordmark.png'
+
+const zxcvbn = new ZxcvbnFactory({
+  dictionary: { ...zxcvbnCommon.dictionary, ...zxcvbnEn.dictionary },
+  graphs: zxcvbnCommon.adjacencyGraphs,
+  translations: zxcvbnEn.translations
+})
+
+// Гейтим по СКОРУ (crack-time), не по составу пароля (MASTER-PLAN C0.3).
+const STRENGTH: Array<{ label: string; bar: string; text: string }> = [
+  { label: 'очень слабый', bar: 'bg-rose-500', text: 'text-rose-400' },
+  { label: 'слабый', bar: 'bg-rose-400', text: 'text-rose-400' },
+  { label: 'так себе', bar: 'bg-amber-400', text: 'text-amber-400' },
+  { label: 'хороший', bar: 'bg-emerald-500', text: 'text-emerald-400' },
+  { label: 'отличный', bar: 'bg-emerald-400', text: 'text-emerald-400' }
+]
 
 export function LockScreen(): React.JSX.Element {
   const { status, error, busy, keyringBackend, initialize, unlock, refresh } = useVault()
   const [pw, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [ack, setAck] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
   const setup = status === 'uninitialized'
+
+  const strength = useMemo(() => (setup && pw ? zxcvbn.check(pw) : null), [setup, pw])
+  const score = strength?.score ?? 0
+  const setupGateOk = !setup || (score >= 3 && ack && pw === confirm && pw.length >= 6)
 
   useEffect(() => {
     refresh()
@@ -23,6 +47,14 @@ export function LockScreen(): React.JSX.Element {
     }
     if (setup && pw !== confirm) {
       setLocalError('Пароли не совпадают')
+      return
+    }
+    if (setup && score < 3) {
+      setLocalError('Пароль слишком слабый — возьми passphrase из 3-4 слов')
+      return
+    }
+    if (setup && !ack) {
+      setLocalError('Подтверди, что понимаешь: восстановления нет')
       return
     }
     const ok = setup ? await initialize(pw) : await unlock(pw)
@@ -57,13 +89,45 @@ export function LockScreen(): React.JSX.Element {
             className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
           />
           {setup && (
-            <input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder="Confirm password"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-            />
+            <>
+              {pw && strength && (
+                <div>
+                  <div className="flex gap-1">
+                    {[0, 1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          'h-1 flex-1 rounded-full transition-colors',
+                          i < score ? STRENGTH[score].bar : 'bg-slate-600/40'
+                        )}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[11px]">
+                    <span className={STRENGTH[score].text}>{STRENGTH[score].label}</span>
+                    <span className="text-slate-600">
+                      взлом ≈ {strength.crackTimes.offlineSlowHashingXPerSecond.display}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <input
+                type="password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                placeholder="Confirm password"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
+              />
+              <label className="flex items-start gap-2 text-[11px] leading-snug text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={ack}
+                  onChange={(e) => setAck(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#f59e0b]"
+                />
+                Понимаю: восстановления мастер-пароля НЕТ — потеря пароля = потеря всех данных vault.
+              </label>
+            </>
           )}
         </div>
 
@@ -76,7 +140,7 @@ export function LockScreen(): React.JSX.Element {
 
         <button
           type="submit"
-          disabled={busy}
+          disabled={busy || !setupGateOk}
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover disabled:opacity-60"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
