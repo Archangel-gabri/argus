@@ -3,10 +3,19 @@ import { X, Loader2, Sparkles, Upload } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
-import type { AuthType, Currency, Status, DeviceInput } from '@/types'
+import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
 
 const CURRENCIES: Currency[] = ['USD', 'EUR', 'RUB']
 const STATUSES: Status[] = ['online', 'degraded', 'offline', 'reboot', 'unknown', 'maintenance']
+const KINDS: Array<{ id: DeviceKind; label: string }> = [
+  { id: 'server', label: 'Сервер' },
+  { id: 'pc', label: 'ПК' },
+  { id: 'phone', label: 'Телефон' },
+  { id: 'watch', label: 'Часы' },
+  { id: 'buds', label: 'Наушники' },
+  { id: 'router', label: 'Роутер' },
+  { id: 'other', label: 'Другое' }
+]
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 const api = typeof window !== 'undefined' ? window.api : undefined
@@ -14,6 +23,7 @@ const api = typeof window !== 'undefined' ? window.api : undefined
 interface FormFields {
   name: string
   provider: string
+  kind: DeviceKind
   ip: string
   port: string
   user: string
@@ -32,7 +42,7 @@ interface FormFields {
 }
 
 const EMPTY: FormFields = {
-  name: '', provider: '', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
+  name: '', provider: '', kind: 'server', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
   status: 'online', amount: '', currency: 'USD', consoleUrl: '',
   authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: ''
 }
@@ -65,7 +75,7 @@ export function DeviceDialog(): React.JSX.Element | null {
     if (dialog.mode === 'edit') {
       const d = dialog.device
       setF({
-        name: d.name, provider: d.provider, ip: d.ip, port: String(d.port), user: d.user, os: d.os,
+        name: d.name, provider: d.provider, kind: d.kind, ip: d.ip, port: String(d.port), user: d.user, os: d.os,
         country: d.country, flag: d.flag, status: d.status,
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
@@ -122,6 +132,7 @@ export function DeviceDialog(): React.JSX.Element | null {
     const input: DeviceInput = {
       name: f.name.trim(),
       provider: f.provider.trim() || 'Custom',
+      kind: f.kind,
       ip: f.ip.trim(),
       port: parseInt(f.port, 10) || 22,
       user: f.user.trim() || 'root',
@@ -168,6 +179,17 @@ export function DeviceDialog(): React.JSX.Element | null {
             </Field>
             <Field label="Provider">
               <input className={inputCls} value={f.provider} onChange={set('provider')} placeholder="Hetzner" />
+            </Field>
+            <Field label="Тип">
+              <select
+                className={inputCls}
+                value={f.kind}
+                onChange={(e) => setF((p) => ({ ...p, kind: e.target.value as DeviceKind }))}
+              >
+                {KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>{k.label}</option>
+                ))}
+              </select>
             </Field>
             <Field label="Status">
               <select className={inputCls} value={f.status} onChange={set('status')}>

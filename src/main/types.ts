@@ -1,6 +1,8 @@
 export type Status = 'online' | 'degraded' | 'offline' | 'reboot' | 'unknown' | 'maintenance'
 export type Currency = 'USD' | 'EUR' | 'RUB'
 export type AuthType = 'password' | 'key' | 'none'
+/** Класс сущности во Fleet: servers = server; network = router; остальное = personal. */
+export type DeviceKind = 'server' | 'pc' | 'phone' | 'watch' | 'buds' | 'router' | 'other'
 
 /** Full row as stored in the encrypted DB (includes secrets — main process only). */
 export interface DeviceRow {
@@ -8,6 +10,7 @@ export interface DeviceRow {
   name: string
   provider: string
   role: string | null
+  kind: DeviceKind
   ip: string
   port: number
   user: string
@@ -39,6 +42,7 @@ export interface DeviceDTO {
   name: string
   provider: string
   role: string | null
+  kind: DeviceKind
   ip: string
   port: number
   user: string
@@ -61,6 +65,7 @@ export interface DeviceInput {
   name: string
   provider: string
   role?: string | null
+  kind?: DeviceKind
   ip?: string
   port?: number
   user?: string

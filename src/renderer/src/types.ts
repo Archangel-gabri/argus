@@ -7,6 +7,7 @@ export type {
   Status,
   Currency,
   AuthType,
+  DeviceKind,
   Snippet,
   Subscription,
   SubscriptionInput,

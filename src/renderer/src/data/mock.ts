@@ -142,11 +142,12 @@ export const spendByProvider = Object.values(
 ).sort((a, b) => b.usd - a.usd)
 
 /** Browser-preview fallback (no Electron API): the same fleet shaped as DeviceDTO[]. */
-export const FALLBACK_DEVICES: DeviceDTO[] = servers.map((s) => ({
+const SERVER_DEVICES: DeviceDTO[] = servers.map((s) => ({
   id: s.id,
   name: s.name,
   provider: s.provider,
   role: s.role ?? null,
+  kind: 'server',
   ip: s.ip,
   port: 22,
   user: s.user,
@@ -163,3 +164,75 @@ export const FALLBACK_DEVICES: DeviceDTO[] = servers.map((s) => ({
   notes: null,
   jumpId: null
 }))
+
+/** Персональные/сетевые превью-девайсы (паспорт-карточки Fleet). */
+const PERSONAL_DEVICES: DeviceDTO[] = [
+  {
+    id: 'pc-castiel',
+    name: 'PC Castiel',
+    provider: 'Home',
+    role: 'dual-boot',
+    kind: 'pc',
+    ip: '100.79.x.x',
+    port: 22,
+    user: 'castiel',
+    country: 'Home',
+    flag: '🏠',
+    os: 'Arch + Windows 11',
+    status: 'unknown',
+    cpu: 0,
+    ram: { used: 0, total: 32 },
+    cost: { amount: 0, currency: 'USD', usd: 0 },
+    consoleUrl: '',
+    authType: 'none',
+    hasSecret: false,
+    notes: 'i9-11900K · RTX 3060 · WoL из сна',
+    jumpId: null
+  },
+  {
+    id: 'galaxy-s8',
+    name: 'Galaxy S8',
+    provider: 'Samsung',
+    role: null,
+    kind: 'phone',
+    ip: '',
+    port: 22,
+    user: '',
+    country: 'Home',
+    flag: '📱',
+    os: 'Android 9',
+    status: 'unknown',
+    cpu: 0,
+    ram: { used: 0, total: 4 },
+    cost: { amount: 0, currency: 'USD', usd: 0 },
+    consoleUrl: '',
+    authType: 'none',
+    hasSecret: false,
+    notes: 'KDE Connect · WoL-пульт для ПК',
+    jumpId: null
+  },
+  {
+    id: 'dlink-825',
+    name: 'D-Link DIR-825',
+    provider: 'D-Link',
+    role: 'router',
+    kind: 'router',
+    ip: '192.168.0.1',
+    port: 22,
+    user: 'admin',
+    country: 'Home',
+    flag: '🌐',
+    os: 'stock fw',
+    status: 'unknown',
+    cpu: 0,
+    ram: { used: 0, total: 0 },
+    cost: { amount: 0, currency: 'USD', usd: 0 },
+    consoleUrl: 'http://192.168.0.1',
+    authType: 'none',
+    hasSecret: false,
+    notes: 'Главный гигабитный роутер · DNS 8.8.8.8',
+    jumpId: null
+  }
+]
+
+export const FALLBACK_DEVICES: DeviceDTO[] = [...SERVER_DEVICES, ...PERSONAL_DEVICES]

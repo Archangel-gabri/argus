@@ -31,7 +31,7 @@ const toUsd = (amount: number, currency: string): number =>
   Math.round(amount * (FX[currency] ?? 1) * 100) / 100
 
 const COLUMNS = [
-  'id', 'name', 'provider', 'role', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
+  'id', 'name', 'provider', 'role', 'kind', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
   'cpu', 'ram_used', 'ram_total', 'cost_amount', 'cost_currency', 'cost_usd', 'console_url',
   'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'sort', 'created_at', 'updated_at'
 ] as const
@@ -63,6 +63,7 @@ function migrate(d: Database.Database): void {
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     role TEXT,
+    kind TEXT DEFAULT 'server',
     ip TEXT DEFAULT '',
     port INTEGER DEFAULT 22,
     user TEXT DEFAULT 'root',
@@ -90,6 +91,12 @@ function migrate(d: Database.Database): void {
   // Add jump_id to pre-existing device tables (fresh tables already have it → ALTER throws, ignored).
   try {
     d.exec('ALTER TABLE devices ADD COLUMN jump_id TEXT')
+  } catch {
+    /* column already exists */
+  }
+  // B3: device class for Fleet groups (existing rows are all servers).
+  try {
+    d.exec(`ALTER TABLE devices ADD COLUMN kind TEXT DEFAULT 'server'`)
   } catch {
     /* column already exists */
   }
@@ -163,6 +170,7 @@ function seedInto(d: Database.Database): void {
     SEED_DEVICES.map(
       (s, i): DeviceRow => ({
         ...s,
+        kind: 'server',
         auth_type: 'none',
         secret_password: null,
         secret_key: null,
@@ -233,6 +241,7 @@ function toDTO(r: DeviceRow): DeviceDTO {
     name: r.name,
     provider: r.provider,
     role: r.role,
+    kind: r.kind ?? 'server',
     ip: r.ip,
     port: r.port,
     user: r.user,
@@ -266,6 +275,7 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     name: input.name.trim(),
     provider: input.provider.trim() || 'Custom',
     role: input.role ?? null,
+    kind: input.kind ?? 'server',
     ip: input.ip ?? '',
     port: input.port ?? 22,
     user: input.user || 'root',
@@ -310,6 +320,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     name: input.name?.trim() || cur.name,
     provider: input.provider?.trim() || cur.provider,
     role: input.role ?? cur.role,
+    kind: input.kind ?? cur.kind ?? 'server',
     ip: input.ip ?? cur.ip,
     port: input.port ?? cur.port,
     user: input.user ?? cur.user,
@@ -334,7 +345,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   }
   d.prepare(
     `UPDATE devices SET
-       name=@name, provider=@provider, role=@role, ip=@ip, port=@port, user=@user,
+       name=@name, provider=@provider, role=@role, kind=@kind, ip=@ip, port=@port, user=@user,
        country=@country, flag=@flag, os=@os, status=@status, cpu=@cpu,
        ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
        cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
