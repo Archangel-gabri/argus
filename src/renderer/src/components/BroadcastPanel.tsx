@@ -138,7 +138,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
                       type="checkbox"
                       checked={!!sel[d.id]}
                       onChange={(e) => setSel((p) => ({ ...p, [d.id]: e.target.checked }))}
-                      className="h-3.5 w-3.5 accent-[#22d3ee]"
+                      className="h-3.5 w-3.5 accent-[#f59e0b]"
                     />
                     {d.name}
                   </label>

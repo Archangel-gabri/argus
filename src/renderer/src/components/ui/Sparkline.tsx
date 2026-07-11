@@ -1,7 +1,7 @@
 /** Tiny dependency-free line chart for a metric series (e.g. CPU history on a card). */
 export function Sparkline({
   data,
-  color = '#22d3ee',
+  color = '#f59e0b',
   width = 72,
   height = 22
 }: {

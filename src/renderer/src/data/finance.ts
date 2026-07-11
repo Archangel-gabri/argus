@@ -21,7 +21,7 @@ export const MOCK_HOLDINGS: Holding[] = [
 ]
 
 export const KIND_COLOR: Record<HoldingKind, string> = {
-  cash: '#22d3ee',
+  cash: '#f59e0b',
   crypto: '#a855f7',
   brokerage: '#22c55e'
 }

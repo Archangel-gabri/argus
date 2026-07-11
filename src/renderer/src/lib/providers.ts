@@ -17,5 +17,5 @@ const GLYPH: Record<string, string> = {
   FirstByte: 'Fb'
 }
 
-export const providerHex = (p: string): string => HEX[p] ?? '#22d3ee'
+export const providerHex = (p: string): string => HEX[p] ?? '#f59e0b'
 export const providerGlyph = (p: string): string => GLYPH[p] ?? p.slice(0, 2)

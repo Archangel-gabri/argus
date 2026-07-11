@@ -13,7 +13,7 @@ const api = typeof window !== 'undefined' ? window.api : undefined
 
 // 6-state system (color + text label = colorblind-safe). Only 'reboot' animates.
 const STATUS: Record<Status, { dot: string; label: string; text: string; ring: boolean }> = {
-  online: { dot: 'bg-accent', label: 'Online', text: 'text-accent', ring: true },
+  online: { dot: 'bg-emerald-500', label: 'Online', text: 'text-emerald-400', ring: true },
   degraded: { dot: 'bg-amber-400', label: 'Degraded', text: 'text-amber-400', ring: false },
   reboot: { dot: 'bg-sky-400', label: 'Rebooting', text: 'text-sky-400', ring: false },
   offline: { dot: 'bg-rose-500', label: 'Offline', text: 'text-rose-400', ring: false },
@@ -39,7 +39,7 @@ function Metric({
       <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
         <span className="shrink-0 text-slate-400">{label}</span>
         {spark && spark.length >= 2 && (
-          <Sparkline data={spark} color={muted ? '#64748b' : '#22d3ee'} width={56} height={16} />
+          <Sparkline data={spark} color={muted ? '#78716c' : '#f59e0b'} width={56} height={16} />
         )}
         <span className="shrink-0 font-medium tabular-nums text-slate-200">{value}</span>
       </div>

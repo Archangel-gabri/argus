@@ -1,10 +1,10 @@
 import type { Subscription } from '@/types'
 
 export const CAT_COLOR: Record<string, string> = {
-  Infra: '#22d3ee',
+  Infra: '#f59e0b',
   AI: '#a855f7',
   Media: '#22c55e',
-  Dev: '#f59e0b',
+  Dev: '#38bdf8',
   Hosting: '#0ea5e9',
   Other: '#64748b'
 }

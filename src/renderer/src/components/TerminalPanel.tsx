@@ -44,10 +44,10 @@ export function TerminalPanel(): React.JSX.Element | null {
       fontSize: 13,
       cursorBlink: true,
       theme: {
-        background: '#0b0e14',
-        foreground: '#cbd5e1',
-        cursor: '#22d3ee',
-        selectionBackground: 'rgba(34,211,238,0.25)'
+        background: '#0e0d0c',
+        foreground: '#d6d3d1',
+        cursor: '#f59e0b',
+        selectionBackground: 'rgba(245,158,11,0.25)'
       }
     })
     const fit = new FitAddon()

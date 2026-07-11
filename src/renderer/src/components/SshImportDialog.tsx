@@ -99,7 +99,7 @@ export function SshImportDialog(): React.JSX.Element | null {
                       type="checkbox"
                       checked={!!sel[h.name]}
                       onChange={(e) => setSel((p) => ({ ...p, [h.name]: e.target.checked }))}
-                      className="h-4 w-4 accent-[#22d3ee]"
+                      className="h-4 w-4 accent-[#f59e0b]"
                     />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm text-slate-200">{h.name}</div>
