@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/cn'
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
+import { useAi } from '@/store/ai'
 import eyeMark from '@/assets/brand/argus-eye.png'
 
 interface NavItem {
@@ -67,7 +68,8 @@ export function Sidebar(): React.JSX.Element {
   const search = useUI((s) => s.search)
   const setSearch = useUI((s) => s.setSearch)
   const deviceCount = useDevices((s) => s.devices.length)
-  const badges: Partial<Record<ViewId, number>> = { devices: deviceCount }
+  const aiCount = useAi((s) => s.accounts.length)
+  const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: aiCount }
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
