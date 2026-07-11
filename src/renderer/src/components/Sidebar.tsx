@@ -22,8 +22,8 @@ interface NavItem {
 const GENERAL: NavItem[] = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]
 
 const INFRA: NavItem[] = [
-  { id: 'devices', label: 'Devices', icon: Server },
-  { id: 'banks', label: 'Banks', icon: Landmark },
+  { id: 'devices', label: 'Fleet', icon: Server },
+  { id: 'banks', label: 'Finance', icon: Landmark },
   { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
   { id: 'streaming', label: 'Streaming', icon: MonitorPlay },
   { id: 'ai', label: 'AI Accounts', icon: Bot }

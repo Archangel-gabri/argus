@@ -13,9 +13,22 @@ import { money, pct } from '@/lib/format'
 import { providerHex, providerGlyph } from '@/lib/providers'
 import { providerLogo } from '@/lib/providerLogos'
 import { deviceIllustration } from '@/lib/illustrations'
-import type { DeviceDTO, Status } from '@/types'
+import type { DeviceDTO, DeviceKind, Status } from '@/types'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
+
+export const KIND_LABEL: Record<DeviceKind, string> = {
+  server: 'Сервер',
+  pc: 'ПК',
+  phone: 'Телефон',
+  watch: 'Часы',
+  buds: 'Наушники',
+  router: 'Роутер',
+  other: 'Девайс'
+}
+
+/** SSH-грани (терминал/файлы/порты/метрики) уместны только этим классам. */
+export const isSshCapable = (k: DeviceKind): boolean => k === 'server' || k === 'pc' || k === 'router'
 
 // 6-state system (color + text label = colorblind-safe). Only 'reboot' animates.
 export const STATUS: Record<
@@ -109,6 +122,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
   const ramPct = s.ram.total ? (s.ram.used / s.ram.total) * 100 : 0
   // live bars stay lit for online + degraded; muted for down/unknown/maintenance/reboot
   const dim = s.status !== 'online' && s.status !== 'degraded'
+  const ssh = isSshCapable(s.kind)
 
   return (
     <div className="group rounded-xl border border-border bg-card/80 p-4 shadow-lg shadow-black/20 transition-colors hover:border-slate-600/60 hover:bg-card">
@@ -155,7 +169,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-semibold text-white">{s.name}</div>
           <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
-            {s.user}@{s.ip || '—'}
+            {ssh ? `${s.user}@${s.ip || '—'}` : s.os || s.country || KIND_LABEL[s.kind]}
             {s.role ? ` · ${s.role}` : ''}
           </div>
         </div>
@@ -178,24 +192,28 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
               >
                 <Pencil className="h-3.5 w-3.5" /> Edit
               </button>
-              <button
-                onClick={() => {
-                  setMenu(false)
-                  openSftp(s)
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
-              >
-                <FolderOpen className="h-3.5 w-3.5" /> Файлы (SFTP)
-              </button>
-              <button
-                onClick={() => {
-                  setMenu(false)
-                  openForwards(s)
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
-              >
-                <Network className="h-3.5 w-3.5" /> Проброс портов
-              </button>
+              {ssh && (
+                <>
+                  <button
+                    onClick={() => {
+                      setMenu(false)
+                      openSftp(s)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" /> Файлы (SFTP)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenu(false)
+                      openForwards(s)
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
+                  >
+                    <Network className="h-3.5 w-3.5" /> Проброс портов
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => {
                   setMenu(false)
@@ -210,18 +228,29 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <Bar label="CPU" value={pct(s.cpu)} percent={s.cpu} muted={dim} />
-        <Bar label="RAM" value={`${s.ram.used}/${s.ram.total} GB`} percent={ramPct} muted={dim} />
-      </div>
+      {ssh ? (
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Bar label="CPU" value={pct(s.cpu)} percent={s.cpu} muted={dim} />
+          <Bar label="RAM" value={`${s.ram.used}/${s.ram.total} GB`} percent={ramPct} muted={dim} />
+        </div>
+      ) : (
+        <div className="mt-3 truncate rounded-lg border border-border/70 bg-bg/40 px-3 py-2 text-xs text-slate-400">
+          <span className="mr-2 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            {KIND_LABEL[s.kind]}
+          </span>
+          {s.notes || 'Паспорт устройства — открой карточку для деталей.'}
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-2">
-        <button
-          onClick={() => openTerminal(s)}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover"
-        >
-          <TerminalSquare className="h-3.5 w-3.5" /> SSH
-        </button>
+        {ssh && (
+          <button
+            onClick={() => openTerminal(s)}
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover"
+          >
+            <TerminalSquare className="h-3.5 w-3.5" /> SSH
+          </button>
+        )}
         {s.consoleUrl ? (
           <a
             href={s.consoleUrl}
