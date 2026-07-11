@@ -1,8 +1,14 @@
-// Изо-портреты сущностей (REDESIGN-2026-07 §2.3). Роль → портрет; фолбэк — generic.
+// Изо-портреты сущностей (REDESIGN-2026-07 §2.3). kind → портрет; серверы — по роли.
 import master from '@/assets/illustrations/server-master.png'
 import cascade from '@/assets/illustrations/server-cascade.png'
 import exitNode from '@/assets/illustrations/server-exit.png'
 import generic from '@/assets/illustrations/server-generic.png'
+import pc from '@/assets/illustrations/device-pc.png'
+import phone from '@/assets/illustrations/device-phone.png'
+import watch from '@/assets/illustrations/device-watch.png'
+import buds from '@/assets/illustrations/device-buds.png'
+import router from '@/assets/illustrations/device-router.png'
+import type { DeviceKind } from '@/types'
 
 const BY_ROLE: Array<[RegExp, string]> = [
   [/master/i, master],
@@ -10,7 +16,16 @@ const BY_ROLE: Array<[RegExp, string]> = [
   [/exit/i, exitNode]
 ]
 
-export function deviceIllustration(role: string | null): string {
+const BY_KIND: Partial<Record<DeviceKind, string>> = {
+  pc,
+  phone,
+  watch,
+  buds,
+  router
+}
+
+export function deviceIllustration(kind: DeviceKind, role: string | null): string {
+  if (kind !== 'server') return BY_KIND[kind] ?? generic
   if (role) {
     for (const [re, img] of BY_ROLE) if (re.test(role)) return img
   }

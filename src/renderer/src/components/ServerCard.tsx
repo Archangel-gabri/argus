@@ -129,7 +129,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           style={{ background: 'radial-gradient(ellipse at center, var(--color-glow) 0%, transparent 70%)' }}
         />
         <img
-          src={deviceIllustration(s.role)}
+          src={deviceIllustration(s.kind, s.role)}
           alt=""
           draggable={false}
           className={cn('mx-auto h-full object-contain py-2 transition-opacity', dim && 'opacity-40 saturate-50')}
