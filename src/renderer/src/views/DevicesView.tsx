@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Settings2, RefreshCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useUI } from '@/store/ui'
@@ -49,12 +49,6 @@ export function DevicesView(): React.JSX.Element {
               title="Refresh live CPU/RAM over SSH (devices with stored credentials)"
             >
               <RefreshCw className={cn('h-[18px] w-[18px]', refreshing && 'animate-spin')} />
-            </button>
-            <button
-              className="rounded-lg p-2 text-slate-400 ring-1 ring-border transition-colors hover:bg-white/5 hover:text-slate-200"
-              aria-label="Group settings"
-            >
-              <Settings2 className="h-[18px] w-[18px]" />
             </button>
           </div>
         </div>

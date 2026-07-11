@@ -6,7 +6,6 @@ import {
   Repeat,
   MonitorPlay,
   Bot,
-  Settings,
   type LucideIcon
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -68,7 +67,7 @@ export function Sidebar(): React.JSX.Element {
   const search = useUI((s) => s.search)
   const setSearch = useUI((s) => s.setSearch)
   const deviceCount = useDevices((s) => s.devices.length)
-  const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: 4 }
+  const badges: Partial<Record<ViewId, number>> = { devices: deviceCount }
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
@@ -126,12 +125,6 @@ export function Sidebar(): React.JSX.Element {
             <div className="truncate text-sm font-medium text-white">Danya Kubrak</div>
             <div className="truncate text-[11px] text-slate-500">owner · HubVPN</div>
           </div>
-          <button
-            className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"
-            aria-label="Settings"
-          >
-            <Settings className="h-[18px] w-[18px]" />
-          </button>
         </div>
       </div>
     </aside>

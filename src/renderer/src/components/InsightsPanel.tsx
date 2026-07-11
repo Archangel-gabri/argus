@@ -1,4 +1,4 @@
-import { Plus, Zap, type LucideIcon } from 'lucide-react'
+import { Plus, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { money } from '@/lib/format'
 import { useDevices, totals } from '@/store/devices'
@@ -18,7 +18,6 @@ export function InsightsPanel(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const openCreate = useUI((s) => s.openCreate)
   const { monthly, yearly } = totals(devices)
-  const quick = devices[0] ? `${devices[0].user}@${devices[0].ip || devices[0].id}` : 'root@host'
 
   return (
     <div className="space-y-7">
@@ -28,20 +27,6 @@ export function InsightsPanel(): React.JSX.Element {
       >
         <Plus className="h-[18px] w-[18px]" /> Add New Device
       </button>
-
-      <section>
-        <Title icon={Zap}>Quick Connect</Title>
-        <div className="flex items-center gap-2">
-          <input
-            defaultValue={quick}
-            key={quick}
-            className="min-w-0 flex-1 rounded-lg border border-border bg-bg/60 px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
-          />
-          <button className="shrink-0 rounded-lg bg-card px-3.5 py-2 text-sm font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover">
-            Connect
-          </button>
-        </div>
-      </section>
 
       <section>
         <Title>Costs Overview</Title>
