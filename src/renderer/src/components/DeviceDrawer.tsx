@@ -34,6 +34,13 @@ export function DeviceDrawer(): React.JSX.Element | null {
     [devices, deviceId, detail?.device]
   )
 
+  // Паспорт-устройства не имеют SSH-граней: любой не-overview таб откатываем на overview,
+  // чтобы никакой вызов (например, openTerminal из палитры) не смонтировал SSH-панель.
+  const sshCapable = live ? isSshCapable(live.kind) : true
+  useEffect(() => {
+    if (detail && tab && tab !== 'overview' && !sshCapable) setTab('overview')
+  }, [detail, tab, sshCapable, setTab])
+
   // Сброс посещённых табов при смене устройства; накопление — при переключении.
   useEffect(() => {
     if (deviceId && tab) setVisited([tab])
@@ -54,7 +61,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
 
   if (!detail || !live) return null
 
-  const tabs = isSshCapable(live.kind) ? TABS : TABS.filter((t) => t.id === 'overview')
+  const tabs = sshCapable ? TABS : TABS.filter((t) => t.id === 'overview')
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onMouseDown={close}>

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
+import { isSshCapable } from '@/components/ServerCard'
 import { useVault } from '@/store/vault'
 import { useSubs } from '@/store/subs'
 import { useAi } from '@/store/ai'
@@ -68,6 +69,7 @@ export function CommandPalette(): React.JSX.Element | null {
   const setView = useUI((s) => s.setView)
   const openCreate = useUI((s) => s.openCreate)
   const openTerminal = useUI((s) => s.openTerminal)
+  const openDetail = useUI((s) => s.openDetail)
   const devices = useDevices((s) => s.devices)
   const refreshMetrics = useDevices((s) => s.refreshMetrics)
   const setSshImport = useUI((s) => s.setSshImport)
@@ -128,23 +130,28 @@ export function CommandPalette(): React.JSX.Element | null {
             ))}
           </Command.Group>
 
-          <Command.Group heading="Серверы" className={GROUP}>
-            {devices.map((d) => (
-              <Item
-                key={d.id}
-                icon={TerminalSquare}
-                value={`server ${d.name} ${d.ip} ${d.provider} ${d.country}`}
-                right={d.ip}
-                onSelect={() =>
-                  run(() => {
-                    setView('devices')
-                    openTerminal(d)
-                  })
-                }
-              >
-                {d.name} <span className="text-slate-500">— подключиться</span>
-              </Item>
-            ))}
+          <Command.Group heading="Устройства" className={GROUP}>
+            {devices.map((d) => {
+              const ssh = isSshCapable(d.kind)
+              return (
+                <Item
+                  key={d.id}
+                  icon={TerminalSquare}
+                  value={`device ${d.name} ${d.ip} ${d.provider} ${d.country}`}
+                  right={d.ip}
+                  onSelect={() =>
+                    run(() => {
+                      setView('devices')
+                      if (ssh) openTerminal(d)
+                      else openDetail(d)
+                    })
+                  }
+                >
+                  {d.name}{' '}
+                  <span className="text-slate-500">— {ssh ? 'подключиться' : 'открыть'}</span>
+                </Item>
+              )
+            })}
           </Command.Group>
 
           {subs.length > 0 && (
