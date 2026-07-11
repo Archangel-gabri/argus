@@ -1,14 +1,23 @@
 @import 'tailwindcss';
 
-/* Nexus One design tokens (from the approved visual spec) → Tailwind v4 utilities */
+/* Argus design tokens — Graphite & Ember (docs/REDESIGN-2026-07.md §2.1) → Tailwind v4 utilities */
 @theme {
-  --color-bg: #10141d;
-  --color-surface: #1a202c;
-  --color-card: #2d3748;
-  --color-card-hover: #353f50;
-  --color-border: #1e293b;
-  --color-accent: #22d3ee;
-  --color-accent-hover: #1f96ab;
+  --color-bg: #121110;
+  --color-surface: #1a1816;
+  --color-card: #201d1a;
+  --color-card-hover: #262220;
+  --color-border: #2a2622;
+  --color-accent: #f59e0b;
+  --color-accent-hover: #d97706;
+  --color-glow: rgba(245, 158, 11, 0.14);
+
+  /* Warm-ремап: существующие slate-* классы рендерят stone-значения.
+     Временный мост до переименования классов в B2/B3. */
+  --color-slate-200: #e7e5e4;
+  --color-slate-300: #d6d3d1;
+  --color-slate-400: #a8a29e;
+  --color-slate-500: #78716c;
+  --color-slate-600: #57534e;
 
   --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, sans-serif;
 }
@@ -30,11 +39,11 @@
     height: 10px;
   }
   ::-webkit-scrollbar-thumb {
-    background: #2d3748;
+    background: #2a2622;
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3b475a;
+    background: #37312c;
   }
   ::-webkit-scrollbar-track {
     background: transparent;

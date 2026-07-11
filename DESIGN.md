@@ -1,46 +1,44 @@
-# Nexus One — Design Contract
+# Argus — Design Contract (Graphite & Ember)
 
-> Encodes the approved "Nexus One" visual spec. Source of truth for the UI.
-> Tokens live in `design/tokens.json` and `src/renderer/src/assets/main.css` (`@theme`).
+> Source of truth UI. Полный спек редизайна: `docs/REDESIGN-2026-07.md`.
+> Токены: `design/tokens.json` + `src/renderer/src/assets/main.css` (`@theme`).
 
 ## §1 Intent
-- One phrase: **a personal command center for servers, money, subscriptions & AI accounts**.
-- Emotion: **calm control + premium trust** — a cockpit you rely on, not a toy.
-- Audience: the owner (technical power-user). Single-user, local-first desktop app.
-- Reference feel: Termius / Linear / Vercel dashboard — dense but breathable, dark, precise.
+- One phrase: **a personal command center for servers, money, subscriptions, devices & AI**.
+- Emotion: «тихий пост наблюдения» — calm control + premium trust, тепло и дорого.
+- Audience: владелец (technical power-user). Single-user, local-first desktop.
 
 ## §2 Aesthetic
-- Leading family: **premium-dark**. Mood word: *cockpit*.
-- Flat surfaces with subtle elevation (hairline border + soft shadow); ONE cyan accent, used sparingly.
-- No decorative gradients (except the profile avatar), no glassmorphism, no neon overload.
+- Family: **warm premium-dark («Graphite & Ember»)**, эталон — `assets/concepts/concept-c2-graphite-ember.png`.
+- Изометрический иллюстрационный слой (30°, тёмный пьедестал, ember-свечение) — см. спек §2.3.
+- Один янтарный акцент; свечение — только у активных/online элементов; без неона и стекла.
 
-## §3 Tokens (see `design/tokens.json`)
-| token | value | role |
+## §3 Tokens
+| token | value | роль |
 |---|---|---|
-| bg | `#10141d` | app background |
-| surface | `#1a202c` | sidebar / rails |
-| card | `#2d3748` | cards, active nav |
-| card-hover | `#353f50` | hover |
-| border | `#1e293b` | hairlines |
-| accent | `#22d3ee` | cyan — logo, icons, progress, links, primary button |
-| accent-hover | `#1f96ab` | accent hover |
-| text | `slate-300` / `white` | body / headings |
+| bg | `#121110` | фон приложения |
+| surface | `#1a1816` | sidebar / рейлы |
+| card | `#201d1a` | карточки |
+| card-hover | `#262220` | ховер |
+| border | `#2a2622` | hairlines |
+| accent | `#f59e0b` | ember: CTA, активная навигация, ссылки |
+| accent-hover | `#d97706` | ховер акцента |
+| glow | `rgba(245,158,11,.14)` | пьедесталы/hover-свечение |
 
-Type: **Inter Variable** (fontsource). Headings semibold white; labels slate-400/500;
-numbers `tabular-nums`. Cards `rounded-xl`; controls `rounded-lg`.
+Текст: заголовки white, body stone-300 `#d6d3d1`, лейблы stone-400/500.
+`slate-*` классы временно ремапнуты на stone-значения в `@theme` (мост до B2/B3).
+Type: Inter Variable; числа `tabular-nums`; моно — ip/пути/терминал. Cards `rounded-xl`; controls `rounded-lg`.
 
-## §4 Composition
-- Three columns: sidebar `w-64` (fixed) · main list (flex) · insights rail `w-[360px]`.
-- Server cards in a responsive 1→2 column grid.
-- Cyan is an accent, never a fill for large areas (only the primary CTA + progress fills).
+## §4 Статусы (цвет + форма + текст, отвязаны от бренда)
+online ● `#10b981` · degraded ▲ `#fbbf24` · rebooting ◔ `#38bdf8` (единственный пульсирует) ·
+offline ■ `#f43f5e` · unknown ◇ stone · maintenance ⏸ violet. Нет данных → unknown, не «зелёный».
 
 ## §5 Motion
-- Subtle only: color/background transitions on hover; progress-bar width transition. No page scenes.
+Transitions на hover/статусах; пульс только rebooting; no page scenes; reduce-motion уважается.
 
 ## §6 QA checklist
-- [ ] Non-generic: real hierarchy, not a bootstrap clone.
-- [ ] Contrast: white headings + slate-300 body legible on `#10141d`.
-- [ ] Accent discipline: cyan only on logo / active icon / progress / links / primary CTA.
-- [ ] Status colours: online = cyan, rebooting = amber, offline = rose.
-- [ ] `tabular-nums` for all numbers; money shows native currency, totals normalised to USD.
-- [ ] Screenshot matches spec: sidebar groups + badges, card anatomy, Costs + Spend pie.
+- [ ] Accent-дисциплина: ember только на CTA / активной навигации / ссылках / прогрессе.
+- [ ] Статус никогда не красится в accent; online = emerald.
+- [ ] Контраст: заголовки white / body stone-300 читаемы на `#121110` (≥4.5:1).
+- [ ] `tabular-nums` на всех числах; деньги в родной валюте, тоталы в USD.
+- [ ] Скриншот соответствует эталону C2 (тёплый графит, просторные карточки).
