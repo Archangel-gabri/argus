@@ -11,7 +11,11 @@ export function loadPrefs(): Prefs {
   }
 }
 
+/** Событие «настройки изменились» — слушатели (авто-лок) перечитывают prefs без polling. */
+export const PREFS_EVENT = 'argus:prefs-changed'
+
 export function savePrefs(p: Prefs): void {
   localStorage.setItem(KEY, JSON.stringify(p))
   document.documentElement.classList.toggle('reduce-motion', p.reduceMotion)
+  window.dispatchEvent(new CustomEvent(PREFS_EVENT))
 }

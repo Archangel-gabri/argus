@@ -17,7 +17,7 @@ import { useDevices } from './store/devices'
 import { useWallets } from './store/wallets'
 import { useSubs } from './store/subs'
 import { useAi } from './store/ai'
-import { loadPrefs, savePrefs } from './lib/prefs'
+import { loadPrefs, savePrefs, PREFS_EVENT } from './lib/prefs'
 
 function renderView(view: ViewId): React.JSX.Element {
   switch (view) {
@@ -62,21 +62,29 @@ export default function App(): React.JSX.Element {
   }, [])
 
   // Авто-лок по бездействию (Settings → Security). 0 = выключен.
+  // Значение кэшируется (не читаем localStorage на каждом mousemove); смена настройки
+  // прилетает через PREFS_EVENT и пере-взводит таймер.
   useEffect(() => {
     if (status !== 'unlocked') return
     let timer: ReturnType<typeof setTimeout> | null = null
+    let min = loadPrefs().autolockMin
     const arm = (): void => {
       if (timer) clearTimeout(timer)
-      const min = loadPrefs().autolockMin
       if (!min) return
       timer = setTimeout(() => useVault.getState().lock(), min * 60_000)
+    }
+    const onPrefs = (): void => {
+      min = loadPrefs().autolockMin
+      arm()
     }
     arm()
     const events: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'wheel']
     events.forEach((e) => window.addEventListener(e, arm, { passive: true }))
+    window.addEventListener(PREFS_EVENT, onPrefs)
     return () => {
       if (timer) clearTimeout(timer)
       events.forEach((e) => window.removeEventListener(e, arm))
+      window.removeEventListener(PREFS_EVENT, onPrefs)
     }
   }, [status])
 

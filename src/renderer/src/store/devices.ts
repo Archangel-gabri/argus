@@ -91,7 +91,9 @@ export function spendByProvider(devices: DeviceDTO[]): { provider: string; usd: 
     acc[d.provider] = (acc[d.provider] ?? 0) + d.cost.usd
     return acc
   }, {})
+  // Только реальные траты — паспорт-устройства (Home/Samsung/…) с нулевой ценой не в разбивке.
   return Object.entries(m)
+    .filter(([, usd]) => usd > 0)
     .map(([provider, usd]) => ({ provider, usd }))
     .sort((a, b) => b.usd - a.usd)
 }
