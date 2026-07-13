@@ -2,7 +2,7 @@ import { ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
-import { STATUS, ProviderBadge } from '@/components/ServerCard'
+import { STATUS, ProviderBadge, KIND_LABEL, isSshCapable } from '@/components/ServerCard'
 import { useDevices } from '@/store/devices'
 import type { DeviceDTO } from '@/types'
 
@@ -20,6 +20,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
   const st = STATUS[d.status]
   const jump = d.jumpId ? (devices.find((x) => x.id === d.jumpId)?.name ?? d.jumpId) : null
   const ramPct = d.ram.total ? (d.ram.used / d.ram.total) * 100 : 0
+  const ssh = isSshCapable(d.kind)
 
   return (
     <div className="h-full space-y-4 overflow-y-auto pr-1">
@@ -46,40 +47,58 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <Fact label="OS" value={d.os} />
-        <Fact label="Страна" value={d.country} />
-        <Fact label="Хост" value={`${d.ip || '—'}:${d.port}`} />
-        <Fact label="Пользователь" value={d.user} />
-        <Fact
-          label="Авторизация"
-          value={d.authType === 'key' ? 'SSH-ключ' : d.authType === 'password' ? 'пароль' : 'нет'}
-        />
-        <Fact label="Jump-host" value={jump ?? '—'} />
-      </div>
+      {ssh ? (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <Fact label="OS" value={d.os} />
+            <Fact label="Страна" value={d.country} />
+            <Fact label="Хост" value={`${d.ip || '—'}:${d.port}`} />
+            <Fact label="Пользователь" value={d.user} />
+            <Fact
+              label="Авторизация"
+              value={d.authType === 'key' ? 'SSH-ключ' : d.authType === 'password' ? 'пароль' : 'нет'}
+            />
+            <Fact label="Jump-host" value={jump ?? '—'} />
+          </div>
 
-      <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
-        <div>
-          <div className="mb-1 flex justify-between">
-            <span className="text-slate-500">CPU</span>
-            <span className="tabular-nums text-slate-200">{pct(d.cpu)}</span>
+          <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
+            <div>
+              <div className="mb-1 flex justify-between">
+                <span className="text-slate-500">CPU</span>
+                <span className="tabular-nums text-slate-200">{pct(d.cpu)}</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-600/30">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, d.cpu))}%` }} />
+              </div>
+            </div>
+            <div>
+              <div className="mb-1 flex justify-between">
+                <span className="text-slate-500">RAM</span>
+                <span className="tabular-nums text-slate-200">
+                  {d.ram.used}/{d.ram.total} GB
+                </span>
+              </div>
+              <div className="h-1.5 rounded-full bg-slate-600/30">
+                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, ramPct))}%` }} />
+              </div>
+            </div>
           </div>
-          <div className="h-1.5 rounded-full bg-slate-600/30">
-            <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, d.cpu))}%` }} />
+        </>
+      ) : (
+        // Паспорт-устройство: показываем то, что осмысленно, без SSH-полей и метрик.
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <Fact label="Тип" value={KIND_LABEL[d.kind]} />
+            <Fact label="Бренд" value={d.provider} />
+            <Fact label="Модель / OS" value={d.os} />
+            <Fact label="Где" value={d.country} />
           </div>
-        </div>
-        <div>
-          <div className="mb-1 flex justify-between">
-            <span className="text-slate-500">RAM</span>
-            <span className="tabular-nums text-slate-200">
-              {d.ram.used}/{d.ram.total} GB
-            </span>
+          <div className="rounded-lg border border-border bg-card/50 px-3 py-2.5 text-xs text-slate-500">
+            Живые данные (батарея, сигнал, экран) — этап C: KDE Connect для телефона/наушников,
+            WoL/OS-switch для ПК. Пока это карточка-паспорт (модель, доступы, заметки).
           </div>
-          <div className="h-1.5 rounded-full bg-slate-600/30">
-            <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, ramPct))}%` }} />
-          </div>
-        </div>
-      </div>
+        </>
+      )}
 
       <div className="flex items-center justify-between rounded-lg border border-border bg-card/50 px-3 py-2.5">
         {d.consoleUrl ? (
@@ -89,10 +108,10 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover"
           >
-            <ExternalLink className="h-3.5 w-3.5" /> Hoster Console
+            <ExternalLink className="h-3.5 w-3.5" /> {ssh ? 'Hoster Console' : 'Открыть панель'}
           </a>
         ) : (
-          <span className="text-xs text-slate-600">No console</span>
+          <span className="text-xs text-slate-600">Без панели</span>
         )}
         {d.cost.amount > 0 && (
           <span className="text-xs font-medium tabular-nums text-slate-300">
