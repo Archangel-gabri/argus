@@ -12,4 +12,8 @@ dist-electron/
 *.sqlite
 *.sqlite3
 
+# Реальный флот владельца (настоящие IP + пути к ключам) — только локально, НЕ в git.
+# Демо-флот с маскированными IP лежит в src/main/seed.ts как fallback.
+fleet.local.json
+
 .DS_Store

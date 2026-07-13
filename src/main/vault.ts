@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
@@ -7,6 +8,8 @@ import { deriveKeyHex } from './crypto'
 import { SEED_DEVICES } from './seed'
 import type {
   AuthType,
+  Currency,
+  DeviceKind,
   DeviceRow,
   DeviceDTO,
   DeviceInput,
@@ -160,13 +163,105 @@ function migrate(d: Database.Database): void {
   )`)
 }
 
+/** Локальный реальный флот владельца (gitignored `fleet.local.json` рядом с приложением).
+ *  keyPath читается с диска в рантайме → secret_key в зашифрованном vault; в код/git ключи
+ *  не попадают. Нет файла → возвращаем null и сидим демо-флотом (маскированные IP из seed.ts). */
+interface LocalDevice {
+  name: string
+  provider?: string
+  kind?: DeviceKind
+  role?: string
+  ip?: string
+  port?: number
+  user?: string
+  country?: string
+  flag?: string
+  os?: string
+  consoleUrl?: string
+  costAmount?: number
+  costCurrency?: Currency
+  notes?: string
+  keyPath?: string
+}
+
+function expandHome(p: string): string {
+  return p.startsWith('~') ? join(homedir(), p.slice(1).replace(/^[/\\]/, '')) : p
+}
+
+function loadLocalFleet(): DeviceRow[] | null {
+  const candidates: string[] = []
+  try {
+    candidates.push(join(app.getAppPath(), 'fleet.local.json'))
+  } catch {
+    /* app path unavailable */
+  }
+  candidates.push(join(process.cwd(), 'fleet.local.json'))
+  const path = candidates.find((p) => existsSync(p))
+  if (!path) return null
+  let list: LocalDevice[]
+  try {
+    const json = JSON.parse(readFileSync(path, 'utf8')) as { devices?: LocalDevice[] }
+    list = json.devices ?? []
+  } catch {
+    return null
+  }
+  if (list.length === 0) return null
+  const now = Date.now()
+  return list.map((d, i): DeviceRow => {
+    let secretKey: string | null = null
+    let authType: AuthType = 'none'
+    if (d.keyPath) {
+      try {
+        secretKey = readFileSync(expandHome(d.keyPath), 'utf8')
+        authType = 'key'
+      } catch {
+        /* ключ на диске недоступен → авторизацию введёт владелец в приложении */
+      }
+    }
+    const amount = d.costAmount ?? 0
+    const currency = (d.costCurrency ?? 'USD') as Currency
+    return {
+      id: randomUUID(),
+      name: d.name,
+      provider: d.provider || 'Custom',
+      role: d.role ?? null,
+      kind: d.kind ?? 'server',
+      ip: d.ip ?? '',
+      port: d.port ?? 22,
+      user: d.user || 'root',
+      country: d.country ?? '',
+      flag: d.flag || '🖥️',
+      os: d.os ?? '',
+      status: 'unknown',
+      cpu: 0,
+      ram_used: 0,
+      ram_total: 0,
+      cost_amount: amount,
+      cost_currency: currency,
+      cost_usd: toUsd(amount, currency),
+      console_url: d.consoleUrl ?? '',
+      auth_type: authType,
+      secret_password: null,
+      secret_key: secretKey,
+      secret_passphrase: null,
+      notes: d.notes ?? null,
+      jump_id: null,
+      sort: i,
+      created_at: now,
+      updated_at: now
+    }
+  })
+}
+
 function seedInto(d: Database.Database): void {
   const now = Date.now()
   const stmt = d.prepare(INSERT_SQL)
   const insertAll = d.transaction((rows: DeviceRow[]) => {
     for (const r of rows) stmt.run(r)
   })
-  insertAll(
+  const local = loadLocalFleet()
+  const rows =
+    local ??
     SEED_DEVICES.map(
       (s, i): DeviceRow => ({
         ...s,
@@ -182,7 +277,7 @@ function seedInto(d: Database.Database): void {
         updated_at: now
       })
     )
-  )
+  insertAll(rows)
 }
 
 export async function initialize(password: string): Promise<void> {
