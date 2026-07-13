@@ -1,10 +1,95 @@
-import { ExternalLink } from 'lucide-react'
+import { useState } from 'react'
+import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
 import { STATUS, ProviderBadge, KIND_LABEL, isSshCapable } from '@/components/ServerCard'
 import { useDevices } from '@/store/devices'
 import type { DeviceDTO } from '@/types'
+
+const api = typeof window !== 'undefined' ? window.api : undefined
+
+// Питание через существующий ssh:exec. sudo -n на случай не-root (root-сессии игнорируют sudo).
+const PWR = {
+  reboot: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot',
+  poweroff: 'sudo -n systemctl poweroff 2>/dev/null || systemctl poweroff',
+  suspend: 'sudo -n systemctl suspend 2>/dev/null || systemctl suspend',
+  // Ребут в Windows: grub сам находит menuentry с "Windows" (имя записи может отличаться на разных ПК).
+  toWindows:
+    'e=$(awk -F"\'" \'/menuentry / && /[Ww]indows/{print $2; exit}\' /boot/grub/grub.cfg 2>/dev/null); ' +
+    'if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "Windows entry not found in grub"; fi',
+  toLinux: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot'
+}
+
+function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  const isPc = d.kind === 'pc'
+
+  const run = async (key: string, label: string, cmd: string): Promise<void> => {
+    if (!api) return
+    if (!window.confirm(`${label} — «${d.name}»?\nДействие выполнится по SSH немедленно.`)) return
+    setBusy(key)
+    setMsg(null)
+    const r = await api.ssh.exec(d.id, cmd)
+    setBusy(null)
+    // reboot/poweroff рвут соединение → пустой ok:false ожидаем; трактуем как «отправлено».
+    if (r.output?.trim()) setMsg(r.output.trim())
+    else if (r.error && !/closed|disconnect|ECONNRESET|timed out/i.test(r.error)) setMsg(`✖ ${r.error}`)
+    else setMsg('✓ команда отправлена')
+  }
+
+  const Btn = ({
+    id,
+    label,
+    icon: Icon,
+    cmd,
+    danger
+  }: {
+    id: string
+    label: string
+    icon: typeof Power
+    cmd: string
+    danger?: boolean
+  }): React.JSX.Element => (
+    <button
+      onClick={() => run(id, label, cmd)}
+      disabled={!!busy}
+      className={cn(
+        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
+        danger
+          ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
+          : 'text-slate-200 ring-border hover:bg-white/5'
+      )}
+    >
+      {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3">
+      <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Питание</div>
+      <div className="flex flex-wrap gap-2">
+        <Btn id="reboot" label="Ребут" icon={RotateCw} cmd={PWR.reboot} />
+        <Btn id="suspend" label="Сон" icon={Moon} cmd={PWR.suspend} />
+        <Btn id="poweroff" label="Выключить" icon={Power} cmd={PWR.poweroff} danger />
+        {isPc && (
+          <>
+            <Btn id="win" label="→ Windows" icon={Monitor} cmd={PWR.toWindows} />
+            <Btn id="lin" label="→ Linux" icon={Monitor} cmd={PWR.toLinux} />
+          </>
+        )}
+      </div>
+      {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
+      {isPc && (
+        <p className="mt-1.5 text-[11px] text-slate-600">
+          «Включить» из выключенного — через Wake-on-LAN (нужен MAC + сеть); добавим отдельно.
+        </p>
+      )}
+    </div>
+  )
+}
 
 function Fact({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
@@ -83,6 +168,8 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
               </div>
             </div>
           </div>
+
+          <PowerSection device={d} />
         </>
       ) : (
         // Паспорт-устройство: показываем то, что осмысленно, без SSH-полей и метрик.
