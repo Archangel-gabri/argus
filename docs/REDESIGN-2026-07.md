@@ -193,8 +193,19 @@ unknown ◇ stone-серый · maintenance ⏸ violet. Никогда не «в
   Terminal/SFTP/Forwards в табы).
 - **B3 — IA:** Fleet-группы (Servers/Personal/Network), паспорт-карточки, Settings v1,
   AI живой, Dashboard live, онбординг + Recovery Kit, глобальный поиск.
-- **C — фичи:** банк-сессии (§4), авторизация сервисов (§5), KDE Connect / Buds / OS-switcher
-  ПК, Screen-грань (scrcpy/noVNC), ИИ-заполнение форм (Ollama).
+- **C — фичи** (по одной подсистеме, независимы):
+  - **C1 ✅ ИИ-заполнение форм (Ollama)** — `main/ollama.ts` + `assist:parseDevice` + секция
+    в DeviceDialog; локально, приватно; проверено против local qwen2.5:3b (влито 2026-07-13).
+  - C2 KDE Connect / Buds — построен механизм-проба (kdeconnect-cli + gdbus доступны), но
+    happy-path не тестируется без спаренного телефона в сети → строить когда телефон online.
+  - C3 OS-switcher ПК (→Linux/→Windows/WoL/reboot) — **разрушающее** (reboot боевых нод);
+    нужны точные команды владельца + сильный confirm → делать только по явному ОК.
+  - C4 банк-сессии (§4) / авторизация сервисов (§5) — нужен живой логин владельца в банк для
+    реального парсинга; архитектуру/UI можно построить в превью, парсинг — с его сессией.
+  - C5 Screen-грань (scrcpy/noVNC) — нужны живые устройства.
+- **Наблюдение (2026-07-13):** castiel-pc (большая Ollama qwen2.5:14b) и телефон были offline;
+  доступна только local Ollama на ноуте (qwen2.5:3b) → C1 выбран как единственный полностью
+  автономно-тестируемый кусок C.
 - Каждый этап: `npm run typecheck` + `electron-vite build` зелёные; скриншот + visual-QA
   против концепта C2; UX-MAP и DESIGN.md обновляются по факту.
 
