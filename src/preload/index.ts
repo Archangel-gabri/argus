@@ -95,6 +95,9 @@ const api = {
       ipcRenderer.invoke('forward:open', deviceId, localPort, remoteHost, remotePort),
     list: (deviceId: string) => ipcRenderer.invoke('forward:list', deviceId),
     close: (id: string) => ipcRenderer.send('forward:close', id)
+  },
+  assist: {
+    parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
   }
 }
 

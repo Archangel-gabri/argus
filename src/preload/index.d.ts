@@ -124,6 +124,16 @@ export interface ArgusApi {
     list: (deviceId: string) => Promise<ForwardInfo[]>
     close: (id: string) => void
   }
+  assist: {
+    parseDevice: (text: string) => Promise<AssistResult>
+  }
+}
+
+export interface AssistResult {
+  ok: boolean
+  fields?: Partial<DeviceInput>
+  model?: string
+  error?: string
 }
 
 declare global {

@@ -7,6 +7,7 @@ import { parseSshConfig, type ParsedHost } from './sshconfig'
 import { discoverTailscale } from './discovery'
 import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
+import { parseDevice as ollamaParseDevice } from './ollama'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
@@ -177,6 +178,9 @@ export function registerIpc(): void {
     const acc = vault.listAiAccounts().find((a) => a.id === asString(id))
     return checkAccount(acc?.provider ?? '', vault.getAiKey(asString(id)) ?? '')
   })
+
+  // Локальный ИИ-ассистент: извлечение полей устройства из текста (Ollama, приватно)
+  ipcMain.handle('assist:parseDevice', (_e, text: unknown) => ollamaParseDevice(asString(text)))
 
   // SFTP file browser
   ipcMain.handle('sftp:open', (_e, deviceId: unknown) => sftp.sftpOpen(asString(deviceId)))

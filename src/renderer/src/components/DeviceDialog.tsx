@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { X, Loader2, Sparkles, Upload } from 'lucide-react'
+import { X, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
@@ -68,6 +68,9 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
   const [probeMsg, setProbeMsg] = useState<string | null>(null)
+  const [assistText, setAssistText] = useState('')
+  const [assisting, setAssisting] = useState(false)
+  const [assistMsg, setAssistMsg] = useState<string | null>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -90,6 +93,37 @@ export function DeviceDialog(): React.JSX.Element | null {
     if (!file) return
     const text = await file.text()
     setF((p) => ({ ...p, privateKey: text, authMethod: 'key' }))
+  }
+
+  // ИИ-заполнение: вставленный текст → локальная Ollama → мёржим непустые поля (превью, юзер правит).
+  const assist = async (): Promise<void> => {
+    if (!api || !assistText.trim()) return
+    setAssisting(true)
+    setAssistMsg(null)
+    const r = await api.assist.parseDevice(assistText)
+    setAssisting(false)
+    if (!r.ok || !r.fields) {
+      setAssistMsg(`✖ ${r.error ?? 'не удалось'}`)
+      return
+    }
+    const x = r.fields
+    setF((p) => ({
+      ...p,
+      name: x.name ?? p.name,
+      provider: x.provider ?? p.provider,
+      kind: x.kind ?? p.kind,
+      ip: x.ip ?? p.ip,
+      port: x.port != null ? String(x.port) : p.port,
+      user: x.user ?? p.user,
+      os: x.os ?? p.os,
+      country: x.country ?? p.country,
+      flag: x.flag ?? p.flag,
+      consoleUrl: x.consoleUrl ?? p.consoleUrl,
+      amount: x.cost?.amount != null ? String(x.cost.amount) : p.amount,
+      currency: x.cost?.currency ?? p.currency
+    }))
+    const filled = Object.keys(x).length
+    setAssistMsg(`✓ заполнено полей: ${filled}${r.model ? ` · ${r.model}` : ''} — проверь и поправь`)
   }
 
   if (dialog.mode === 'closed') return null
@@ -173,6 +207,35 @@ export function DeviceDialog(): React.JSX.Element | null {
         </div>
 
         <form onSubmit={submit} className="max-h-[70vh] overflow-y-auto px-5 py-4">
+          {api && !editing && (
+            <div className="mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
+              <div className="mb-2 flex items-center gap-2 text-xs font-medium text-accent">
+                <Wand2 className="h-3.5 w-3.5" /> Заполнить по тексту (локальный ИИ)
+              </div>
+              <textarea
+                value={assistText}
+                onChange={(e) => setAssistText(e.target.value)}
+                placeholder="Вставь что угодно: ssh-строку, конфиг, письмо хостера, заметку — Ollama разберёт в поля"
+                className={cn(inputCls, 'h-16 resize-y text-xs')}
+                spellCheck={false}
+              />
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={assist}
+                  disabled={assisting || !assistText.trim()}
+                  className="flex items-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-xs font-bold text-bg hover:bg-accent-hover disabled:opacity-50"
+                >
+                  {assisting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                  Заполнить
+                </button>
+                {assistMsg && <span className="text-xs text-slate-500">{assistMsg}</span>}
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-600">
+                Приватно: текст уходит только в локальную Ollama, не в облако. Поля можно поправить перед сохранением.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Name" full>
               <input className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" autoFocus />
