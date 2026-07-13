@@ -1,17 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react'
-import { ZxcvbnFactory } from '@zxcvbn-ts/core'
-import * as zxcvbnCommon from '@zxcvbn-ts/language-common'
-import * as zxcvbnEn from '@zxcvbn-ts/language-en'
 import { cn } from '@/lib/cn'
 import { useVault } from '@/store/vault'
+import { checkStrength, MIN_PASSWORD_SCORE, type ZxcvbnResult } from '@/lib/password-strength'
 import wordmark from '@/assets/brand/argus-wordmark.png'
-
-const zxcvbn = new ZxcvbnFactory({
-  dictionary: { ...zxcvbnCommon.dictionary, ...zxcvbnEn.dictionary },
-  graphs: zxcvbnCommon.adjacencyGraphs,
-  translations: zxcvbnEn.translations
-})
 
 // Гейтим по СКОРУ (crack-time), не по составу пароля (MASTER-PLAN C0.3).
 const STRENGTH: Array<{ label: string; bar: string; text: string }> = [
@@ -27,12 +19,28 @@ export function LockScreen(): React.JSX.Element {
   const [pw, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
   const [ack, setAck] = useState(false)
+  const [strength, setStrength] = useState<ZxcvbnResult | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
   const setup = status === 'uninitialized'
 
-  const strength = useMemo(() => (setup && pw ? zxcvbn.check(pw) : null), [setup, pw])
+  // Ленивая проверка силы (динамический импорт словарей при первом вводе).
+  useEffect(() => {
+    if (!setup || !pw) {
+      setStrength(null)
+      return
+    }
+    let alive = true
+    void checkStrength(pw).then((r) => {
+      if (alive) setStrength(r)
+    })
+    return () => {
+      alive = false
+    }
+  }, [setup, pw])
+
   const score = strength?.score ?? 0
-  const setupGateOk = !setup || (score >= 3 && ack && pw === confirm && pw.length >= 6)
+  const setupGateOk =
+    !setup || (score >= MIN_PASSWORD_SCORE && ack && pw === confirm && pw.length >= 6)
 
   useEffect(() => {
     refresh()
@@ -49,13 +57,17 @@ export function LockScreen(): React.JSX.Element {
       setLocalError('Пароли не совпадают')
       return
     }
-    if (setup && score < 3) {
-      setLocalError('Пароль слишком слабый — возьми passphrase из 3-4 слов')
-      return
-    }
     if (setup && !ack) {
       setLocalError('Подтверди, что понимаешь: восстановления нет')
       return
+    }
+    if (setup) {
+      // Авторитетная проверка на сабмите (не полагаемся на async-состояние индикатора).
+      const finalScore = (await checkStrength(pw)).score
+      if (finalScore < MIN_PASSWORD_SCORE) {
+        setLocalError('Пароль слишком слабый — возьми passphrase из 3-4 слов')
+        return
+      }
     }
     const ok = setup ? await initialize(pw) : await unlock(pw)
     if (!ok) {

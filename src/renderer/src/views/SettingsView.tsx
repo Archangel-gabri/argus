@@ -3,6 +3,7 @@ import { Lock, Loader2, ShieldCheck, Timer, Eye } from 'lucide-react'
 import { Page, PageHeader, Card, LimitNote } from '@/components/ui/Page'
 import { useVault } from '@/store/vault'
 import { loadPrefs, savePrefs, type Prefs } from '@/lib/prefs'
+import { checkStrength, MIN_PASSWORD_SCORE } from '@/lib/password-strength'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -38,6 +39,13 @@ function ChangePassword(): React.JSX.Element {
     }
     if (!api) return
     setBusy(true)
+    // Тот же zxcvbn-гейт, что на онбординге — нельзя ослабить мастер-пароль до слабого.
+    const score = (await checkStrength(next)).score
+    if (score < MIN_PASSWORD_SCORE) {
+      setBusy(false)
+      setMsg({ ok: false, text: 'Новый пароль слишком слабый — возьми passphrase из 3-4 слов' })
+      return
+    }
     const r = await api.vault.changePassword(cur, next)
     setBusy(false)
     if (r.ok) {

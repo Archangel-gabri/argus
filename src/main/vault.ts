@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
 import { SEED_DEVICES } from './seed'
@@ -201,22 +201,50 @@ export async function initialize(password: string): Promise<void> {
 export async function unlock(password: string): Promise<void> {
   if (!isInitialized()) throw new Error('Vault not initialized')
   if (isUnlocked()) return
+  const newMetaPath = metaPath() + '.new'
+
+  // Кандидаты соли: текущая meta + (если есть) незавершённый rekey (.new).
+  // Это реконсиляция changePassword: rekey мог пройти, а публикация соли (rename) — нет.
   const meta = JSON.parse(readFileSync(metaPath(), 'utf8')) as Meta
-  const keyHex = await deriveKeyHex(password, Buffer.from(meta.salt, 'hex'))
-  const d = openEncrypted(keyHex)
-  try {
-    // Force key verification: a wrong key makes the first read throw.
-    d.prepare('SELECT count(*) AS n FROM sqlite_master').get()
-    migrate(d) // idempotent — keeps schema current
-    db = d
-  } catch {
+  const candidates: Array<{ salt: string; fromNew: boolean }> = [{ salt: meta.salt, fromNew: false }]
+  if (existsSync(newMetaPath)) {
     try {
-      d.close()
+      const nm = JSON.parse(readFileSync(newMetaPath, 'utf8')) as Meta
+      candidates.push({ salt: nm.salt, fromNew: true })
     } catch {
-      /* ignore */
+      /* повреждённый .new — игнорируем */
     }
-    throw new Error('Invalid master password')
   }
+
+  for (const cand of candidates) {
+    const keyHex = await deriveKeyHex(password, Buffer.from(cand.salt, 'hex'))
+    const d = openEncrypted(keyHex)
+    try {
+      // Force key verification: a wrong key makes the first read throw.
+      d.prepare('SELECT count(*) AS n FROM sqlite_master').get()
+      migrate(d) // idempotent — keeps schema current
+      db = d
+      if (cand.fromNew) {
+        // rekey прошёл, rename — нет: финализируем публикацию новой соли.
+        renameSync(newMetaPath, metaPath())
+      } else if (existsSync(newMetaPath)) {
+        // Текущая соль сработала → .new устарел (rekey не состоялся). Убираем.
+        try {
+          unlinkSync(newMetaPath)
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    } catch {
+      try {
+        d.close()
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  throw new Error('Invalid master password')
 }
 
 export function lock(): void {
@@ -230,15 +258,19 @@ export function lock(): void {
   }
 }
 
-/** Смена мастер-пароля: проверка текущего отдельным подключением → WAL-checkpoint →
- *  SQLCipher rekey → meta с новой солью. Порядок консервативный: новая meta пишется во
- *  временный файл ДО rekey и переименовывается ПОСЛЕ (упавший rekey не портит meta;
- *  упавший rename оставляет .new рядом для ручного восстановления). */
+/** Смена мастер-пароля. Crash-safe two-phase commit:
+ *  1) новая соль пишется в meta.json.new ДО rekey;
+ *  2) соединение уводится из WAL в rollback-journal, rekey идёт транзакционно;
+ *  3) новая соль публикуется атомарным rename.
+ *  Реконсиляция при обрыве — в unlock(): пробует текущую соль, затем .new, и финализирует
+ *  rename если ключ .new подошёл (rekey прошёл, публикация — нет). Ни одна комбинация
+ *  «rekey прошёл / rename упал / краш между ними» больше не окирпичивает vault. */
 export async function changePassword(current: string, next: string): Promise<void> {
   if (!isInitialized()) throw new Error('Vault not initialized')
   if (!next || next.length < 6) throw new Error('Новый пароль — минимум 6 символов')
   const meta = JSON.parse(readFileSync(metaPath(), 'utf8')) as Meta
   const curKey = await deriveKeyHex(current, Buffer.from(meta.salt, 'hex'))
+  // Проверяем текущий пароль отдельным подключением (не трогаем живое db).
   const probe = new Database(dbPath())
   try {
     probe.pragma(`cipher='sqlcipher'`)
@@ -253,14 +285,27 @@ export async function changePassword(current: string, next: string): Promise<voi
     throw new Error('Неверный текущий пароль')
   }
   probe.close()
+
   const salt = randomBytes(16)
   const newKey = await deriveKeyHex(next, salt)
   const nextMeta: Meta = { ...meta, salt: salt.toString('hex') }
-  writeFileSync(metaPath() + '.new', JSON.stringify(nextMeta), { mode: 0o600 })
+  const newMetaPath = metaPath() + '.new'
+  // (1) новая соль на диск ДО rekey. rekey прошёл + rename упал → unlock финализирует по .new;
+  //     rekey упал → .new устарел и будет удалён при следующем unlock со старой солью.
+  writeFileSync(newMetaPath, JSON.stringify(nextMeta), { mode: 0o600 })
+
   const d = db ?? openEncrypted(curKey)
+  // (2) уводим из WAL, чтобы rekey шёл через rollback-journal, а не сложился в WAL-кадры
+  //     под несогласованными ключами (иначе обрыв даёт «file is not a database»).
   d.pragma('wal_checkpoint(TRUNCATE)')
-  d.pragma(`rekey="x'${newKey}'"`)
-  renameSync(metaPath() + '.new', metaPath())
+  d.pragma('journal_mode = DELETE')
+  try {
+    d.pragma(`rekey="x'${newKey}'"`)
+  } finally {
+    d.pragma('journal_mode = WAL')
+  }
+  // (3) публикуем новую соль атомарным rename.
+  renameSync(newMetaPath, metaPath())
   if (db) db = d
   else d.close()
 }

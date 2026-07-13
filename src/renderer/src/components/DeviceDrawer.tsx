@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { X, LayoutDashboard, TerminalSquare, FolderOpen, Network, Activity } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type DrawerTab } from '@/store/ui'
@@ -9,6 +9,7 @@ import { TerminalPane } from '@/components/panes/TerminalPane'
 import { FilesPane } from '@/components/panes/FilesPane'
 import { ForwardsPane } from '@/components/panes/ForwardsPane'
 import { MetricsPane } from '@/components/panes/MetricsPane'
+import type { DeviceDTO } from '@/types'
 
 const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }> = [
   { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
@@ -18,37 +19,37 @@ const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }>
   { id: 'metrics', label: 'Метрики', icon: Activity }
 ]
 
+/** Ровно ОДНА панель за раз (как старые модалки) — одна SSH/SFTP-сессия, никаких утечек
+ *  при переключении. `key={device.id}` гарантирует чистый unmount старого устройства
+ *  (его cleanup закрывает сессию) перед mount нового. */
+function ActivePane({ tab, device }: { tab: DrawerTab; device: DeviceDTO }): React.JSX.Element {
+  switch (tab) {
+    case 'terminal':
+      return <TerminalPane key={device.id} device={device} />
+    case 'files':
+      return <FilesPane key={device.id} device={device} />
+    case 'forwards':
+      return <ForwardsPane key={device.id} device={device} />
+    case 'metrics':
+      return <MetricsPane key={device.id} device={device} />
+    default:
+      return <OverviewPane key={device.id} device={device} />
+  }
+}
+
 export function DeviceDrawer(): React.JSX.Element | null {
   const detail = useUI((s) => s.detail)
   const close = useUI((s) => s.closeDetail)
   const setTab = useUI((s) => s.setDetailTab)
   const devices = useDevices((s) => s.devices)
-  const [visited, setVisited] = useState<DrawerTab[]>([])
 
   const deviceId = detail?.device.id
-  const tab = detail?.tab
 
   // Живое устройство из стора (метрики обновляются поллингом), фолбэк — снапшот.
   const live = useMemo(
     () => (deviceId ? (devices.find((d) => d.id === deviceId) ?? detail?.device ?? null) : null),
     [devices, deviceId, detail?.device]
   )
-
-  // Паспорт-устройства не имеют SSH-граней: любой не-overview таб откатываем на overview,
-  // чтобы никакой вызов (например, openTerminal из палитры) не смонтировал SSH-панель.
-  const sshCapable = live ? isSshCapable(live.kind) : true
-  useEffect(() => {
-    if (detail && tab && tab !== 'overview' && !sshCapable) setTab('overview')
-  }, [detail, tab, sshCapable, setTab])
-
-  // Сброс посещённых табов при смене устройства; накопление — при переключении.
-  useEffect(() => {
-    if (deviceId && tab) setVisited([tab])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId])
-  useEffect(() => {
-    if (tab) setVisited((v) => (v.includes(tab) ? v : [...v, tab]))
-  }, [tab])
 
   useEffect(() => {
     if (!detail) return
@@ -61,7 +62,11 @@ export function DeviceDrawer(): React.JSX.Element | null {
 
   if (!detail || !live) return null
 
+  const sshCapable = isSshCapable(live.kind)
   const tabs = sshCapable ? TABS : TABS.filter((t) => t.id === 'overview')
+  // Синхронно: не-SSH устройство никогда не отрисовывает SSH-грань, даже если стор просит
+  // (например openTerminal попал на паспорт). Никакой панели-гонки — чистое выражение.
+  const activeTab: DrawerTab = sshCapable ? (detail.tab ?? 'overview') : 'overview'
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onMouseDown={close}>
@@ -73,7 +78,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
           <div className="min-w-0">
             <div className="truncate text-base font-semibold text-white">{live.name}</div>
             <div className="truncate font-mono text-xs text-slate-500">
-              {isSshCapable(live.kind) ? `${live.user}@${live.ip || '—'}:${live.port}` : live.os || live.provider}
+              {sshCapable ? `${live.user}@${live.ip || '—'}:${live.port}` : live.os || live.provider}
             </div>
           </div>
           <button
@@ -88,7 +93,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
         <div className="flex items-center gap-1 border-b border-border px-3 py-2">
           {tabs.map((t) => {
             const Icon = t.icon
-            const active = tab === t.id
+            const active = activeTab === t.id
             return (
               <button
                 key={t.id}
@@ -104,32 +109,8 @@ export function DeviceDrawer(): React.JSX.Element | null {
           })}
         </div>
 
-        <div className="relative min-h-0 flex-1">
-          {visited.includes('overview') && (
-            <div className={cn('absolute inset-4', tab !== 'overview' && 'hidden')}>
-              <OverviewPane device={live} />
-            </div>
-          )}
-          {visited.includes('terminal') && (
-            <div className={cn('absolute inset-4', tab !== 'terminal' && 'hidden')}>
-              <TerminalPane device={live} />
-            </div>
-          )}
-          {visited.includes('files') && (
-            <div className={cn('absolute inset-4', tab !== 'files' && 'hidden')}>
-              <FilesPane device={live} />
-            </div>
-          )}
-          {visited.includes('forwards') && (
-            <div className={cn('absolute inset-4', tab !== 'forwards' && 'hidden')}>
-              <ForwardsPane device={live} />
-            </div>
-          )}
-          {visited.includes('metrics') && (
-            <div className={cn('absolute inset-4', tab !== 'metrics' && 'hidden')}>
-              <MetricsPane device={live} />
-            </div>
-          )}
+        <div className="min-h-0 flex-1 p-4">
+          <ActivePane tab={activeTab} device={live} />
         </div>
       </div>
     </div>
