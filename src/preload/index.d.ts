@@ -132,8 +132,10 @@ export interface ArgusApi {
       ok: boolean
       country?: string
       countryCode?: string
+      city?: string
       flag?: string
       provider?: string
+      domain?: string
       asn?: string
       error?: string
     }>

@@ -5,7 +5,10 @@ import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
 
-const CURRENCIES: Currency[] = ['USD', 'EUR', 'RUB']
+const CURRENCIES: Currency[] = [
+  'USD', 'EUR', 'RUB', 'GBP', 'CNY', 'JPY', 'CHF', 'CAD', 'AUD', 'INR',
+  'BRL', 'KRW', 'TRY', 'PLN', 'UAH', 'KZT', 'AED', 'SEK', 'NOK', 'SGD'
+]
 const STATUSES: Status[] = ['online', 'degraded', 'offline', 'reboot', 'unknown', 'maintenance']
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
   { id: 'server', label: 'Сервер' },
@@ -145,23 +148,26 @@ export function DeviceDialog(): React.JSX.Element | null {
     (e: { target: { value: string } }): void =>
       setF((p) => ({ ...p, [k]: e.target.value }))
 
-  const geo = async (): Promise<void> => {
+  // Авто-гео по IP (скриптом, не ИИ): страна+город, флаг, хостер. По кнопке — перезаписывает
+  // пустые поля; по blur (auto) — тоже только пустые, чтобы не затирать ручной ввод.
+  const geo = async (fillEmptyOnly = false): Promise<void> => {
     if (!api || !f.ip.trim()) return
     setGeoing(true)
     setGeoMsg(null)
     const r = await api.net.ipLookup(f.ip.trim())
     setGeoing(false)
     if (!r.ok) {
-      setGeoMsg(`✖ ${r.error ?? 'не удалось'}`)
+      if (!fillEmptyOnly) setGeoMsg(`✖ ${r.error ?? 'не удалось'}`)
       return
     }
+    const place = [r.country, r.city].filter(Boolean).join(' · ')
     setF((p) => ({
       ...p,
-      country: r.country ?? p.country,
-      flag: r.flag || p.flag,
+      country: fillEmptyOnly && p.country.trim() ? p.country : place || p.country,
+      flag: fillEmptyOnly && p.flag.trim() ? p.flag : r.flag || p.flag,
       provider: p.provider.trim() ? p.provider : r.provider ?? p.provider
     }))
-    setGeoMsg(`✓ ${r.flag ?? ''} ${r.country ?? ''}${r.provider ? ` · ${r.provider}` : ''}${r.asn ? ` · ${r.asn}` : ''}`)
+    setGeoMsg(`✓ ${r.flag ?? ''} ${place}${r.provider ? ` · ${r.provider}` : ''}${r.asn ? ` · ${r.asn}` : ''}`)
   }
 
   const probe = async (): Promise<void> => {
@@ -295,7 +301,13 @@ export function DeviceDialog(): React.JSX.Element | null {
               </select>
             </Field>
             <Field label="Host / IP">
-              <input className={inputCls} value={f.ip} onChange={set('ip')} placeholder="203.0.113.10" />
+              <input
+                className={inputCls}
+                value={f.ip}
+                onChange={set('ip')}
+                onBlur={() => void geo(true)}
+                placeholder="203.0.113.10"
+              />
             </Field>
             <Field label="Port">
               <input className={inputCls} value={f.port} onChange={set('port')} inputMode="numeric" />
@@ -481,7 +493,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               </button>
               <button
                 type="button"
-                onClick={geo}
+                onClick={() => void geo(false)}
                 disabled={geoing || !f.ip.trim()}
                 className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover disabled:opacity-50"
               >

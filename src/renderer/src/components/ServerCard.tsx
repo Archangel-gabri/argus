@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
-import { providerHex, providerGlyph } from '@/lib/providers'
+import { providerHex, providerGlyph, providerLogoUrl } from '@/lib/providers'
 import { providerLogo } from '@/lib/providerLogos'
 import { deviceIllustration } from '@/lib/illustrations'
 import type { DeviceDTO, DeviceKind, Status } from '@/types'
@@ -77,14 +77,24 @@ export function ProviderBadge({
   provider: string
   size?: 'sm' | 'md'
 }): React.JSX.Element {
-  const logo = providerLogo(provider)
-  const [failed, setFailed] = useState(false)
+  const bundled = providerLogo(provider)
+  const [bundledFailed, setBundledFailed] = useState(false)
+  const [remoteFailed, setRemoteFailed] = useState(false)
   const box = size === 'sm' ? 'h-8 w-8 rounded-md' : 'h-10 w-10 rounded-lg'
   const img = size === 'sm' ? 'h-5 w-5' : 'h-7 w-7'
-  if (logo && !failed) {
+  // Тир 1: bundled-логотип; тир 2: Clearbit по домену хостера; тир 3: цветная монограмма.
+  if (bundled && !bundledFailed) {
     return (
       <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
-        <img src={logo} alt={provider} className={cn('object-contain', img)} onError={() => setFailed(true)} draggable={false} />
+        <img src={bundled} alt={provider} className={cn('object-contain', img)} onError={() => setBundledFailed(true)} draggable={false} />
+      </div>
+    )
+  }
+  const remote = providerLogoUrl(provider)
+  if (remote && !remoteFailed) {
+    return (
+      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
+        <img src={remote} alt={provider} className={cn('object-contain', img)} onError={() => setRemoteFailed(true)} draggable={false} />
       </div>
     )
   }

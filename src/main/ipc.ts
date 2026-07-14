@@ -189,7 +189,14 @@ export function registerIpc(): void {
 
   // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))
-  ipcMain.handle('pc:metrics', (_e, id: unknown) => pc.metrics(asString(id)))
+  ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
+    const r = await pc.metrics(asString(id))
+    // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).
+    if (vault.isUnlocked() && r.family !== 'off') {
+      vault.recordSnapshot(asString(id), { cpu: r.cpu, ramUsed: r.ramUsed, ramTotal: r.ramTotal, status: r.family })
+    }
+    return r
+  })
   ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) => pc.boot(asString(id), asString(target)))
   ipcMain.handle('pc:power', (_e, id: unknown, action: unknown) => {
     const a = asString(action)

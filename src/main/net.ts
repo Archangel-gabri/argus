@@ -6,8 +6,10 @@ export interface IpInfo {
   ok: boolean
   country?: string
   countryCode?: string
+  city?: string
   flag?: string
   provider?: string
+  domain?: string
   asn?: string
   error?: string
 }
@@ -40,7 +42,7 @@ export async function ipLookup(ip: string): Promise<IpInfo> {
   if (!clean) return { ok: false, error: 'Пустой IP' }
   if (isPrivate(clean)) return { ok: false, error: 'Приватный/локальный IP — гео недоступно' }
   try {
-    const r = await fetch(`https://ipwho.is/${encodeURIComponent(clean)}?fields=success,message,country,country_code,connection,flag`, {
+    const r = await fetch(`https://ipwho.is/${encodeURIComponent(clean)}?fields=success,message,country,country_code,city,connection,flag`, {
       signal: AbortSignal.timeout(8000)
     })
     if (!r.ok) return { ok: false, error: `geo HTTP ${r.status}` }
@@ -49,6 +51,7 @@ export async function ipLookup(ip: string): Promise<IpInfo> {
       message?: string
       country?: string
       country_code?: string
+      city?: string
       flag?: { emoji?: string }
       connection?: { asn?: number; org?: string; isp?: string; domain?: string }
     }
@@ -58,8 +61,10 @@ export async function ipLookup(ip: string): Promise<IpInfo> {
       ok: true,
       country: d.country,
       countryCode: d.country_code,
+      city: d.city,
       flag: d.flag?.emoji || (d.country_code ? codeToFlag(d.country_code) : ''),
       provider: tidyProvider(conn.domain ?? '', conn.org ?? '', conn.isp ?? ''),
+      domain: conn.domain || undefined,
       asn: conn.asn ? `AS${conn.asn}` : undefined
     }
   } catch (err) {

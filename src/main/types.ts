@@ -1,5 +1,8 @@
 export type Status = 'online' | 'degraded' | 'offline' | 'reboot' | 'unknown' | 'maintenance'
-export type Currency = 'USD' | 'EUR' | 'RUB'
+// ~20 популярных валют (нормализация в USD — статичные приблизит. курсы в vault.ts FX).
+export type Currency =
+  | 'USD' | 'EUR' | 'RUB' | 'GBP' | 'CNY' | 'JPY' | 'CHF' | 'CAD' | 'AUD' | 'INR'
+  | 'BRL' | 'KRW' | 'TRY' | 'PLN' | 'UAH' | 'KZT' | 'AED' | 'SEK' | 'NOK' | 'SGD'
 export type AuthType = 'password' | 'key' | 'none'
 /** Класс сущности во Fleet: servers = server; network = router; остальное = personal. */
 export type DeviceKind = 'server' | 'pc' | 'phone' | 'watch' | 'buds' | 'router' | 'other'

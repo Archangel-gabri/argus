@@ -29,8 +29,12 @@ type Meta = { salt: string; version: number; createdAt: number }
 
 let db: Database.Database | null = null
 
-// Rough static FX just to normalise mixed-currency totals (honest approximation).
-const FX: Record<string, number> = { USD: 1, EUR: 1.08, RUB: 0.0126 }
+// Rough static FX just to normalise mixed-currency totals (honest approximation, 2026).
+const FX: Record<string, number> = {
+  USD: 1, EUR: 1.08, RUB: 0.0126, GBP: 1.27, CNY: 0.14, JPY: 0.0067, CHF: 1.11,
+  CAD: 0.73, AUD: 0.66, INR: 0.012, BRL: 0.2, KRW: 0.00075, TRY: 0.03, PLN: 0.25,
+  UAH: 0.025, KZT: 0.0021, AED: 0.27, SEK: 0.095, NOK: 0.093, SGD: 0.74
+}
 const toUsd = (amount: number, currency: string): number =>
   Math.round(amount * (FX[currency] ?? 1) * 100) / 100
 
@@ -783,7 +787,11 @@ export function deleteWallet(id: string): void {
   requireDb().prepare('DELETE FROM wallets WHERE id = ?').run(id)
 }
 
-/** Append a metric sample and keep only the most recent 200 per device. */
+// Хранение истории метрик: до 5000 точек ИЛИ последние 60 дней на устройство (что раньше).
+const SNAP_KEEP = 5000
+const SNAP_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000
+
+/** Append a metric sample; обрезаем по возрасту (60 дней) и числу (5000) на устройство. */
 export function recordSnapshot(
   deviceId: string,
   m: { cpu?: number; ramUsed?: number; ramTotal?: number; status?: string }
@@ -792,10 +800,11 @@ export function recordSnapshot(
   d.prepare(
     'INSERT INTO metric_snapshots (device_id, ts, cpu, ram_used, ram_total, status) VALUES (?, ?, ?, ?, ?, ?)'
   ).run(deviceId, Date.now(), m.cpu ?? null, m.ramUsed ?? null, m.ramTotal ?? null, m.status ?? 'unknown')
+  d.prepare('DELETE FROM metric_snapshots WHERE device_id = ? AND ts < ?').run(deviceId, Date.now() - SNAP_MAX_AGE_MS)
   d.prepare(
     `DELETE FROM metric_snapshots WHERE device_id = ? AND rowid NOT IN
-     (SELECT rowid FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT 200)`
-  ).run(deviceId, deviceId)
+     (SELECT rowid FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT ?)`
+  ).run(deviceId, deviceId, SNAP_KEEP)
 }
 
 export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
