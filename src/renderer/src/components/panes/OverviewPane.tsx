@@ -251,7 +251,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
       {ssh ? (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <Fact label="OS" value={d.os} />
+            <Fact label={d.alt ? 'Сейчас ОС' : 'OS'} value={d.runningOs || d.os} />
             <Fact label="Страна" value={d.country} />
             <Fact label="Хост" value={`${d.ip || '—'}:${d.port}`} />
             <Fact label="Пользователь" value={d.user} />

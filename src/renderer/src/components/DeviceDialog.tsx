@@ -16,6 +16,13 @@ const KINDS: Array<{ id: DeviceKind; label: string }> = [
   { id: 'router', label: 'Роутер' },
   { id: 'other', label: 'Другое' }
 ]
+
+// Канонический список ОС (без версий) — подсказки для поля OS; можно ввести своё.
+const OS_LIST = [
+  'Ubuntu', 'Debian', 'Arch Linux', 'Fedora', 'CentOS', 'Rocky Linux', 'AlmaLinux',
+  'openSUSE', 'Alpine Linux', 'Kali Linux', 'Windows', 'Windows Server', 'macOS',
+  'FreeBSD', 'Proxmox VE', 'TrueNAS', 'RouterOS', 'OpenWrt', 'Android', 'iOS', 'Other'
+]
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 const api = typeof window !== 'undefined' ? window.api : undefined
@@ -71,6 +78,8 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [assistText, setAssistText] = useState('')
   const [assisting, setAssisting] = useState(false)
   const [assistMsg, setAssistMsg] = useState<string | null>(null)
+  const [geoing, setGeoing] = useState(false)
+  const [geoMsg, setGeoMsg] = useState<string | null>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -133,6 +142,25 @@ export function DeviceDialog(): React.JSX.Element | null {
     (k: keyof FormFields) =>
     (e: { target: { value: string } }): void =>
       setF((p) => ({ ...p, [k]: e.target.value }))
+
+  const geo = async (): Promise<void> => {
+    if (!api || !f.ip.trim()) return
+    setGeoing(true)
+    setGeoMsg(null)
+    const r = await api.net.ipLookup(f.ip.trim())
+    setGeoing(false)
+    if (!r.ok) {
+      setGeoMsg(`✖ ${r.error ?? 'не удалось'}`)
+      return
+    }
+    setF((p) => ({
+      ...p,
+      country: r.country ?? p.country,
+      flag: r.flag || p.flag,
+      provider: p.provider.trim() ? p.provider : r.provider ?? p.provider
+    }))
+    setGeoMsg(`✓ ${r.flag ?? ''} ${r.country ?? ''}${r.provider ? ` · ${r.provider}` : ''}${r.asn ? ` · ${r.asn}` : ''}`)
+  }
 
   const probe = async (): Promise<void> => {
     if (!api) return
@@ -271,7 +299,12 @@ export function DeviceDialog(): React.JSX.Element | null {
               <input className={inputCls} value={f.user} onChange={set('user')} placeholder="root" />
             </Field>
             <Field label="OS">
-              <input className={inputCls} value={f.os} onChange={set('os')} placeholder="Ubuntu 24.04" />
+              <input className={inputCls} value={f.os} onChange={set('os')} placeholder="Ubuntu" list="os-list" />
+              <datalist id="os-list">
+                {OS_LIST.map((o) => (
+                  <option key={o} value={o} />
+                ))}
+              </datalist>
             </Field>
             <Field label="Country">
               <input className={inputCls} value={f.country} onChange={set('country')} placeholder="Japan" />
@@ -388,7 +421,17 @@ export function DeviceDialog(): React.JSX.Element | null {
                 )}
                 Определить по SSH
               </button>
+              <button
+                type="button"
+                onClick={geo}
+                disabled={geoing || !f.ip.trim()}
+                className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover disabled:opacity-50"
+              >
+                {geoing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 text-accent" />}
+                Гео по IP
+              </button>
               {probeMsg && <span className="text-xs text-slate-500">{probeMsg}</span>}
+              {geoMsg && <span className="text-xs text-slate-500">{geoMsg}</span>}
             </div>
           )}
           {error && <div className="mt-3 text-xs text-rose-400">{error}</div>}

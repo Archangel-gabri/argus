@@ -99,6 +99,9 @@ const api = {
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
   },
+  net: {
+    ipLookup: (ip: string) => ipcRenderer.invoke('net:ipLookup', ip)
+  },
   pc: {
     whichOs: (deviceId: string) => ipcRenderer.invoke('pc:whichOs', deviceId),
     boot: (deviceId: string, target: 'linux' | 'windows') => ipcRenderer.invoke('pc:boot', deviceId, target),

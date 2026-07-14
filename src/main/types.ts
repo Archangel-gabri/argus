@@ -69,6 +69,8 @@ export interface DeviceDTO {
   jumpId: string | null
   /** Второй эндпоинт ОС (dual-boot ПК) — без секретов, только адрес/юзер/ОС. */
   alt: AltBoot | null
+  /** Эфемерно (только в renderer-сторе, не из БД): какая ОС сейчас РЕАЛЬНО запущена (dual-boot). */
+  runningOs?: string | null
 }
 
 /** Renderer → main payload for create/update. May carry a secret to STORE (never to read back). */

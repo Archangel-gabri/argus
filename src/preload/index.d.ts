@@ -127,6 +127,17 @@ export interface ArgusApi {
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
   }
+  net: {
+    ipLookup: (ip: string) => Promise<{
+      ok: boolean
+      country?: string
+      countryCode?: string
+      flag?: string
+      provider?: string
+      asn?: string
+      error?: string
+    }>
+  }
   pc: {
     whichOs: (deviceId: string) => Promise<{ current: 'linux' | 'windows' | 'off' }>
     boot: (

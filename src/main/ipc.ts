@@ -9,6 +9,7 @@ import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
+import { ipLookup } from './net'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
@@ -182,6 +183,9 @@ export function registerIpc(): void {
 
   // Локальный ИИ-ассистент: извлечение полей устройства из текста (Ollama, приватно)
   ipcMain.handle('assist:parseDevice', (_e, text: unknown) => ollamaParseDevice(asString(text)))
+
+  // IP → страна/флаг/хостер (авто-подстановка при добавлении устройства)
+  ipcMain.handle('net:ipLookup', (_e, ip: unknown) => ipLookup(asString(ip)))
 
   // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))

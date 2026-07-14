@@ -16,6 +16,7 @@ interface DevicesStore {
     m: { cpu?: number; ramUsed?: number; ramTotal?: number; status?: DeviceDTO['status'] }
   ) => void
   refreshMetrics: () => Promise<void>
+  refreshOsStatus: () => Promise<void>
 }
 
 export const useDevices = create<DevicesStore>((set, get) => ({
@@ -29,6 +30,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     }
     const list = await api.devices.list()
     set({ devices: list, loaded: true })
+    get().refreshOsStatus()
   },
 
   create: async (input) => {
@@ -69,13 +71,35 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     }),
 
   // Agentless: probe only devices that have a real host + stored credential.
+  // Dual-boot ПК (alt) обрабатываются через refreshOsStatus (у них живой может быть Windows-эндпоинт).
   refreshMetrics: async () => {
     if (!api) return
-    const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x'))
+    const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && !d.alt)
     await Promise.all(
       eligible.map(async (d) => {
         const r = await api.ssh.probe(d.id)
         get().updateMetrics(d.id, r.ok ? r : { status: 'offline' })
+      })
+    )
+    get().refreshOsStatus()
+  },
+
+  // Dual-boot: какая ОС реально запущена → статус online/offline + метка runningOs (не в БД).
+  refreshOsStatus: async () => {
+    if (!api) return
+    const pcs = get().devices.filter((d) => d.alt)
+    await Promise.all(
+      pcs.map(async (d) => {
+        const r = await api.pc.whichOs(d.id)
+        const running =
+          r.current === 'windows' ? d.alt?.os || 'Windows' : r.current === 'linux' ? d.os || 'Linux' : null
+        set({
+          devices: get().devices.map((x) =>
+            x.id === d.id
+              ? { ...x, status: r.current === 'off' ? 'offline' : 'online', runningOs: running }
+              : x
+          )
+        })
       })
     )
   }
