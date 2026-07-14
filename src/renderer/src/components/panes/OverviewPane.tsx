@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2 } from 'lucide-react'
+import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2, Zap } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
@@ -58,6 +58,14 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     const r = await api.pc.power(d.id, action)
     setBusy(null)
     setMsg(r.ok ? '✓ команда отправлена' : `✖ ${r.error}`)
+  }
+  const doWake = async (): Promise<void> => {
+    if (!api) return
+    setBusy('wake')
+    setMsg(null)
+    const r = await api.pc.wake(d.id)
+    setBusy(null)
+    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — ПК должен проснуться' : `✖ ${r.error}`)
   }
 
   const badge =
@@ -148,8 +156,11 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
         ))}
       </div>
 
-      {/* Питание живой ОС */}
+      {/* Питание живой ОС + Включить (WoL) */}
       <div className="flex flex-wrap gap-2">
+        {d.mac && current === '' && (
+          <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} />
+        )}
         <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
         <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
@@ -157,7 +168,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
 
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
       <p className="mt-1.5 text-[11px] text-slate-600">
-        Клик по неактивной ОС — перезагрузка в неё. «Включить» из выключенного — WoL (MAC есть, добавим).
+        Клик по неактивной ОС — перезагрузка в неё.{d.mac ? ' «Включить» — Wake-on-LAN (когда ПК выключен).' : ' Укажи MAC в карточке для WoL.'}
       </p>
     </div>
   )

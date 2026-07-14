@@ -41,7 +41,7 @@ const toUsd = (amount: number, currency: string): number =>
 const COLUMNS = [
   'id', 'name', 'provider', 'role', 'kind', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
   'cpu', 'ram_used', 'ram_total', 'cost_amount', 'cost_currency', 'cost_usd', 'console_url',
-  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'alt', 'sort', 'created_at', 'updated_at'
+  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'alt', 'mac', 'sort', 'created_at', 'updated_at'
 ] as const
 const INSERT_SQL = `INSERT INTO devices (${COLUMNS.join(',')}) VALUES (${COLUMNS.map((c) => '@' + c).join(',')})`
 
@@ -93,6 +93,7 @@ function migrate(d: Database.Database): void {
     notes TEXT,
     jump_id TEXT,
     alt TEXT,
+    mac TEXT,
     sort INTEGER DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
@@ -112,6 +113,12 @@ function migrate(d: Database.Database): void {
   // C: alt OS endpoint for dual-boot PCs.
   try {
     d.exec('ALTER TABLE devices ADD COLUMN alt TEXT')
+  } catch {
+    /* column already exists */
+  }
+  // C: MAC for Wake-on-LAN.
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
   } catch {
     /* column already exists */
   }
@@ -194,6 +201,7 @@ interface LocalDevice {
   costCurrency?: Currency
   notes?: string
   keyPath?: string
+  mac?: string
   alt?: { ip: string; user?: string; os?: string; bootEntry?: string }
   altOs?: Array<{ ip: string; user?: string; os?: string; bootEntry?: string }>
 }
@@ -265,6 +273,7 @@ function loadLocalFleet(): DeviceRow[] | null {
         const clean = list.filter((a) => a && a.ip).map((a) => ({ ip: a.ip, user: a.user || 'root', os: a.os || '', bootEntry: a.bootEntry }))
         return clean.length ? JSON.stringify(clean) : null
       })(),
+      mac: d.mac || null,
       sort: i,
       created_at: now,
       updated_at: now
@@ -292,6 +301,7 @@ function seedInto(d: Database.Database): void {
         notes: null,
         jump_id: null,
         alt: null,
+        mac: null,
         sort: i,
         created_at: now,
         updated_at: now
@@ -452,7 +462,8 @@ function toDTO(r: DeviceRow): DeviceDTO {
     hasSecret: Boolean(r.secret_password || r.secret_key),
     notes: r.notes,
     jumpId: r.jump_id,
-    altOs: parseAltOs(r.alt)
+    altOs: parseAltOs(r.alt),
+    mac: r.mac
   }
 }
 
@@ -508,6 +519,7 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     notes: input.notes ?? null,
     jump_id: input.jumpId ?? null,
     alt: input.altOs && input.altOs.length ? JSON.stringify(input.altOs) : null,
+    mac: input.mac || null,
     sort: nextSort,
     created_at: now,
     updated_at: now
@@ -554,6 +566,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     notes: input.notes ?? cur.notes,
     jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
     alt: input.altOs !== undefined ? (input.altOs.length ? JSON.stringify(input.altOs) : null) : cur.alt,
+    mac: input.mac !== undefined ? input.mac || null : cur.mac,
     updated_at: Date.now()
   }
   d.prepare(
@@ -563,7 +576,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
        ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
        cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
        auth_type=@auth_type, secret_password=@secret_password, secret_key=@secret_key,
-       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, alt=@alt, updated_at=@updated_at
+       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, alt=@alt, mac=@mac, updated_at=@updated_at
      WHERE id=@id`
   ).run(next)
   return toDTO(next)
@@ -635,6 +648,12 @@ export function getDeviceConn(id: string): DeviceConn | null {
     }
   }
   return conn
+}
+
+/** MAC устройства для Wake-on-LAN (main-only). */
+export function getDeviceMac(id: string): string | null {
+  const r = requireDb().prepare('SELECT mac FROM devices WHERE id = ?').get(id) as { mac: string | null } | undefined
+  return r?.mac ?? null
 }
 
 export interface OsEndpoint {

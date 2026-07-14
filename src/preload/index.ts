@@ -107,7 +107,8 @@ const api = {
     metrics: (deviceId: string) => ipcRenderer.invoke('pc:metrics', deviceId),
     boot: (deviceId: string, targetOs: string) => ipcRenderer.invoke('pc:boot', deviceId, targetOs),
     power: (deviceId: string, action: 'reboot' | 'poweroff' | 'suspend') =>
-      ipcRenderer.invoke('pc:power', deviceId, action)
+      ipcRenderer.invoke('pc:power', deviceId, action),
+    wake: (deviceId: string) => ipcRenderer.invoke('pc:wake', deviceId)
   }
 }
 

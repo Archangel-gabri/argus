@@ -43,8 +43,9 @@ export interface DeviceRow {
   secret_passphrase: string | null
   notes: string | null
   jump_id: string | null
-  /** JSON AltBoot | null — второй эндпоинт ОС (dual-boot ПК). */
+  /** JSON AltBoot[] | null — доп. эндпоинты ОС (multi-boot ПК). */
   alt: string | null
+  mac: string | null
   sort: number
   created_at: number
   updated_at: number
@@ -74,6 +75,8 @@ export interface DeviceDTO {
   jumpId: string | null
   /** Доп. эндпоинты ОС (multi-boot ПК) — без секретов, только адрес/юзер/ОС. Пусто = одна ОС. */
   altOs: AltBoot[]
+  /** MAC для Wake-on-LAN («Включить» из выключенного). */
+  mac: string | null
   /** Эфемерно (только в renderer-сторе, не из БД): какая ОС сейчас РЕАЛЬНО запущена (multi-boot). */
   runningOs?: string | null
   /** Эфемерно: диск % занято и аптайм (сек) из последней пробы. */
@@ -107,6 +110,7 @@ export interface DeviceInput {
   notes?: string | null
   jumpId?: string | null
   altOs?: AltBoot[]
+  mac?: string | null
 }
 
 export interface Snippet {

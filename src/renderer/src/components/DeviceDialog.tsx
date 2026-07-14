@@ -50,12 +50,13 @@ interface FormFields {
   passphrase: string
   jumpId: string
   altOs: Array<{ os: string; ip: string; user: string }>
+  mac: string
 }
 
 const EMPTY: FormFields = {
   name: '', provider: '', kind: 'server', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
   status: 'online', amount: '', currency: 'USD', consoleUrl: '',
-  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: []
+  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: [], mac: ''
 }
 
 function Field({ label, full, children }: { label: string; full?: boolean; children: ReactNode }): React.JSX.Element {
@@ -96,7 +97,7 @@ export function DeviceDialog(): React.JSX.Element | null {
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
-        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user }))
+        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user })), mac: d.mac ?? ''
       })
     } else if (dialog.mode === 'new') {
       setF(EMPTY)
@@ -220,7 +221,8 @@ export function DeviceDialog(): React.JSX.Element | null {
       jumpId: f.jumpId || null,
       altOs: f.altOs
         .filter((a) => a.ip.trim())
-        .map((a) => ({ os: a.os.trim(), ip: a.ip.trim(), user: a.user.trim() || 'root' }))
+        .map((a) => ({ os: a.os.trim(), ip: a.ip.trim(), user: a.user.trim() || 'root' })),
+      mac: f.mac.trim() || null
     }
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
     setBusy(false)
@@ -354,6 +356,11 @@ export function DeviceDialog(): React.JSX.Element | null {
                   ))}
               </select>
             </Field>
+            {f.kind === 'pc' && (
+              <Field label="MAC (Wake-on-LAN «Включить»)" full>
+                <input className={inputCls} value={f.mac} onChange={set('mac')} placeholder="18:C0:4D:89:ED:6F" />
+              </Field>
+            )}
             {(f.kind === 'pc' || f.kind === 'server') && (
               <Field label="Другие ОС (multi-boot) — тот же ключ" full>
                 <div className="space-y-2">

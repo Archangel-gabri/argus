@@ -159,6 +159,7 @@ export interface ArgusApi {
       deviceId: string,
       action: 'reboot' | 'poweroff' | 'suspend'
     ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
+    wake: (deviceId: string) => Promise<{ ok: boolean; error?: string }>
   }
 }
 

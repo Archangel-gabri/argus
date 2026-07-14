@@ -202,6 +202,7 @@ export function registerIpc(): void {
     const a = asString(action)
     return pc.power(asString(id), a === 'poweroff' || a === 'suspend' ? a : 'reboot')
   })
+  ipcMain.handle('pc:wake', (_e, id: unknown) => pc.wake(asString(id)))
 
   // SFTP file browser
   ipcMain.handle('sftp:open', (_e, deviceId: unknown) => sftp.sftpOpen(asString(deviceId)))

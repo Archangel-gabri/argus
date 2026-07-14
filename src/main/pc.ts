@@ -1,7 +1,8 @@
 // Multi-boot ПК: одна железка, N ОС (основной эндпоинт + altOs). Определяем живую ОС,
 // переключаем загрузку, шлём питание/метрики на живой ОС. Команды OS-aware по семейству
 // (Linux systemctl/grub, Windows PowerShell/shutdown.exe).
-import { getOsEndpoints, type DeviceConn, type OsEndpoint } from './vault'
+import dgram from 'node:dgram'
+import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn, parseLinuxProbe, LINUX_PROBE_CMD } from './ssh'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
@@ -83,6 +84,51 @@ export async function metrics(deviceId: string): Promise<PcMetrics> {
   if (!r.ok) return { current: label, family: 'linux' }
   const m = parseLinuxProbe(r.output)
   return { current: label, family: 'linux', cpu: m.cpu, ramUsed: m.ramUsed, ramTotal: m.ramTotal, disk: m.disk, uptime: m.uptime }
+}
+
+/** Wake-on-LAN: magic packet (6×0xFF + 16×MAC) в широковещалку. «Включить» из выключенного.
+ *  Работает, если приложение в той же L2-сети, что и целевой ПК (или роутер форвардит WoL). */
+export async function wake(deviceId: string): Promise<{ ok: boolean; error?: string }> {
+  const mac = getDeviceMac(deviceId)
+  if (!mac) return { ok: false, error: 'MAC не задан (укажи в карточке для WoL)' }
+  const hex = mac.replace(/[^0-9a-fA-F]/g, '')
+  if (hex.length !== 12) return { ok: false, error: 'Некорректный MAC' }
+  const macBuf = Buffer.from(hex, 'hex')
+  const packet = Buffer.alloc(102)
+  packet.fill(0xff, 0, 6)
+  for (let i = 0; i < 16; i++) macBuf.copy(packet, 6 + i * 6)
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4')
+    sock.once('error', (e) => {
+      try {
+        sock.close()
+      } catch {
+        /* ignore */
+      }
+      resolve({ ok: false, error: e.message })
+    })
+    sock.bind(() => {
+      try {
+        sock.setBroadcast(true)
+      } catch {
+        /* ignore */
+      }
+      // Шлём в общий broadcast и порт 9 (стандарт WoL); дублируем на 7.
+      let pending = 2
+      const doneOne = (): void => {
+        if (--pending === 0) {
+          try {
+            sock.close()
+          } catch {
+            /* ignore */
+          }
+          resolve({ ok: true })
+        }
+      }
+      sock.send(packet, 0, packet.length, 9, '255.255.255.255', doneOne)
+      sock.send(packet, 0, packet.length, 7, '255.255.255.255', doneOne)
+    })
+  })
 }
 
 const CMD = {
