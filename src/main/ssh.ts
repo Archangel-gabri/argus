@@ -196,11 +196,34 @@ export interface ProbeResult {
   cpu?: number
   ramUsed?: number
   ramTotal?: number
+  disk?: number
+  uptime?: number
   error?: string
 }
 
-// Agentless: loadavg-based CPU%, free -m for RAM. Runs over a one-shot exec, no agent installed.
-const PROBE_CMD = `cat /proc/loadavg | cut -d' ' -f1; nproc; free -m | awk '/^Mem:/{print $2, $3}'`
+// Agentless: loadavg CPU%, free -m RAM, df / диск%, /proc/uptime. Один exec, без агента.
+const PROBE_CMD = `cat /proc/loadavg | cut -d' ' -f1; nproc; free -m | awk '/^Mem:/{print $2, $3}'; df -P / | awk 'NR==2{gsub(/%/,"",$5);print $5}'; awk '{print int($1)}' /proc/uptime`
+
+/** Разбор вывода PROBE_CMD в метрики (переиспользуется pc.ts для Linux-эндпоинта). */
+export function parseLinuxProbe(out: string): ProbeResult {
+  const lines = out.trim().split('\n')
+  const load1 = parseFloat(lines[0]) || 0
+  const cores = parseInt(lines[1], 10) || 1
+  const [totalMb, usedMb] = (lines[2] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
+  const disk = parseFloat(lines[3])
+  const uptime = parseInt(lines[4], 10)
+  return {
+    ok: true,
+    status: 'online',
+    cpu: Math.min(100, Math.round((load1 / cores) * 100)),
+    ramTotal: Math.round((totalMb / 1024) * 10) / 10,
+    ramUsed: Math.round((usedMb / 1024) * 10) / 10,
+    disk: Number.isFinite(disk) ? disk : undefined,
+    uptime: Number.isFinite(uptime) ? uptime : undefined
+  }
+}
+
+export const LINUX_PROBE_CMD = PROBE_CMD
 
 export function probe(deviceId: string): Promise<ProbeResult> {
   const conn = getDeviceConn(deviceId)
@@ -229,19 +252,7 @@ export function probe(deviceId: string): Promise<ProbeResult> {
         }
         let out = ''
         stream.on('data', (d: Buffer) => (out += d.toString()))
-        stream.on('close', () => {
-          const lines = out.trim().split('\n')
-          const load1 = parseFloat(lines[0]) || 0
-          const cores = parseInt(lines[1], 10) || 1
-          const [totalMb, usedMb] = (lines[2] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
-          done({
-            ok: true,
-            status: 'online',
-            cpu: Math.min(100, Math.round((load1 / cores) * 100)),
-            ramTotal: Math.round((totalMb / 1024) * 10) / 10,
-            ramUsed: Math.round((usedMb / 1024) * 10) / 10
-          })
-        })
+        stream.on('close', () => done(parseLinuxProbe(out)))
       })
     })
     client.on('error', (e) => done({ ok: false, status: 'offline', error: e.message }))

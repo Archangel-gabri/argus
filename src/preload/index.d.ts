@@ -140,6 +140,14 @@ export interface ArgusApi {
   }
   pc: {
     whichOs: (deviceId: string) => Promise<{ current: 'linux' | 'windows' | 'off' }>
+    metrics: (deviceId: string) => Promise<{
+      current: 'linux' | 'windows' | 'off'
+      cpu?: number
+      ramUsed?: number
+      ramTotal?: number
+      disk?: number
+      uptime?: number
+    }>
     boot: (
       deviceId: string,
       target: 'linux' | 'windows'

@@ -207,6 +207,15 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   )
 }
 
+function fmtUptime(sec: number): string {
+  const d = Math.floor(sec / 86400)
+  const h = Math.floor((sec % 86400) / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  if (d > 0) return `${d}д ${h}ч`
+  if (h > 0) return `${h}ч ${m}м`
+  return `${m}м`
+}
+
 function Fact({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
     <div className="rounded-lg border border-border bg-card/50 px-3 py-2">
@@ -218,7 +227,16 @@ function Fact({ label, value }: { label: string; value: string }): React.JSX.Ele
 
 export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
+  const refreshOne = useDevices((s) => s.refreshOne)
   const st = STATUS[d.status]
+
+  // Учащённый live-опрос пока карточка открыта (каждые 12с) — метрики «в реальном времени».
+  useEffect(() => {
+    if (!isSshCapable(d.kind)) return
+    refreshOne(d.id)
+    const t = setInterval(() => refreshOne(d.id), 12000)
+    return () => clearInterval(t)
+  }, [d.id, d.kind, refreshOne])
   const jump = d.jumpId ? (devices.find((x) => x.id === d.jumpId)?.name ?? d.jumpId) : null
   const ramPct = d.ram.total ? (d.ram.used / d.ram.total) * 100 : 0
   const ssh = isSshCapable(d.kind)
@@ -284,6 +302,31 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
               </div>
             </div>
           </div>
+
+          {(d.disk != null || d.uptime != null) && (
+            <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
+              {d.disk != null ? (
+                <div>
+                  <div className="mb-1 flex justify-between">
+                    <span className="text-slate-500">Диск /</span>
+                    <span className="tabular-nums text-slate-200">{d.disk}%</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-slate-600/30">
+                    <div
+                      className={cn('h-full rounded-full', d.disk > 90 ? 'bg-rose-500' : d.disk > 75 ? 'bg-amber-400' : 'bg-accent')}
+                      style={{ width: `${Math.min(100, Math.max(2, d.disk))}%` }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div />
+              )}
+              <div className="flex flex-col justify-center">
+                <span className="text-slate-500">Аптайм</span>
+                <span className="tabular-nums text-slate-200">{d.uptime != null ? fmtUptime(d.uptime) : '—'}</span>
+              </div>
+            </div>
+          )}
 
           {d.kind === 'pc' && d.alt ? <DualBootSection device={d} /> : <PowerSection device={d} />}
         </>

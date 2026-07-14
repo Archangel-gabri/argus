@@ -13,10 +13,18 @@ interface DevicesStore {
   remove: (id: string) => Promise<void>
   updateMetrics: (
     id: string,
-    m: { cpu?: number; ramUsed?: number; ramTotal?: number; status?: DeviceDTO['status'] }
+    m: {
+      cpu?: number
+      ramUsed?: number
+      ramTotal?: number
+      status?: DeviceDTO['status']
+      disk?: number
+      uptime?: number
+    }
   ) => void
   refreshMetrics: () => Promise<void>
   refreshOsStatus: () => Promise<void>
+  refreshOne: (deviceId: string) => Promise<void>
 }
 
 export const useDevices = create<DevicesStore>((set, get) => ({
@@ -64,7 +72,9 @@ export const useDevices = create<DevicesStore>((set, get) => ({
               ...d,
               cpu: m.cpu ?? d.cpu,
               ram: { used: m.ramUsed ?? d.ram.used, total: m.ramTotal ?? d.ram.total },
-              status: m.status ?? d.status
+              status: m.status ?? d.status,
+              disk: m.disk ?? d.disk,
+              uptime: m.uptime ?? d.uptime
             }
           : d
       )
@@ -84,24 +94,62 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     get().refreshOsStatus()
   },
 
-  // Dual-boot: какая ОС реально запущена → статус online/offline + метка runningOs (не в БД).
+  // Dual-boot: живая ОС + метрики этой ОS (OS-aware) → статус + runningOs + cpu/ram/disk/uptime.
   refreshOsStatus: async () => {
     if (!api) return
     const pcs = get().devices.filter((d) => d.alt)
     await Promise.all(
       pcs.map(async (d) => {
-        const r = await api.pc.whichOs(d.id)
+        const r = await api.pc.metrics(d.id)
         const running =
           r.current === 'windows' ? d.alt?.os || 'Windows' : r.current === 'linux' ? d.os || 'Linux' : null
         set({
           devices: get().devices.map((x) =>
             x.id === d.id
-              ? { ...x, status: r.current === 'off' ? 'offline' : 'online', runningOs: running }
+              ? {
+                  ...x,
+                  status: r.current === 'off' ? 'offline' : 'online',
+                  runningOs: running,
+                  cpu: r.cpu ?? x.cpu,
+                  ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
+                  disk: r.disk ?? x.disk,
+                  uptime: r.uptime ?? x.uptime
+                }
               : x
           )
         })
       })
     )
+  },
+
+  // Точечный опрос одного устройства (для учащённого refresh при открытой карточке).
+  refreshOne: async (deviceId) => {
+    if (!api) return
+    const d = get().devices.find((x) => x.id === deviceId)
+    if (!d || !d.hasSecret || d.ip.includes('x.x')) return
+    if (d.alt) {
+      const r = await api.pc.metrics(deviceId)
+      const running =
+        r.current === 'windows' ? d.alt?.os || 'Windows' : r.current === 'linux' ? d.os || 'Linux' : null
+      set({
+        devices: get().devices.map((x) =>
+          x.id === deviceId
+            ? {
+                ...x,
+                status: r.current === 'off' ? 'offline' : 'online',
+                runningOs: running,
+                cpu: r.cpu ?? x.cpu,
+                ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
+                disk: r.disk ?? x.disk,
+                uptime: r.uptime ?? x.uptime
+              }
+            : x
+        )
+      })
+    } else {
+      const r = await api.ssh.probe(deviceId)
+      get().updateMetrics(deviceId, r.ok ? r : { status: 'offline' })
+    }
   }
 }))
 

@@ -71,6 +71,9 @@ export interface DeviceDTO {
   alt: AltBoot | null
   /** Эфемерно (только в renderer-сторе, не из БД): какая ОС сейчас РЕАЛЬНО запущена (dual-boot). */
   runningOs?: string | null
+  /** Эфемерно: диск % занято и аптайм (сек) из последней пробы. */
+  disk?: number | null
+  uptime?: number | null
 }
 
 /** Renderer → main payload for create/update. May carry a secret to STORE (never to read back). */

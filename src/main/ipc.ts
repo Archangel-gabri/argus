@@ -189,6 +189,7 @@ export function registerIpc(): void {
 
   // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))
+  ipcMain.handle('pc:metrics', (_e, id: unknown) => pc.metrics(asString(id)))
   ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) =>
     pc.boot(asString(id), asString(target) === 'windows' ? 'windows' : 'linux')
   )

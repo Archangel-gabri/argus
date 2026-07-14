@@ -2,7 +2,7 @@
 // переключаем загрузку и шлём питание на живую ОС. Команды OS-aware (Linux systemctl/grub,
 // Windows shutdown). Работает на живой ОС; вторая эндпоинт — из vault.getAltConn.
 import { getDeviceConn, getAltConn, getDeviceOsPair, type DeviceConn } from './vault'
-import { execOnConn } from './ssh'
+import { execOnConn, parseLinuxProbe, LINUX_PROBE_CMD } from './ssh'
 
 export type OsTag = 'linux' | 'windows' | 'off'
 
@@ -35,6 +35,56 @@ async function liveEndpoint(deviceId: string): Promise<Endpoint | null> {
 export async function whichOs(deviceId: string): Promise<{ current: OsTag }> {
   const ep = await liveEndpoint(deviceId)
   return { current: ep?.os ?? 'off' }
+}
+
+export interface PcMetrics {
+  current: OsTag
+  cpu?: number
+  ramUsed?: number
+  ramTotal?: number
+  disk?: number
+  uptime?: number
+}
+
+// Windows-метрики через PowerShell (шелл Windows OpenSSH). CPU% + RAM (KB) + диск C: + аптайм(с).
+const WIN_METRICS =
+  '$c=(Get-CimInstance Win32_Processor|Measure-Object -Property LoadPercentage -Average).Average; ' +
+  '$o=Get-CimInstance Win32_OperatingSystem; ' +
+  '$d=Get-CimInstance Win32_LogicalDisk -Filter "DeviceID=\'C:\'"; ' +
+  '$up=[int]((Get-Date)-$o.LastBootUpTime).TotalSeconds; ' +
+  'Write-Output "$c"; Write-Output "$($o.TotalVisibleMemorySize) $($o.FreePhysicalMemory)"; ' +
+  'Write-Output "$([int](($d.Size-$d.FreeSpace)/$d.Size*100))"; Write-Output "$up"'
+
+function parseWinMetrics(out: string): PcMetrics {
+  const l = out.trim().split('\n').map((s) => s.trim())
+  const cpu = parseFloat(l[0])
+  const [totalKb, freeKb] = (l[1] || '').split(/\s+/).map((n) => parseFloat(n) || 0)
+  const disk = parseFloat(l[2])
+  const uptime = parseInt(l[3], 10)
+  const toGb = (kb: number): number => Math.round((kb / 1024 / 1024) * 10) / 10
+  return {
+    current: 'windows',
+    cpu: Number.isFinite(cpu) ? Math.round(cpu) : undefined,
+    ramTotal: totalKb ? toGb(totalKb) : undefined,
+    ramUsed: totalKb ? toGb(totalKb - freeKb) : undefined,
+    disk: Number.isFinite(disk) ? disk : undefined,
+    uptime: Number.isFinite(uptime) ? uptime : undefined
+  }
+}
+
+/** Метрики живой ОС dual-boot ПК (OS-aware: Linux — agentless-проба, Windows — PowerShell). */
+export async function metrics(deviceId: string): Promise<PcMetrics> {
+  const ep = await liveEndpoint(deviceId)
+  if (!ep) return { current: 'off' }
+  if (ep.os === 'windows') {
+    const r = await execOnConn(ep.conn, WIN_METRICS, 12000)
+    if (!r.ok) return { current: 'windows' }
+    return parseWinMetrics(r.output)
+  }
+  const r = await execOnConn(ep.conn, LINUX_PROBE_CMD, 12000)
+  if (!r.ok) return { current: 'linux' }
+  const m = parseLinuxProbe(r.output)
+  return { current: 'linux', cpu: m.cpu, ramUsed: m.ramUsed, ramTotal: m.ramTotal, disk: m.disk, uptime: m.uptime }
 }
 
 const CMD = {
