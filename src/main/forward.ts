@@ -1,8 +1,7 @@
 import { Client } from 'ssh2'
 import * as net from 'node:net'
 import { randomUUID } from 'node:crypto'
-import { getDeviceConn } from './vault'
-import { makeHostVerifier } from './ssh'
+import { resolveConn, makeHostVerifier, authFields, hasCredential } from './ssh'
 
 interface Forward {
   id: string
@@ -24,16 +23,16 @@ export interface ForwardInfo {
 }
 
 /** Local (-L) forward: listen on 127.0.0.1:localPort, tunnel each connection to remoteHost:remotePort via the device. */
-export function openLocalForward(
+export async function openLocalForward(
   deviceId: string,
   localPort: number,
   remoteHost: string,
   remotePort: number
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const conn = getDeviceConn(deviceId)
+  const conn = await resolveConn(deviceId)
   if (!conn) return Promise.resolve({ ok: false, error: 'device not found' })
-  if (!conn.host || conn.host.includes('x.x') || !conn.password) {
-    return Promise.resolve({ ok: false, error: 'нет реального host/пароля' })
+  if (!conn.host || conn.host.includes('x.x') || !hasCredential(conn)) {
+    return Promise.resolve({ ok: false, error: 'нет реального host или SSH-доступа (пароль/ключ)' })
   }
   return new Promise((resolve) => {
     const client = new Client()
@@ -73,7 +72,7 @@ export function openLocalForward(
       host: conn.host,
       port: conn.port,
       username: conn.user,
-      password: conn.password ?? undefined,
+      ...authFields(conn),
       readyTimeout: 15000,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(conn.host, conn.port)

@@ -1,8 +1,7 @@
 import { Client, type SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import { dialog } from 'electron'
-import { getDeviceConn } from './vault'
-import { makeHostVerifier } from './ssh'
+import { resolveConn, makeHostVerifier, authFields, hasCredential } from './ssh'
 
 interface SftpSession {
   id: string
@@ -18,11 +17,11 @@ export interface SftpEntry {
   mtime: number
 }
 
-export function sftpOpen(deviceId: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
-  const conn = getDeviceConn(deviceId)
+export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
+  const conn = await resolveConn(deviceId)
   if (!conn) return Promise.resolve({ ok: false, error: 'Device not found' })
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, error: 'Placeholder IP — set a real host first.' })
-  if (!conn.password) return Promise.resolve({ ok: false, error: 'No SSH password stored.' })
+  if (!hasCredential(conn)) return Promise.resolve({ ok: false, error: 'No SSH credential stored (password or key).' })
   return new Promise((resolve) => {
     const client = new Client()
     let settled = false
@@ -49,7 +48,7 @@ export function sftpOpen(deviceId: string): Promise<{ ok: boolean; sessionId?: s
       host: conn.host,
       port: conn.port,
       username: conn.user,
-      password: conn.password ?? undefined,
+      ...authFields(conn),
       readyTimeout: 15000,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(conn.host, conn.port)

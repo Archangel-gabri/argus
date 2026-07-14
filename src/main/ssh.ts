@@ -1,7 +1,7 @@
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
-import { getDeviceConn, checkHostKey, type DeviceConn } from './vault'
+import { getDeviceConn, getOsEndpoints, checkHostKey, type DeviceConn } from './vault'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -19,7 +19,7 @@ export function makeHostVerifier(
 
 /** Build the ssh2 auth fields from a credential bundle: private key wins, else password. */
 type AuthFields = Pick<ConnectConfig, 'password' | 'privateKey' | 'passphrase'>
-function authFields(c: {
+export function authFields(c: {
   password: string | null
   privateKey?: string | null
   passphrase?: string | null
@@ -27,8 +27,25 @@ function authFields(c: {
   if (c.privateKey) return { privateKey: c.privateKey, passphrase: c.passphrase || undefined }
   return { password: c.password ?? undefined }
 }
-const hasCredential = (c: { password: string | null; privateKey?: string | null }): boolean =>
+export const hasCredential = (c: { password: string | null; privateKey?: string | null }): boolean =>
   Boolean(c.password || c.privateKey)
+
+/** Жив ли эндпоинт: `echo` работает и в bash, и в Windows PowerShell. */
+async function isConnAlive(conn: DeviceConn): Promise<boolean> {
+  const r = await execOnConn(conn, 'echo argus-ok', 8000)
+  return r.ok && r.output.includes('argus-ok')
+}
+
+/** Разрешить рабочее соединение для устройства. Обычный сервер (одна ОС) → getDeviceConn как есть
+ *  (сохраняет jump-host). Multi-boot ПК (несколько ОС) → терминал/файлы/порты должны идти на
+ *  ЖИВУЮ ОС, а не на первичный (Linux) эндпоинт, который оффлайн когда запущена другая ОС:
+ *  пробуем каждый эндпоинт `echo`, берём первый ответивший; фолбэк — primary. */
+export async function resolveConn(deviceId: string): Promise<DeviceConn | null> {
+  const eps = getOsEndpoints(deviceId)
+  if (eps.length <= 1) return getDeviceConn(deviceId)
+  const checked = await Promise.all(eps.map(async (ep) => ((await isConnAlive(ep.conn)) ? ep.conn : null)))
+  return checked.find((c): c is DeviceConn => c !== null) ?? getDeviceConn(deviceId)
+}
 
 interface Session {
   id: string
@@ -48,8 +65,8 @@ export interface OpenResult {
 const isPlaceholderHost = (host: string): boolean => !host || host.includes('x.x')
 
 /** Open an interactive shell. Streams output to the renderer as base64 'ssh:data' events. */
-export function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 24): Promise<OpenResult> {
-  const conn = getDeviceConn(deviceId)
+export async function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 24): Promise<OpenResult> {
+  const conn = await resolveConn(deviceId)
   if (!conn) return Promise.resolve({ ok: false, error: 'Device not found' })
   if (isPlaceholderHost(conn.host)) {
     return Promise.resolve({ ok: false, error: 'Placeholder IP — edit the device and set a real host first.' })
