@@ -102,6 +102,7 @@ export interface ArgusApi {
   wallets: {
     list: () => Promise<Wallet[]>
     create: (input: WalletInput) => Promise<Wallet>
+    update: (id: string, input: WalletInput) => Promise<Wallet>
     remove: (id: string) => Promise<{ ok: boolean }>
     balance: (chain: string, address: string) => Promise<WalletBalance>
   }
@@ -111,6 +112,7 @@ export interface ArgusApi {
   ai: {
     list: () => Promise<AiAccount[]>
     create: (input: AiAccountInput) => Promise<AiAccount>
+    update: (id: string, input: AiAccountInput) => Promise<AiAccount>
     remove: (id: string) => Promise<{ ok: boolean }>
     check: (id: string) => Promise<AiCheck>
   }

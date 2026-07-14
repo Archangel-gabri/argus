@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { CheckCircle2, XCircle, AlertTriangle, KeyRound, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { CheckCircle2, XCircle, AlertTriangle, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, LimitNote } from '@/components/ui/Page'
 import { money } from '@/lib/format'
 import { useAi } from '@/store/ai'
-import type { AiCheck } from '@/types'
+import type { AiAccount, AiCheck } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -39,18 +39,21 @@ function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React
   )
 }
 
-function AddForm({ onClose }: { onClose: () => void }): React.JSX.Element {
+function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose: () => void }): React.JSX.Element {
   const add = useAi((s) => s.add)
-  const [provider, setProvider] = useState<string>('openrouter')
-  const [label, setLabel] = useState('')
+  const update = useAi((s) => s.update)
+  const [provider, setProvider] = useState<string>(initial?.provider ?? 'openrouter')
+  const [label, setLabel] = useState(initial?.label ?? '')
   const [key, setKey] = useState('')
-  const [plan, setPlan] = useState('')
+  const [plan, setPlan] = useState(initial?.plan ?? '')
   const [busy, setBusy] = useState(false)
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
     setBusy(true)
-    await add({ provider, label: label.trim() || undefined, apiKey: key.trim() || undefined, plan: plan.trim() || undefined })
+    const input = { provider, label: label.trim() || undefined, apiKey: key.trim() || undefined, plan: plan.trim() || undefined }
+    if (initial) await update(initial.id, input)
+    else await add(input)
     setBusy(false)
     onClose()
   }
@@ -77,7 +80,7 @@ function AddForm({ onClose }: { onClose: () => void }): React.JSX.Element {
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder="sk-… (шифруется в vault, наружу не выходит)"
+            placeholder={initial ? 'пусто = оставить текущий ключ' : 'sk-… (шифруется в vault, наружу не выходит)'}
           />
         </label>
         <label className="block">
@@ -93,7 +96,7 @@ function AddForm({ onClose }: { onClose: () => void }): React.JSX.Element {
             disabled={busy}
             className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
           >
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />} Добавить
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />} {initial ? 'Сохранить' : 'Добавить'}
           </button>
         </div>
       </form>
@@ -109,6 +112,7 @@ export function AIAccountsView(): React.JSX.Element {
   const check = useAi((s) => s.check)
   const remove = useAi((s) => s.remove)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<AiAccount | null>(null)
 
   useEffect(() => {
     load()
@@ -124,7 +128,10 @@ export function AIAccountsView(): React.JSX.Element {
         subtitle="ключи, планы, квоты"
         action={
           <button
-            onClick={() => setAdding((v) => !v)}
+            onClick={() => {
+              setEditing(null)
+              setAdding((v) => !v)
+            }}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
           >
             <Plus className="h-4 w-4" /> Аккаунт
@@ -150,7 +157,15 @@ export function AIAccountsView(): React.JSX.Element {
       </div>
 
       <div className="mt-6">
-        {adding && <AddForm onClose={() => setAdding(false)} />}
+        {(adding || editing) && (
+          <AccountForm
+            initial={editing}
+            onClose={() => {
+              setAdding(false)
+              setEditing(null)
+            }}
+          />
+        )}
 
         {accounts.length === 0 ? (
           <button
@@ -207,15 +222,27 @@ export function AIAccountsView(): React.JSX.Element {
                       {checking[a.id] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       Проверить
                     </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Удалить аккаунт «${a.label}»?`)) remove(a.id)
-                      }}
-                      className="rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
-                      title="Удалить"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          setEditing(a)
+                          setAdding(false)
+                        }}
+                        className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-accent"
+                        title="Редактировать"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Удалить аккаунт «${a.label}»?`)) remove(a.id)
+                        }}
+                        className="rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
+                        title="Удалить"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {a.notes && <div className="mt-3 text-[11px] text-slate-500">ⓘ {a.notes}</div>}

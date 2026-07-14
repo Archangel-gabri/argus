@@ -10,6 +10,7 @@ interface AiStore {
   checking: Record<string, boolean>
   load: () => Promise<void>
   add: (input: AiAccountInput) => Promise<void>
+  update: (id: string, input: AiAccountInput) => Promise<void>
   remove: (id: string) => Promise<void>
   check: (id: string) => Promise<void>
 }
@@ -37,6 +38,14 @@ export const useAi = create<AiStore>((set, get) => ({
     const acc = await api.ai.create(input)
     set({ accounts: [...get().accounts, acc] })
     get().check(acc.id)
+  },
+
+  update: async (id, input) => {
+    if (!api) return
+    const acc = await api.ai.update(id, input)
+    set({ accounts: get().accounts.map((a) => (a.id === id ? acc : a)) })
+    // Ключ мог поменяться → перепроверить валидность/кредит.
+    get().check(id)
   },
 
   remove: async (id) => {

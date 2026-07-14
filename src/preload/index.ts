@@ -78,6 +78,7 @@ const api = {
   wallets: {
     list: () => ipcRenderer.invoke('wallets:list'),
     create: (input: unknown) => ipcRenderer.invoke('wallets:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('wallets:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('wallets:delete', id),
     balance: (chain: string, address: string) => ipcRenderer.invoke('wallets:balance', chain, address)
   },
@@ -87,6 +88,7 @@ const api = {
   ai: {
     list: () => ipcRenderer.invoke('ai:list'),
     create: (input: unknown) => ipcRenderer.invoke('ai:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('ai:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('ai:delete', id),
     check: (id: string) => ipcRenderer.invoke('ai:check', id)
   },

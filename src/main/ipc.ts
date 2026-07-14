@@ -167,6 +167,9 @@ export function registerIpc(): void {
   // Crypto wallets — addresses in the vault, balances from public keyless endpoints
   ipcMain.handle('wallets:list', () => (vault.isUnlocked() ? vault.listWallets() : []))
   ipcMain.handle('wallets:create', (_e, input: unknown) => vault.createWallet(input as WalletInput))
+  ipcMain.handle('wallets:update', (_e, id: unknown, input: unknown) =>
+    vault.updateWallet(asString(id), input as WalletInput)
+  )
   ipcMain.handle('wallets:delete', (_e, id: unknown) => {
     vault.deleteWallet(asString(id))
     return { ok: true }
@@ -178,6 +181,9 @@ export function registerIpc(): void {
   // AI accounts — keys stay in the vault; only validity/quota verdicts cross IPC
   ipcMain.handle('ai:list', () => (vault.isUnlocked() ? vault.listAiAccounts() : []))
   ipcMain.handle('ai:create', (_e, input: unknown) => vault.createAiAccount(input as AiAccountInput))
+  ipcMain.handle('ai:update', (_e, id: unknown, input: unknown) =>
+    vault.updateAiAccount(asString(id), input as AiAccountInput)
+  )
   ipcMain.handle('ai:delete', (_e, id: unknown) => {
     vault.deleteAiAccount(asString(id))
     return { ok: true }

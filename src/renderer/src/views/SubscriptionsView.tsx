@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarClock, Plus, Trash2, X } from 'lucide-react'
+import { CalendarClock, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { money } from '@/lib/format'
@@ -7,7 +7,7 @@ import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
 import { catColor, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
-import type { Currency, SubscriptionInput } from '@/types'
+import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 
 interface Row {
@@ -32,27 +32,29 @@ function daysUntil(iso: string | null): number | null {
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-2.5 py-1.5 text-sm text-slate-200 outline-none focus:border-accent/40'
 
-function AddSubForm({
-  onAdd,
+function SubForm({
+  initial,
+  onSubmit,
   onClose
 }: {
-  onAdd: (i: SubscriptionInput) => void
+  initial?: Subscription | null
+  onSubmit: (i: SubscriptionInput) => void
   onClose: () => void
 }): React.JSX.Element {
-  const [name, setName] = useState('')
-  const [category, setCategory] = useState('AI')
-  const [amount, setAmount] = useState('')
-  const [currency, setCurrency] = useState<Currency>('USD')
-  const [period, setPeriod] = useState<'mo' | 'yr'>('mo')
-  const [renews, setRenews] = useState('')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [category, setCategory] = useState(initial?.category ?? 'AI')
+  const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
+  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? 'USD')
+  const [period, setPeriod] = useState<'mo' | 'yr'>(initial?.period === 'yr' ? 'yr' : 'mo')
+  const [renews, setRenews] = useState(initial?.nextRenewal ?? '')
   const submit = (): void => {
     if (!name.trim() || !parseFloat(amount)) return
-    onAdd({ name: name.trim(), category, amount: parseFloat(amount), currency, period, nextRenewal: renews || null })
+    onSubmit({ name: name.trim(), category, amount: parseFloat(amount), currency, period, nextRenewal: renews || null })
   }
   return (
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white">Новая подписка</h3>
+        <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать подписку' : 'Новая подписка'}</h3>
         <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200">
           <X className="h-4 w-4" />
         </button>
@@ -87,7 +89,7 @@ function AddSubForm({
         <input className={inputCls} type="date" value={renews} onChange={(e) => setRenews(e.target.value)} />
       </div>
       <button onClick={submit} className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover">
-        Добавить
+        {initial ? 'Сохранить' : 'Добавить'}
       </button>
     </Card>
   )
@@ -99,8 +101,10 @@ export function SubscriptionsView(): React.JSX.Element {
   const loaded = useSubs((s) => s.loaded)
   const loadSubs = useSubs((s) => s.load)
   const addSub = useSubs((s) => s.create)
+  const updateSub = useSubs((s) => s.update)
   const removeSub = useSubs((s) => s.remove)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<Subscription | null>(null)
 
   useEffect(() => {
     if (!loaded) loadSubs()
@@ -156,20 +160,29 @@ export function SubscriptionsView(): React.JSX.Element {
 
       <div className="mb-4 flex justify-end">
         <button
-          onClick={() => setAdding((v) => !v)}
+          onClick={() => {
+            setEditing(null)
+            setAdding((v) => !v)
+          }}
           className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
         >
           <Plus className="h-4 w-4" /> Подписка
         </button>
       </div>
 
-      {adding && (
-        <AddSubForm
-          onAdd={(i) => {
-            addSub(i)
+      {(adding || editing) && (
+        <SubForm
+          initial={editing}
+          onSubmit={(i) => {
+            if (editing) updateSub(editing.id, i)
+            else addSub(i)
             setAdding(false)
+            setEditing(null)
           }}
-          onClose={() => setAdding(false)}
+          onClose={() => {
+            setAdding(false)
+            setEditing(null)
+          }}
         />
       )}
 
@@ -201,13 +214,28 @@ export function SubscriptionsView(): React.JSX.Element {
                     <span className="text-slate-500">/{x.period}</span>
                   </span>
                   {x.userId ? (
-                    <button
-                      onClick={() => removeSub(x.userId!)}
-                      className="rounded p-1 text-slate-500 opacity-0 hover:text-rose-400 group-hover:opacity-100"
-                      title="Удалить"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100">
+                      <button
+                        onClick={() => {
+                          const s = subs.find((sub) => sub.id === x.userId)
+                          if (s) {
+                            setEditing(s)
+                            setAdding(false)
+                          }
+                        }}
+                        className="rounded p-1 text-slate-500 hover:text-accent"
+                        title="Редактировать"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => removeSub(x.userId!)}
+                        className="rounded p-1 text-slate-500 hover:text-rose-400"
+                        title="Удалить"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
                   ) : (
                     <span className="w-6" />
                   )}

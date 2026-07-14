@@ -1,31 +1,33 @@
 import { useEffect, useState } from 'react'
-import { Bitcoin, Landmark, Wallet as WalletIcon, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
+import { Bitcoin, Landmark, Wallet as WalletIcon, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge, LimitNote } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { money } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { MOCK_HOLDINGS, KIND_COLOR } from '@/data/finance'
 import { useWallets } from '@/store/wallets'
-import type { WalletInput } from '@/types'
+import type { Wallet, WalletInput } from '@/types'
 
 const CHAINS = ['ETH', 'BTC', 'TON']
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-2.5 py-1.5 text-sm text-slate-200 outline-none focus:border-accent/40'
 
-function AddWalletForm({
-  onAdd,
+function WalletForm({
+  initial,
+  onSubmit,
   onClose
 }: {
-  onAdd: (i: WalletInput) => void
+  initial?: Wallet | null
+  onSubmit: (i: WalletInput) => void
   onClose: () => void
 }): React.JSX.Element {
-  const [chain, setChain] = useState('ETH')
-  const [address, setAddress] = useState('')
-  const [label, setLabel] = useState('')
+  const [chain, setChain] = useState(initial?.chain ?? 'ETH')
+  const [address, setAddress] = useState(initial?.address ?? '')
+  const [label, setLabel] = useState(initial?.label ?? '')
   return (
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white">Добавить кошелёк</h3>
+        <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать кошелёк' : 'Добавить кошелёк'}</h3>
         <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200">
           <X className="h-4 w-4" />
         </button>
@@ -47,10 +49,10 @@ function AddWalletForm({
         <input className={inputCls} placeholder="Метка" value={label} onChange={(e) => setLabel(e.target.value)} />
       </div>
       <button
-        onClick={() => address.trim() && onAdd({ chain, address: address.trim(), label: label.trim() || undefined })}
+        onClick={() => address.trim() && onSubmit({ chain, address: address.trim(), label: label.trim() || undefined })}
         className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
       >
-        Добавить
+        {initial ? 'Сохранить' : 'Добавить'}
       </button>
       <p className="mt-2 text-[11px] text-slate-600">Баланс тянется публичным RPC (без ключей). Только адрес — приватных данных нет.</p>
     </Card>
@@ -64,9 +66,11 @@ export function BanksView(): React.JSX.Element {
   const loading = useWallets((s) => s.loading)
   const load = useWallets((s) => s.load)
   const add = useWallets((s) => s.add)
+  const updateWallet = useWallets((s) => s.update)
   const remove = useWallets((s) => s.remove)
   const refresh = useWallets((s) => s.refresh)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<Wallet | null>(null)
 
   useEffect(() => {
     if (!loaded) load()
@@ -106,7 +110,10 @@ export function BanksView(): React.JSX.Element {
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Обновить
             </button>
             <button
-              onClick={() => setAdding((v) => !v)}
+              onClick={() => {
+                setEditing(null)
+                setAdding((v) => !v)
+              }}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
             >
               <Plus className="h-4 w-4" /> Кошелёк
@@ -120,13 +127,19 @@ export function BanksView(): React.JSX.Element {
         импорт выписок (CSV·1C). Скрейпинг кабинетов — out of scope.
       </LimitNote>
 
-      {adding && (
-        <AddWalletForm
-          onAdd={(i) => {
-            add(i)
+      {(adding || editing) && (
+        <WalletForm
+          initial={editing}
+          onSubmit={(i) => {
+            if (editing) updateWallet(editing.id, i)
+            else add(i)
             setAdding(false)
+            setEditing(null)
           }}
-          onClose={() => setAdding(false)}
+          onClose={() => {
+            setAdding(false)
+            setEditing(null)
+          }}
         />
       )}
 
@@ -165,13 +178,25 @@ export function BanksView(): React.JSX.Element {
                       {bal ? `${bal.native.toFixed(4)} ${bal.symbol}` : <Loader2 className="inline h-3 w-3 animate-spin" />}
                     </div>
                   </div>
-                  <button
-                    onClick={() => remove(w.id)}
-                    className="rounded p-1 text-slate-500 opacity-0 hover:text-rose-400 group-hover:opacity-100"
-                    title="Удалить"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100">
+                    <button
+                      onClick={() => {
+                        setEditing(w)
+                        setAdding(false)
+                      }}
+                      className="rounded p-1 text-slate-500 hover:text-accent"
+                      title="Редактировать"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => remove(w.id)}
+                      className="rounded p-1 text-slate-500 hover:text-rose-400"
+                      title="Удалить"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
                 </div>
               )
             })}

@@ -10,6 +10,7 @@ interface WalletsStore {
   loading: boolean
   load: () => Promise<void>
   add: (input: WalletInput) => Promise<void>
+  update: (id: string, input: WalletInput) => Promise<void>
   remove: (id: string) => Promise<void>
   refresh: () => Promise<void>
 }
@@ -34,6 +35,15 @@ export const useWallets = create<WalletsStore>((set, get) => ({
     if (!api) return
     const w = await api.wallets.create(input)
     set({ wallets: [...get().wallets, w] })
+    const bal = await api.wallets.balance(w.chain, w.address)
+    set({ balances: { ...get().balances, [w.id]: bal } })
+  },
+
+  update: async (id, input) => {
+    if (!api) return
+    const w = await api.wallets.update(id, input)
+    set({ wallets: get().wallets.map((x) => (x.id === id ? w : x)) })
+    // Адрес/сеть могли поменяться → перезапросить баланс.
     const bal = await api.wallets.balance(w.chain, w.address)
     set({ balances: { ...get().balances, [w.id]: bal } })
   },

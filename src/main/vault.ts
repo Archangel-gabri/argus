@@ -830,6 +830,19 @@ export function createWallet(input: WalletInput): Wallet {
   return wallet
 }
 
+export function updateWallet(id: string, input: WalletInput): Wallet {
+  const cur = listWallets().find((w) => w.id === id)
+  if (!cur) throw new Error('Wallet not found')
+  const wallet: Wallet = {
+    id,
+    chain: (input.chain || cur.chain).toUpperCase(),
+    address: input.address?.trim() || cur.address,
+    label: input.label?.trim() || cur.label
+  }
+  requireDb().prepare('UPDATE wallets SET chain=@chain, address=@address, label=@label WHERE id=@id').run(wallet)
+  return wallet
+}
+
 export function deleteWallet(id: string): void {
   requireDb().prepare('DELETE FROM wallets WHERE id = ?').run(id)
 }
@@ -891,6 +904,26 @@ export function createAiAccount(input: AiAccountInput): AiAccount {
     hasKey: Boolean(input.apiKey),
     notes: input.notes ?? null
   }
+}
+
+export function updateAiAccount(id: string, input: AiAccountInput): AiAccount {
+  const d = requireDb()
+  const cur = d
+    .prepare('SELECT id, provider, label, api_key, plan, notes FROM ai_accounts WHERE id = ?')
+    .get(id) as { provider: string; label: string; api_key: string | null; plan: string | null; notes: string | null } | undefined
+  if (!cur) throw new Error('AI account not found')
+  // Пустой apiKey на правке = оставить текущий ключ (частый случай — правим только метку/план).
+  const api_key = input.apiKey ? input.apiKey : cur.api_key
+  const next = {
+    id,
+    provider: input.provider ?? cur.provider,
+    label: input.label?.trim() || cur.label || (input.provider ?? cur.provider),
+    api_key,
+    plan: input.plan ?? cur.plan ?? '',
+    notes: input.notes !== undefined ? input.notes : cur.notes
+  }
+  d.prepare('UPDATE ai_accounts SET provider=@provider, label=@label, api_key=@api_key, plan=@plan, notes=@notes WHERE id=@id').run(next)
+  return { id, provider: next.provider, label: next.label, plan: next.plan ?? '', hasKey: Boolean(next.api_key), notes: next.notes }
 }
 
 export function deleteAiAccount(id: string): void {
