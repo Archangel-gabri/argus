@@ -30,6 +30,14 @@ const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 const api = typeof window !== 'undefined' ? window.api : undefined
 
+// Похоже ли на ЗАВЕРШЁННЫЙ публичный адрес (полный IPv4 или домен). Приватные/Tailscale/CGNAT
+// не гео-запрашиваем — бесполезно и утекает внутренняя топология третьей стороне (ipwho.is).
+const ipLooksPublic = (s: string): boolean => {
+  const v = s.trim()
+  if (/^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.)/.test(v)) return false
+  return /^(\d{1,3}\.){3}\d{1,3}$/.test(v) || /^[a-z0-9-]+(\.[a-z0-9-]+)+\.[a-z]{2,}$/i.test(v)
+}
+
 interface FormFields {
   name: string
   provider: string
@@ -49,7 +57,9 @@ interface FormFields {
   privateKey: string
   passphrase: string
   jumpId: string
-  altOs: Array<{ os: string; ip: string; user: string }>
+  // bootEntry — точная запись GRUB для boot-switch; в UI не показываем, но СОХРАНЯЕМ при правке
+  // (иначе grub-reboot сваливается в нечёткий поиск по ключевому слову → не та ОС).
+  altOs: Array<{ os: string; ip: string; user: string; bootEntry?: string }>
   mac: string
 }
 
@@ -97,7 +107,7 @@ export function DeviceDialog(): React.JSX.Element | null {
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
-        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user })), mac: d.mac ?? ''
+        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry })), mac: d.mac ?? ''
       })
     } else if (dialog.mode === 'new') {
       setF(EMPTY)
@@ -150,7 +160,9 @@ export function DeviceDialog(): React.JSX.Element | null {
       setF((p) => ({ ...p, [k]: e.target.value }))
 
   // Авто-гео по IP (скриптом, не ИИ): страна+город, флаг, хостер. По кнопке — перезаписывает
-  // пустые поля; по blur (auto) — тоже только пустые, чтобы не затирать ручной ввод.
+  // пустые поля. Авто-по-blur срабатывает ТОЛЬКО при добавлении нового устройства с пустой
+  // страной и завершённым публичным адресом (см. onBlur ниже) — чтобы не слать реальные IP
+  // на ipwho.is при каждой правке уже заполненного устройства.
   const geo = async (fillEmptyOnly = false): Promise<void> => {
     if (!api || !f.ip.trim()) return
     setGeoing(true)
@@ -219,9 +231,16 @@ export function DeviceDialog(): React.JSX.Element | null {
       privateKey: f.authMethod === 'key' ? (f.privateKey ? f.privateKey : undefined) : undefined,
       passphrase: f.authMethod === 'key' ? (f.passphrase ? f.passphrase : undefined) : undefined,
       jumpId: f.jumpId || null,
+      // Требуем и имя ОС, и адрес: безымянная ОС ломает подсветку «текущей» и уводит
+      // boot-switch в нечёткий grub-поиск (может загрузить не ту ОС).
       altOs: f.altOs
-        .filter((a) => a.ip.trim())
-        .map((a) => ({ os: a.os.trim(), ip: a.ip.trim(), user: a.user.trim() || 'root' })),
+        .filter((a) => a.ip.trim() && a.os.trim())
+        .map((a) => ({
+          os: a.os.trim(),
+          ip: a.ip.trim(),
+          user: a.user.trim() || 'root',
+          ...(a.bootEntry ? { bootEntry: a.bootEntry } : {})
+        })),
       mac: f.mac.trim() || null
     }
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
@@ -307,7 +326,9 @@ export function DeviceDialog(): React.JSX.Element | null {
                 className={inputCls}
                 value={f.ip}
                 onChange={set('ip')}
-                onBlur={() => void geo(true)}
+                onBlur={() => {
+                  if (!editing && !f.country.trim() && ipLooksPublic(f.ip)) void geo(true)
+                }}
                 placeholder="203.0.113.10"
               />
             </Field>

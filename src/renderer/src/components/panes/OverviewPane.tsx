@@ -36,8 +36,12 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     const r = await api.pc.whichOs(d.id)
     setCurrent(r.current)
   }
+  // Опрашиваем живую ОС на маунте И каждые 15с, пока карточка открыта — иначе после ребута/
+  // boot-switch сегмент «Сейчас: …» навсегда показывал ОС на момент открытия drawer.
   useEffect(() => {
     refresh()
+    const t = setInterval(refresh, 15000)
+    return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.id])
 
@@ -186,10 +190,14 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
     setMsg(null)
     const r = await api.ssh.exec(d.id, cmd)
     setBusy(null)
-    // reboot/poweroff рвут соединение → пустой ok:false ожидаем; трактуем как «отправлено».
-    if (r.output?.trim()) setMsg(r.output.trim())
-    else if (r.error && !/closed|disconnect|ECONNRESET|timed out/i.test(r.error)) setMsg(`✖ ${r.error}`)
-    else setMsg('✓ команда отправлена')
+    // Успех по РЕАЛЬНОМУ коду возврата (execOnConn теперь его читает). Разрыв соединения
+    // (closed/disconnect/ECONNRESET) на reboot/poweroff — ожидаем, трактуем как «отправлено».
+    // ВАЖНО: таймаут хендшейка (хост недоступен) НЕ считаем успехом — иначе кнопка врёт,
+    // что машина перезагружается, хотя команда не дошла.
+    if (r.ok) setMsg(r.output?.trim() || '✓ команда отправлена')
+    else if (/closed|disconnect|ECONNRESET/i.test(r.error ?? ''))
+      setMsg('✓ команда отправлена (соединение закрылось — вероятно, перезагрузка)')
+    else setMsg(`✖ ${r.error || 'не удалось'}`)
   }
 
   const Btn = ({
