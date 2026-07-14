@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { X, LayoutDashboard, TerminalSquare, FolderOpen, Network, Activity } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type DrawerTab } from '@/store/ui'
@@ -19,22 +19,40 @@ const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }>
   { id: 'metrics', label: 'Метрики', icon: Activity }
 ]
 
-/** Ровно ОДНА панель за раз (как старые модалки) — одна SSH/SFTP-сессия, никаких утечек
- *  при переключении. `key={device.id}` гарантирует чистый unmount старого устройства
- *  (его cleanup закрывает сессию) перед mount нового. */
-function ActivePane({ tab, device }: { tab: DrawerTab; device: DeviceDTO }): React.JSX.Element {
+function paneFor(tab: DrawerTab, device: DeviceDTO): React.JSX.Element {
   switch (tab) {
     case 'terminal':
-      return <TerminalPane key={device.id} device={device} />
+      return <TerminalPane device={device} />
     case 'files':
-      return <FilesPane key={device.id} device={device} />
+      return <FilesPane device={device} />
     case 'forwards':
-      return <ForwardsPane key={device.id} device={device} />
+      return <ForwardsPane device={device} />
     case 'metrics':
-      return <MetricsPane key={device.id} device={device} />
+      return <MetricsPane device={device} />
     default:
-      return <OverviewPane key={device.id} device={device} />
+      return <OverviewPane device={device} />
   }
+}
+
+/** Панели монтируются ЛЕНИВО при первом заходе и остаются смонтированными (скрыты `hidden`),
+ *  пока drawer открыт. Иначе переключение на «Файлы» размонтировало терминал, и его cleanup
+ *  убивал живую SSH-сессию (htop/tail -f/деплой обрывались). Сессии НЕ открываются для
+ *  непосещённых вкладок — нет утечки. Смена устройства (key={device.id} на месте вызова)
+ *  ремонтирует тело → cleanup всех панелей закрывает их сессии. */
+function DrawerBody({ activeTab, device }: { activeTab: DrawerTab; device: DeviceDTO }): React.JSX.Element {
+  const [visited, setVisited] = useState<DrawerTab[]>([activeTab])
+  useEffect(() => {
+    setVisited((v) => (v.includes(activeTab) ? v : [...v, activeTab]))
+  }, [activeTab])
+  return (
+    <>
+      {visited.map((tab) => (
+        <div key={tab} className={cn('h-full', tab === activeTab ? 'block' : 'hidden')}>
+          {paneFor(tab, device)}
+        </div>
+      ))}
+    </>
+  )
 }
 
 export function DeviceDrawer(): React.JSX.Element | null {
@@ -110,7 +128,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
         </div>
 
         <div className="min-h-0 flex-1 p-4">
-          <ActivePane tab={activeTab} device={live} />
+          <DrawerBody key={live.id} activeTab={activeTab} device={live} />
         </div>
       </div>
     </div>

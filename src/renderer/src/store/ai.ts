@@ -25,7 +25,11 @@ export const useAi = create<AiStore>((set, get) => ({
       set({ loaded: true })
       return
     }
-    set({ accounts: await api.ai.list(), loaded: true })
+    const accounts = await api.ai.list()
+    set({ accounts, loaded: true })
+    // Проверяем валидность/кредит в фоне — иначе после перезапуска все ключи показывались
+    // «не проверено, $0», хотя они рабочие.
+    for (const a of accounts) void get().check(a.id)
   },
 
   add: async (input) => {

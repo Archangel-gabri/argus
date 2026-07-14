@@ -115,7 +115,9 @@ export function registerIpc(): void {
   ipcMain.handle('ssh:probe', async (_e, deviceId: unknown) => {
     const id = asString(deviceId)
     const r = await ssh.probe(id)
-    if (vault.isUnlocked()) vault.recordSnapshot(id, r)
+    // Пишем снапшот ТОЛЬКО для успешного опроса — иначе offline-хост даёт точки cpu/ram=0,
+    // и график истории выглядит как ровные 0% вместо честного пропуска.
+    if (r.ok && vault.isUnlocked()) vault.recordSnapshot(id, r)
     return r
   })
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
