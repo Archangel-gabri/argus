@@ -47,6 +47,72 @@ export async function resolveConn(deviceId: string): Promise<DeviceConn | null> 
   return checked.find((c): c is DeviceConn => c !== null) ?? getDeviceConn(deviceId)
 }
 
+/** Подключить уже созданный ssh2-Client к conn — напрямую или ТУННЕЛЕМ через conn.jump.
+ *  Пинит host-key (TOFU) на ОБОИХ прыжках (баг: раньше jump-хост не проверялся). Вызывающий
+ *  сам вешает client 'ready'/'error'/'close'; onError зовётся при сбое jump-плеча или синхронном
+ *  throw connect. Единый путь для терминала/файлов/портов/exec/probe — раньше jump был только у терминала. */
+export function establish(
+  client: Client,
+  conn: DeviceConn,
+  verifier: NonNullable<ConnectConfig['hostVerifier']>,
+  onError: (e: Error) => void,
+  readyTimeout = 15000
+): void {
+  const base = {
+    username: conn.user,
+    ...authFields(conn),
+    readyTimeout,
+    keepaliveInterval: 20000,
+    hostHash: 'sha256' as const,
+    hostVerifier: verifier
+  }
+  if (!conn.jump) {
+    try {
+      client.connect({ ...base, host: conn.host, port: conn.port })
+    } catch (e) {
+      onError(e as Error)
+    }
+    return
+  }
+  const jump = conn.jump
+  const jumpClient = new Client()
+  jumpClient.on('error', (e) => onError(new Error('jump-host: ' + e.message)))
+  jumpClient.on('ready', () => {
+    jumpClient.forwardOut('127.0.0.1', 0, conn.host, conn.port, (err, stream) => {
+      if (err) {
+        onError(new Error('jump forward: ' + err.message))
+        jumpClient.end()
+        return
+      }
+      try {
+        client.connect({ ...base, sock: stream })
+      } catch (e) {
+        onError(e as Error)
+      }
+    })
+  })
+  client.on('close', () => {
+    try {
+      jumpClient.end()
+    } catch {
+      /* ignore */
+    }
+  })
+  try {
+    jumpClient.connect({
+      host: jump.host,
+      port: jump.port,
+      username: jump.user,
+      ...authFields(jump),
+      readyTimeout,
+      hostHash: 'sha256',
+      hostVerifier: makeHostVerifier(jump.host, jump.port)
+    })
+  } catch (e) {
+    onError(e as Error)
+  }
+}
+
 interface Session {
   id: string
   client: Client
@@ -122,59 +188,8 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
     const verifier = makeHostVerifier(conn.host, conn.port, (changed) => {
       hostKeyChanged = changed
     })
-    const connectTarget = (sock?: ClientChannel): void => {
-      try {
-        const base = {
-          username: conn.user,
-          ...authFields(conn),
-          readyTimeout: 15000,
-          keepaliveInterval: 20000,
-          hostHash: 'sha256' as const,
-          hostVerifier: verifier
-        }
-        if (sock) client.connect({ ...base, sock })
-        else client.connect({ ...base, host: conn.host, port: conn.port })
-      } catch (e) {
-        done({ ok: false, error: (e as Error).message })
-      }
-    }
-
-    if (conn.jump) {
-      // Single-hop bastion: connect the jump, forward a channel to the target, tunnel the target over it.
-      const jump = conn.jump
-      const jumpClient = new Client()
-      jumpClient.on('error', (e) => done({ ok: false, error: 'jump-host: ' + e.message }))
-      jumpClient.on('ready', () => {
-        jumpClient.forwardOut('127.0.0.1', 0, conn.host, conn.port, (err, stream) => {
-          if (err) {
-            done({ ok: false, error: 'jump forward: ' + err.message })
-            jumpClient.end()
-            return
-          }
-          connectTarget(stream)
-        })
-      })
-      client.on('close', () => {
-        try {
-          jumpClient.end()
-        } catch {
-          /* ignore */
-        }
-      })
-      try {
-        jumpClient.connect({
-          host: jump.host,
-          port: jump.port,
-          username: jump.user,
-          ...authFields(jump),
-          readyTimeout: 15000
-        })
-      } catch (e) {
-        done({ ok: false, error: (e as Error).message })
-      }
-    } else {
-      connectTarget()
-    }
+    // Единый путь подключения: напрямую или через jump-бастион (с TOFU на обоих хопах).
+    establish(client, conn, verifier, (e) => done({ ok: false, error: e.message }))
   })
 }
 
@@ -273,15 +288,8 @@ export function probe(deviceId: string): Promise<ProbeResult> {
       })
     })
     client.on('error', (e) => done({ ok: false, status: 'offline', error: e.message }))
-    client.connect({
-      host: conn.host,
-      port: conn.port,
-      username: conn.user,
-      ...authFields(conn),
-      readyTimeout: 10000,
-      hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(conn.host, conn.port)
-    })
+    // Через jump-бастион если задан — иначе метрики jump-хостов вечно «offline».
+    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, status: 'offline', error: e.message }), 10000)
   })
 }
 
@@ -404,25 +412,30 @@ export function execOnConn(
         let out = ''
         stream.on('data', (d: Buffer) => (out += d.toString()))
         stream.stderr.on('data', (d: Buffer) => (out += d.toString()))
-        stream.on('close', () => done({ ok: true, output: out.trimEnd() }))
+        // Читаем РЕАЛЬНЫЙ код возврата: раньше всегда ok:true, из-за чего упавший
+        // `sudo -n systemctl reboot` (нет passwordless sudo, exit 1) рапортовал успех.
+        // code===0 → ok. Ненулевой/сигнал → провал с пометкой exit N (без слов
+        // «closed/disconnect», чтобы pc.power не принял это за успешный ребут-дисконнект).
+        stream.on('close', (code: number | null, signal?: string) => {
+          const okCode = code === 0
+          done({
+            ok: okCode,
+            output: out.trimEnd(),
+            error: okCode ? undefined : signal ? `signal ${signal}` : `exit ${code ?? '?'}`
+          })
+        })
       })
     })
     client.on('error', (e) => done({ ok: false, output: '', error: e.message }))
-    client.connect({
-      host: conn.host,
-      port: conn.port,
-      username: conn.user,
-      ...authFields(conn),
-      readyTimeout,
-      hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(conn.host, conn.port)
-    })
+    // Через jump-бастион если задан (раньше exec/snippets/power игнорировали jump).
+    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, output: '', error: e.message }), readyTimeout)
   })
 }
 
-/** One-shot exec on a device (for snippets + broadcast). Connects, runs, returns combined output. */
-export function execOnce(deviceId: string, command: string): Promise<{ ok: boolean; output: string; error?: string }> {
-  const conn = getDeviceConn(deviceId)
-  if (!conn) return Promise.resolve({ ok: false, output: '', error: 'device not found' })
+/** One-shot exec on a device (for snippets + broadcast). Connects, runs, returns combined output.
+ *  resolveConn → для multi-boot ПК команда идёт на ЖИВУЮ ОС, а не на оффлайн-первичный эндпоинт. */
+export async function execOnce(deviceId: string, command: string): Promise<{ ok: boolean; output: string; error?: string }> {
+  const conn = await resolveConn(deviceId)
+  if (!conn) return { ok: false, output: '', error: 'device not found' }
   return execOnConn(conn, command)
 }

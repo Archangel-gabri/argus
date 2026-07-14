@@ -1,7 +1,7 @@
 import { Client, type SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import { dialog } from 'electron'
-import { resolveConn, makeHostVerifier, authFields, hasCredential } from './ssh'
+import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
 
 interface SftpSession {
   id: string
@@ -44,15 +44,8 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
       })
     })
     client.on('error', (e) => done({ ok: false, error: e.message }))
-    client.connect({
-      host: conn.host,
-      port: conn.port,
-      username: conn.user,
-      ...authFields(conn),
-      readyTimeout: 15000,
-      hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(conn.host, conn.port)
-    })
+    // Через jump-бастион если задан — иначе Файлы не открывались у jump-хостов.
+    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
   })
 }
 

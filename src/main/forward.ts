@@ -1,7 +1,7 @@
 import { Client } from 'ssh2'
 import * as net from 'node:net'
 import { randomUUID } from 'node:crypto'
-import { resolveConn, makeHostVerifier, authFields, hasCredential } from './ssh'
+import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
 
 interface Forward {
   id: string
@@ -68,15 +68,8 @@ export async function openLocalForward(
       })
     })
     client.on('error', (e) => done({ ok: false, error: e.message }))
-    client.connect({
-      host: conn.host,
-      port: conn.port,
-      username: conn.user,
-      ...authFields(conn),
-      readyTimeout: 15000,
-      hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(conn.host, conn.port)
-    })
+    // Через jump-бастион если задан — иначе проброс портов не работал у jump-хостов.
+    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
   })
 }
 
