@@ -2,11 +2,12 @@
 // Приватно, без облака: локальная Ollama (дефолт localhost, override через ARGUS_OLLAMA_URL).
 // Владелец: локальный Ollama по умолчанию (SPEC р.7); большой узел — castiel-pc по Tailscale.
 import type { DeviceInput, DeviceKind, Currency } from './types'
+import { CURRENCY_CODES } from './types'
 
 const BASE = (process.env.ARGUS_OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '')
 
 const KINDS: DeviceKind[] = ['server', 'pc', 'phone', 'watch', 'buds', 'router', 'other']
-const CURRENCIES: Currency[] = ['USD', 'EUR', 'RUB']
+const CURRENCIES: readonly string[] = CURRENCY_CODES
 
 export interface AssistResult {
   ok: boolean
@@ -35,7 +36,8 @@ const SYSTEM =
   'name (строка), provider (хостер/бренд), kind (одно из: server,pc,phone,watch,buds,router,other), ' +
   'role (например master/exit/cascade), ip (хост или IP), port (число), user (ssh-логин), ' +
   'os, country, flag (эмодзи флага), consoleUrl (URL панели), amount (число, стоимость в месяц), ' +
-  'currency (USD/EUR/RUB). Не выдумывай значения, которых нет в тексте.'
+  'currency (ISO-код валюты: USD, EUR, RUB, GBP, CNY, JPY, … — как в тексте). ' +
+  'Не выдумывай значения, которых нет в тексте.'
 
 function coerce(raw: unknown): Partial<DeviceInput> {
   const o = (raw ?? {}) as Record<string, unknown>

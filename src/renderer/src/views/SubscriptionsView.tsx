@@ -8,6 +8,7 @@ import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
 import { catColor, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
 import type { Currency, SubscriptionInput } from '@/types'
+import { CURRENCY_CODES } from '@/types'
 
 interface Row {
   id: string
@@ -73,7 +74,7 @@ function AddSubForm({
           onChange={(e) => setAmount(e.target.value)}
         />
         <select className={inputCls} value={currency} onChange={(e) => setCurrency(e.target.value as Currency)}>
-          {(['USD', 'EUR', 'RUB'] as Currency[]).map((c) => (
+          {CURRENCY_CODES.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>

@@ -4,11 +4,9 @@ import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
+import { CURRENCY_CODES } from '@/types'
 
-const CURRENCIES: Currency[] = [
-  'USD', 'EUR', 'RUB', 'GBP', 'CNY', 'JPY', 'CHF', 'CAD', 'AUD', 'INR',
-  'BRL', 'KRW', 'TRY', 'PLN', 'UAH', 'KZT', 'AED', 'SEK', 'NOK', 'SGD'
-]
+const CURRENCIES: readonly Currency[] = CURRENCY_CODES
 const STATUSES: Status[] = ['online', 'degraded', 'offline', 'reboot', 'unknown', 'maintenance']
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
   { id: 'server', label: 'Сервер' },
