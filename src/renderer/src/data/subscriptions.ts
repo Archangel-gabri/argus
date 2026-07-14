@@ -12,8 +12,14 @@ export const catColor = (c: string): string => CAT_COLOR[c] ?? '#64748b'
 
 export const SUB_CATEGORIES = ['AI', 'Media', 'Dev', 'Hosting', 'Other'] as const
 
-// Rough display-only FX (USD base). Real rates land with the Banks tab.
-const RATES: Record<string, number> = { USD: 1, EUR: 1.08, RUB: 0.011 }
+// Rough display-only FX (USD base), 2026 approximations.
+// ВАЖНО: должно 1-в-1 совпадать с картой FX в src/main/vault.ts — иначе стоимость
+// сервера (конвертируется в main) и подписки (конвертируется здесь) разойдутся.
+const RATES: Record<string, number> = {
+  USD: 1, EUR: 1.08, RUB: 0.0126, GBP: 1.27, CNY: 0.14, JPY: 0.0067, CHF: 1.11,
+  CAD: 0.73, AUD: 0.66, INR: 0.012, BRL: 0.2, KRW: 0.00075, TRY: 0.03, PLN: 0.25,
+  UAH: 0.025, KZT: 0.0021, AED: 0.27, SEK: 0.095, NOK: 0.093, SGD: 0.74
+}
 export const toUsd = (amount: number, currency: string): number =>
   Math.round(amount * (RATES[currency] ?? 1) * 100) / 100
 
