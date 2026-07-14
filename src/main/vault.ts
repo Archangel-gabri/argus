@@ -459,7 +459,9 @@ function toDTO(r: DeviceRow): DeviceDTO {
     cost: { amount: r.cost_amount, currency: r.cost_currency, usd: r.cost_usd },
     consoleUrl: r.console_url,
     authType: r.auth_type,
-    hasSecret: Boolean(r.secret_password || r.secret_key),
+    // hasSecret считаем по ВЫБРАННОМУ методу — иначе устаревший ключ у password-устройства
+    // (или наоборот) заставлял бы UI показывать «доступ есть», хотя коннект невозможен.
+    hasSecret: r.auth_type === 'key' ? Boolean(r.secret_key) : r.auth_type === 'password' ? Boolean(r.secret_password) : false,
     notes: r.notes,
     jumpId: r.jump_id,
     altOs: parseAltOs(r.alt),
@@ -533,12 +535,27 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
   if (!cur) throw new Error('Device not found')
   const cost = input.cost ?? { amount: cur.cost_amount, currency: cur.cost_currency, usd: cur.cost_usd }
-  // Blank secret on edit = keep the stored one. A newly-pasted key also carries its passphrase.
-  const newSecret = input.password ? input.password : cur.secret_password
-  const newKey = input.privateKey ? input.privateKey : cur.secret_key
-  const newPassphrase = input.privateKey ? input.passphrase ?? null : cur.secret_passphrase
   const authType: AuthType =
     input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : cur.auth_type)
+  // Секреты по ВЫБРАННОМУ методу: пустое поле на правке = оставить текущий секрет ЭТОГО метода,
+  // но секрет НЕ выбранного метода ОБНУЛЯЕМ — иначе смена key↔password оставляла висящий ключ/пароль,
+  // и getDeviceConn мог молча ходить со старым секретом, а hasSecret врал.
+  let newSecret: string | null
+  let newKey: string | null
+  let newPassphrase: string | null
+  if (authType === 'key') {
+    newKey = input.privateKey ? input.privateKey : cur.secret_key
+    newPassphrase = input.privateKey ? input.passphrase ?? null : cur.secret_passphrase
+    newSecret = null
+  } else if (authType === 'password') {
+    newSecret = input.password ? input.password : cur.secret_password
+    newKey = null
+    newPassphrase = null
+  } else {
+    newSecret = null
+    newKey = null
+    newPassphrase = null
+  }
   const next: DeviceRow = {
     ...cur,
     name: input.name?.trim() || cur.name,
@@ -582,8 +599,19 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   return toDTO(next)
 }
 
-export function deleteDevice(id: string): void {
-  requireDb().prepare('DELETE FROM devices WHERE id = ?').run(id)
+/** Удаление устройства — транзакцией, с зачисткой зависимостей (иначе оставались сироты-снапшоты
+ *  и битые jump-ссылки у других устройств). Возвращает true, если строка реально удалена. */
+export function deleteDevice(id: string): boolean {
+  const d = requireDb()
+  const tx = d.transaction((deviceId: string): boolean => {
+    d.prepare('DELETE FROM metric_snapshots WHERE device_id = ?').run(deviceId)
+    d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(deviceId, deviceId)
+    // Устройства, для которых удаляемый был бастионом, теряют jump — иначе висячий jump_id
+    // ломает им подключение.
+    d.prepare('UPDATE devices SET jump_id = NULL WHERE jump_id = ?').run(deviceId)
+    return d.prepare('DELETE FROM devices WHERE id = ?').run(deviceId).changes > 0
+  })
+  return tx(id)
 }
 
 export interface JumpConn {

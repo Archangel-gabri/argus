@@ -90,8 +90,12 @@ export function registerIpc(): void {
 
   ipcMain.handle('devices:delete', (_e, id: unknown) => {
     try {
-      vault.deleteDevice(asString(id))
-      return { ok: true }
+      const deviceId = asString(id)
+      // Гасим живые проброс-туннели этого устройства — иначе localhost-листенер продолжал
+      // туннелировать даже после удаления (утечка до перезапуска приложения).
+      for (const fwd of forward.listForwards(deviceId)) forward.closeForward(fwd.id)
+      const removed = vault.deleteDevice(deviceId)
+      return removed ? { ok: true } : { ok: false, error: 'Устройство не найдено' }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }

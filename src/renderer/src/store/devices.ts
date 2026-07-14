@@ -10,7 +10,7 @@ interface DevicesStore {
   load: () => Promise<void>
   create: (input: DeviceInput) => Promise<{ ok: boolean; error?: string }>
   update: (id: string, input: DeviceInput) => Promise<{ ok: boolean; error?: string }>
-  remove: (id: string) => Promise<void>
+  remove: (id: string) => Promise<{ ok: boolean; error?: string }>
   updateMetrics: (
     id: string,
     m: {
@@ -59,9 +59,15 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   },
 
   remove: async (id) => {
-    if (!api) return
-    await api.devices.remove(id)
-    set({ devices: get().devices.filter((d) => d.id !== id) })
+    if (!api) {
+      set({ devices: get().devices.filter((d) => d.id !== id) })
+      return { ok: true }
+    }
+    // Убираем из UI ТОЛЬКО если удаление в vault реально прошло — иначе устройство «исчезало»
+    // из списка, оставаясь в базе (провалившееся удаление выглядело как успех).
+    const r = await api.devices.remove(id)
+    if (r?.ok) set({ devices: get().devices.filter((d) => d.id !== id) })
+    return { ok: !!r?.ok, error: r?.error }
   },
 
   updateMetrics: (id, m) =>

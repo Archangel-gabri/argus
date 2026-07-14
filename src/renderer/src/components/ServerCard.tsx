@@ -225,9 +225,11 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
                 </>
               )}
               <button
-                onClick={() => {
+                onClick={async () => {
                   setMenu(false)
-                  if (window.confirm(`Delete “${s.name}”? This cannot be undone.`)) remove(s.id)
+                  if (!window.confirm(`Delete “${s.name}”? This cannot be undone.`)) return
+                  const r = await remove(s.id)
+                  if (!r.ok) window.alert(`Не удалось удалить: ${r.error ?? 'неизвестная ошибка'}`)
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-rose-400 hover:bg-rose-500/10"
               >
