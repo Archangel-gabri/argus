@@ -8,6 +8,9 @@ export type OsFamily = 'linux' | 'windows' | 'off'
 
 const family = (osLabel: string): 'linux' | 'windows' => (/win/i.test(osLabel) ? 'windows' : 'linux')
 
+/** POSIX single-quote экранирование: любую строку безопасно вставить в shell без инъекции. */
+const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+
 /** Жив ли эндпоинт: echo работает в обоих шеллах (bash и Windows PowerShell). */
 async function isAlive(conn: DeviceConn): Promise<boolean> {
   const r = await execOnConn(conn, 'echo argus-ok', 8000)
@@ -122,12 +125,18 @@ export async function boot(
   let cmd: string
   if (ep.family === 'linux') {
     if (target?.bootEntry) {
-      cmd = `sudo -n grub-reboot "${target.bootEntry.replace(/"/g, '')}" && sudo -n systemctl reboot`
+      // bootEntry — строка из устройства: валидируем (без переносов/абсурдной длины) и
+      // экранируем одинарными кавычками, чтобы исключить command injection.
+      if (!/^[^\n\r]{1,200}$/.test(target.bootEntry)) {
+        return { ok: false, os: ep.os, error: 'некорректный bootEntry' }
+      }
+      cmd = `sudo -n grub-reboot ${shq(target.bootEntry)} && sudo -n systemctl reboot`
     } else {
+      // kw — только буквы/цифры (инъекция невозможна), но для единообразия тоже экранируем.
       const kw = (targetOs.split(/\s+/)[0] || targetOs).replace(/[^A-Za-z0-9]/g, '')
       cmd =
-        `e=$(awk -F"'" -v k="${kw}" 'BEGIN{IGNORECASE=1} /menuentry / && index(tolower($0), tolower(k)){print $2; exit}' /boot/grub/grub.cfg 2>/dev/null); ` +
-        `if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "grub entry for ${kw} not found"; fi`
+        `e=$(awk -F"'" -v k=${shq(kw)} 'BEGIN{IGNORECASE=1} /menuentry / && index(tolower($0), tolower(k)){print $2; exit}' /boot/grub/grub.cfg 2>/dev/null); ` +
+        `if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "grub entry not found"; fi`
     }
   } else {
     // Из Windows: в Linux — простой reboot (grub-дефолт = Linux). В другую Windows — н/д.
