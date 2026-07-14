@@ -100,38 +100,63 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     </button>
   )
 
+  const dotCls =
+    current === 'windows' ? 'bg-sky-400' : current === 'linux' ? 'bg-emerald-500' : 'bg-slate-500'
+
+  // Сегмент ОС: активная (запущенная) подсвечена; клик по неактивной — загрузить в неё.
+  const Seg = ({ os, label, target }: { os: 'linux' | 'windows'; label: string; target: 'linux' | 'windows' }): React.JSX.Element => {
+    const isCurrent = current === os
+    const loading = busy === 'boot-' + target
+    return (
+      <button
+        onClick={() => (isCurrent ? undefined : doBoot(target, label))}
+        disabled={!!busy || isCurrent}
+        title={isCurrent ? 'Запущена сейчас' : `Перезагрузить в ${label}`}
+        className={cn(
+          'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold transition-colors',
+          isCurrent
+            ? os === 'windows'
+              ? 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30'
+              : 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
+            : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
+        )}
+      >
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Monitor className="h-3.5 w-3.5" />}
+        {label}
+        {isCurrent && <span className={cn('ml-0.5 h-1.5 w-1.5 rounded-full', dotCls)} />}
+      </button>
+    )
+  }
+
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Dual-boot ПК</span>
-        <button onClick={refresh} className={cn('text-[11px] font-medium', badge.cls)} title="Обновить статус ОС">
-          {badge.text}
+      <div className="mb-2.5 flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Питание и ОС</span>
+        <button
+          onClick={refresh}
+          className={cn('inline-flex items-center gap-1.5 text-[11px] font-medium', badge.cls)}
+          title="Обновить статус ОС"
+        >
+          <span className={cn('h-1.5 w-1.5 rounded-full', dotCls)} /> {badge.text}
         </button>
       </div>
-      <div className="mb-2 flex flex-wrap gap-2">
-        <Btn
-          id="boot-linux"
-          label={`→ ${linOs}`}
-          icon={Monitor}
-          active={current === 'linux'}
-          onClick={() => doBoot('linux', linOs)}
-        />
-        <Btn
-          id="boot-windows"
-          label={`→ ${winOs}`}
-          icon={Monitor}
-          active={current === 'windows'}
-          onClick={() => doBoot('windows', winOs)}
-        />
+
+      {/* Сегментный выбор ОС */}
+      <div className="mb-2.5 flex gap-1 rounded-lg border border-border bg-bg/40 p-1">
+        <Seg os="linux" label={linOs} target="linux" />
+        <Seg os="windows" label={winOs} target="windows" />
       </div>
+
+      {/* Питание живой ОС */}
       <div className="flex flex-wrap gap-2">
         <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
         <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
       </div>
+
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
       <p className="mt-1.5 text-[11px] text-slate-600">
-        Переключение на живой ОС по SSH (grub-reboot ↔ shutdown /r). «Включить» из выключенного — WoL (MAC есть, добавим).
+        Клик по неактивной ОС — перезагрузка в неё. «Включить» из выключенного — WoL (MAC есть, добавим).
       </p>
     </div>
   )
