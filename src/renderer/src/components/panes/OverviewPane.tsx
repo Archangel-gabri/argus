@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
@@ -19,6 +19,122 @@ const PWR = {
     'e=$(awk -F"\'" \'/menuentry / && /[Ww]indows/{print $2; exit}\' /boot/grub/grub.cfg 2>/dev/null); ' +
     'if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "Windows entry not found in grub"; fi',
   toLinux: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot'
+}
+
+// Dual-boot ПК: одна карточка, текущая ОС + выбор Linux/Windows + питание на живой ОС.
+function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
+  const [current, setCurrent] = useState<'linux' | 'windows' | 'off' | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  const winOs = d.alt?.os || 'Windows'
+  const linOs = d.os || 'Linux'
+
+  const refresh = async (): Promise<void> => {
+    if (!api) return
+    setCurrent(null)
+    const r = await api.pc.whichOs(d.id)
+    setCurrent(r.current)
+  }
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d.id])
+
+  const doBoot = async (target: 'linux' | 'windows', label: string): Promise<void> => {
+    if (!api) return
+    if (!window.confirm(`Загрузить ${label} на «${d.name}»?\nПК перезагрузится в выбранную ОС.`)) return
+    setBusy('boot-' + target)
+    setMsg(null)
+    const r = await api.pc.boot(d.id, target)
+    setBusy(null)
+    setMsg(r.ok ? `✓ ${r.output || 'команда отправлена, ПК перезагружается'}` : `✖ ${r.error}`)
+  }
+  const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
+    if (!api) return
+    if (!window.confirm(`${label} «${d.name}»?`)) return
+    setBusy(action)
+    setMsg(null)
+    const r = await api.pc.power(d.id, action)
+    setBusy(null)
+    setMsg(r.ok ? '✓ команда отправлена' : `✖ ${r.error}`)
+  }
+
+  const badge =
+    current === null
+      ? { text: 'проверяю…', cls: 'text-slate-500' }
+      : current === 'off'
+        ? { text: 'выключен / offline', cls: 'text-slate-500' }
+        : current === 'windows'
+          ? { text: `Сейчас: ${winOs}`, cls: 'text-sky-400' }
+          : { text: `Сейчас: ${linOs}`, cls: 'text-emerald-400' }
+
+  const Btn = ({
+    id,
+    label,
+    icon: Icon,
+    onClick,
+    danger,
+    active
+  }: {
+    id: string
+    label: string
+    icon: typeof Power
+    onClick: () => void
+    danger?: boolean
+    active?: boolean
+  }): React.JSX.Element => (
+    <button
+      onClick={onClick}
+      disabled={!!busy || active}
+      className={cn(
+        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
+        active
+          ? 'bg-accent/15 text-accent ring-accent/30'
+          : danger
+            ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
+            : 'text-slate-200 ring-border hover:bg-white/5'
+      )}
+    >
+      {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+      {label}
+    </button>
+  )
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Dual-boot ПК</span>
+        <button onClick={refresh} className={cn('text-[11px] font-medium', badge.cls)} title="Обновить статус ОС">
+          {badge.text}
+        </button>
+      </div>
+      <div className="mb-2 flex flex-wrap gap-2">
+        <Btn
+          id="boot-linux"
+          label={`→ ${linOs}`}
+          icon={Monitor}
+          active={current === 'linux'}
+          onClick={() => doBoot('linux', linOs)}
+        />
+        <Btn
+          id="boot-windows"
+          label={`→ ${winOs}`}
+          icon={Monitor}
+          active={current === 'windows'}
+          onClick={() => doBoot('windows', winOs)}
+        />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
+        <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
+        <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
+      </div>
+      {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
+      <p className="mt-1.5 text-[11px] text-slate-600">
+        Переключение на живой ОС по SSH (grub-reboot ↔ shutdown /r). «Включить» из выключенного — WoL (MAC есть, добавим).
+      </p>
+    </div>
+  )
 }
 
 function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
@@ -169,7 +285,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             </div>
           </div>
 
-          <PowerSection device={d} />
+          {d.kind === 'pc' && d.alt ? <DualBootSection device={d} /> : <PowerSection device={d} />}
         </>
       ) : (
         // Паспорт-устройство: показываем то, что осмысленно, без SSH-полей и метрик.

@@ -8,6 +8,7 @@ import { discoverTailscale } from './discovery'
 import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
 import { parseDevice as ollamaParseDevice } from './ollama'
+import * as pc from './pc'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
@@ -181,6 +182,16 @@ export function registerIpc(): void {
 
   // Локальный ИИ-ассистент: извлечение полей устройства из текста (Ollama, приватно)
   ipcMain.handle('assist:parseDevice', (_e, text: unknown) => ollamaParseDevice(asString(text)))
+
+  // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
+  ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))
+  ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) =>
+    pc.boot(asString(id), asString(target) === 'windows' ? 'windows' : 'linux')
+  )
+  ipcMain.handle('pc:power', (_e, id: unknown, action: unknown) => {
+    const a = asString(action)
+    return pc.power(asString(id), a === 'poweroff' || a === 'suspend' ? a : 'reboot')
+  })
 
   // SFTP file browser
   ipcMain.handle('sftp:open', (_e, deviceId: unknown) => sftp.sftpOpen(asString(deviceId)))

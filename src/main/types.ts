@@ -4,6 +4,13 @@ export type AuthType = 'password' | 'key' | 'none'
 /** Класс сущности во Fleet: servers = server; network = router; остальное = personal. */
 export type DeviceKind = 'server' | 'pc' | 'phone' | 'watch' | 'buds' | 'router' | 'other'
 
+/** Второй эндпоинт ОС для dual-boot ПК (одна железка, две ОС). Тот же ключ, что у основного. */
+export interface AltBoot {
+  ip: string
+  user: string
+  os: string
+}
+
 /** Full row as stored in the encrypted DB (includes secrets — main process only). */
 export interface DeviceRow {
   id: string
@@ -31,6 +38,8 @@ export interface DeviceRow {
   secret_passphrase: string | null
   notes: string | null
   jump_id: string | null
+  /** JSON AltBoot | null — второй эндпоинт ОС (dual-boot ПК). */
+  alt: string | null
   sort: number
   created_at: number
   updated_at: number
@@ -58,6 +67,8 @@ export interface DeviceDTO {
   hasSecret: boolean
   notes: string | null
   jumpId: string | null
+  /** Второй эндпоинт ОС (dual-boot ПК) — без секретов, только адрес/юзер/ОС. */
+  alt: AltBoot | null
 }
 
 /** Renderer → main payload for create/update. May carry a secret to STORE (never to read back). */
@@ -85,6 +96,7 @@ export interface DeviceInput {
   passphrase?: string | null
   notes?: string | null
   jumpId?: string | null
+  alt?: AltBoot | null
 }
 
 export interface Snippet {

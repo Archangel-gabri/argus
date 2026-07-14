@@ -127,6 +127,17 @@ export interface ArgusApi {
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
   }
+  pc: {
+    whichOs: (deviceId: string) => Promise<{ current: 'linux' | 'windows' | 'off' }>
+    boot: (
+      deviceId: string,
+      target: 'linux' | 'windows'
+    ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
+    power: (
+      deviceId: string,
+      action: 'reboot' | 'poweroff' | 'suspend'
+    ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
+  }
 }
 
 export interface AssistResult {

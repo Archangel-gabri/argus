@@ -162,7 +162,8 @@ const SERVER_DEVICES: DeviceDTO[] = servers.map((s) => ({
   authType: 'none',
   hasSecret: false,
   notes: null,
-  jumpId: null
+  jumpId: null,
+  alt: null
 }))
 
 /** Персональные/сетевые превью-девайсы (паспорт-карточки Fleet). */
@@ -186,8 +187,9 @@ const PERSONAL_DEVICES: DeviceDTO[] = [
     consoleUrl: '',
     authType: 'none',
     hasSecret: false,
-    notes: 'i9-11900K · RTX 3060 · WoL из сна',
-    jumpId: null
+    notes: 'i9-11900K · RTX 3060 · dual-boot · WoL',
+    jumpId: null,
+    alt: { ip: '100.74.94.24', user: 'kubra', os: 'Windows 11' }
   },
   {
     id: 'galaxy-s8',
@@ -209,7 +211,8 @@ const PERSONAL_DEVICES: DeviceDTO[] = [
     authType: 'none',
     hasSecret: false,
     notes: 'KDE Connect · WoL-пульт для ПК',
-    jumpId: null
+    jumpId: null,
+    alt: null
   },
   {
     id: 'dlink-825',
@@ -231,7 +234,8 @@ const PERSONAL_DEVICES: DeviceDTO[] = [
     authType: 'none',
     hasSecret: false,
     notes: 'Главный гигабитный роутер · DNS 8.8.8.8',
-    jumpId: null
+    jumpId: null,
+    alt: null
   }
 ]
 

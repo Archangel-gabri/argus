@@ -36,7 +36,7 @@ const toUsd = (amount: number, currency: string): number =>
 const COLUMNS = [
   'id', 'name', 'provider', 'role', 'kind', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
   'cpu', 'ram_used', 'ram_total', 'cost_amount', 'cost_currency', 'cost_usd', 'console_url',
-  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'sort', 'created_at', 'updated_at'
+  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'alt', 'sort', 'created_at', 'updated_at'
 ] as const
 const INSERT_SQL = `INSERT INTO devices (${COLUMNS.join(',')}) VALUES (${COLUMNS.map((c) => '@' + c).join(',')})`
 
@@ -87,6 +87,7 @@ function migrate(d: Database.Database): void {
     secret_passphrase TEXT,
     notes TEXT,
     jump_id TEXT,
+    alt TEXT,
     sort INTEGER DEFAULT 0,
     created_at INTEGER,
     updated_at INTEGER
@@ -100,6 +101,12 @@ function migrate(d: Database.Database): void {
   // B3: device class for Fleet groups (existing rows are all servers).
   try {
     d.exec(`ALTER TABLE devices ADD COLUMN kind TEXT DEFAULT 'server'`)
+  } catch {
+    /* column already exists */
+  }
+  // C: alt OS endpoint for dual-boot PCs.
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN alt TEXT')
   } catch {
     /* column already exists */
   }
@@ -182,6 +189,7 @@ interface LocalDevice {
   costCurrency?: Currency
   notes?: string
   keyPath?: string
+  alt?: { ip: string; user?: string; os?: string }
 }
 
 function expandHome(p: string): string {
@@ -246,6 +254,7 @@ function loadLocalFleet(): DeviceRow[] | null {
       secret_passphrase: null,
       notes: d.notes ?? null,
       jump_id: null,
+      alt: d.alt?.ip ? JSON.stringify({ ip: d.alt.ip, user: d.alt.user || 'root', os: d.alt.os || '' }) : null,
       sort: i,
       created_at: now,
       updated_at: now
@@ -272,6 +281,7 @@ function seedInto(d: Database.Database): void {
         secret_passphrase: null,
         notes: null,
         jump_id: null,
+        alt: null,
         sort: i,
         created_at: now,
         updated_at: now
@@ -431,7 +441,19 @@ function toDTO(r: DeviceRow): DeviceDTO {
     authType: r.auth_type,
     hasSecret: Boolean(r.secret_password || r.secret_key),
     notes: r.notes,
-    jumpId: r.jump_id
+    jumpId: r.jump_id,
+    alt: parseAlt(r.alt)
+  }
+}
+
+function parseAlt(raw: string | null): DeviceDTO['alt'] {
+  if (!raw) return null
+  try {
+    const o = JSON.parse(raw) as { ip?: string; user?: string; os?: string }
+    if (!o.ip) return null
+    return { ip: o.ip, user: o.user || 'root', os: o.os || '' }
+  } catch {
+    return null
   }
 }
 
@@ -471,6 +493,7 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     secret_passphrase: input.passphrase || null,
     notes: input.notes ?? null,
     jump_id: input.jumpId ?? null,
+    alt: input.alt ? JSON.stringify(input.alt) : null,
     sort: nextSort,
     created_at: now,
     updated_at: now
@@ -516,6 +539,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     secret_passphrase: newPassphrase,
     notes: input.notes ?? cur.notes,
     jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
+    alt: input.alt !== undefined ? (input.alt ? JSON.stringify(input.alt) : null) : cur.alt,
     updated_at: Date.now()
   }
   d.prepare(
@@ -525,7 +549,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
        ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
        cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
        auth_type=@auth_type, secret_password=@secret_password, secret_key=@secret_key,
-       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, updated_at=@updated_at
+       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, alt=@alt, updated_at=@updated_at
      WHERE id=@id`
   ).run(next)
   return toDTO(next)
@@ -595,6 +619,49 @@ export function getDeviceConn(id: string): DeviceConn | null {
         conn.jump.passphrase = j.secret_passphrase
       }
     }
+  }
+  return conn
+}
+
+/** OS-строки основной и alt-ОС устройства (для тегирования dual-boot ПК). */
+export function getDeviceOsPair(id: string): { os: string; altOs: string } {
+  const r = requireDb().prepare('SELECT os, alt FROM devices WHERE id = ?').get(id) as
+    | { os: string; alt: string | null }
+    | undefined
+  let altOs = ''
+  if (r?.alt) {
+    try {
+      altOs = (JSON.parse(r.alt) as { os?: string }).os ?? ''
+    } catch {
+      /* ignore */
+    }
+  }
+  return { os: r?.os ?? '', altOs }
+}
+
+/** Main-process only: conn к альтернативной ОС dual-boot ПК (тот же ключ, alt.ip/alt.user). */
+export function getAltConn(id: string): DeviceConn | null {
+  const r = requireDb()
+    .prepare('SELECT ip, port, user, auth_type, secret_password, secret_key, secret_passphrase, alt FROM devices WHERE id = ?')
+    .get(id) as (ConnRow & { alt: string | null }) | undefined
+  if (!r || !r.alt) return null
+  let alt: { ip?: string; user?: string }
+  try {
+    alt = JSON.parse(r.alt)
+  } catch {
+    return null
+  }
+  if (!alt.ip) return null
+  const conn: DeviceConn = {
+    host: alt.ip,
+    port: r.port || 22,
+    user: alt.user || 'root',
+    authType: r.auth_type,
+    password: r.secret_password
+  }
+  if (r.auth_type === 'key' && r.secret_key) {
+    conn.privateKey = r.secret_key
+    conn.passphrase = r.secret_passphrase
   }
   return conn
 }

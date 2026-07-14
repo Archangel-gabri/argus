@@ -8,6 +8,7 @@ export type {
   Currency,
   AuthType,
   DeviceKind,
+  AltBoot,
   Snippet,
   Subscription,
   SubscriptionInput,

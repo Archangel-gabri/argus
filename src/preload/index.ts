@@ -98,6 +98,12 @@ const api = {
   },
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
+  },
+  pc: {
+    whichOs: (deviceId: string) => ipcRenderer.invoke('pc:whichOs', deviceId),
+    boot: (deviceId: string, target: 'linux' | 'windows') => ipcRenderer.invoke('pc:boot', deviceId, target),
+    power: (deviceId: string, action: 'reboot' | 'poweroff' | 'suspend') =>
+      ipcRenderer.invoke('pc:power', deviceId, action)
   }
 }
 

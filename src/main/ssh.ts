@@ -1,7 +1,7 @@
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
-import { getDeviceConn, checkHostKey } from './vault'
+import { getDeviceConn, checkHostKey, type DeviceConn } from './vault'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -345,10 +345,12 @@ export function probeHost(opts: {
   })
 }
 
-/** One-shot exec on a device (for snippets + broadcast). Connects, runs, returns combined output. */
-export function execOnce(deviceId: string, command: string): Promise<{ ok: boolean; output: string; error?: string }> {
-  const conn = getDeviceConn(deviceId)
-  if (!conn) return Promise.resolve({ ok: false, output: '', error: 'device not found' })
+/** One-shot exec against an explicit connection bundle (reused by execOnce + pc dual-boot). */
+export function execOnConn(
+  conn: DeviceConn,
+  command: string,
+  readyTimeout = 15000
+): Promise<{ ok: boolean; output: string; error?: string }> {
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, output: '', error: 'placeholder IP' })
   if (!hasCredential(conn)) return Promise.resolve({ ok: false, output: '', error: 'no credential' })
   return new Promise((resolve) => {
@@ -383,9 +385,16 @@ export function execOnce(deviceId: string, command: string): Promise<{ ok: boole
       port: conn.port,
       username: conn.user,
       ...authFields(conn),
-      readyTimeout: 15000,
+      readyTimeout,
       hostHash: 'sha256',
       hostVerifier: makeHostVerifier(conn.host, conn.port)
     })
   })
+}
+
+/** One-shot exec on a device (for snippets + broadcast). Connects, runs, returns combined output. */
+export function execOnce(deviceId: string, command: string): Promise<{ ok: boolean; output: string; error?: string }> {
+  const conn = getDeviceConn(deviceId)
+  if (!conn) return Promise.resolve({ ok: false, output: '', error: 'device not found' })
+  return execOnConn(conn, command)
 }
