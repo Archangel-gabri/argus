@@ -1,13 +1,4 @@
-import {
-  Search,
-  LayoutDashboard,
-  Server,
-  Landmark,
-  Repeat,
-  Bot,
-  Settings,
-  type LucideIcon
-} from 'lucide-react'
+import { Search, Server, Landmark, Repeat, Bot, Settings, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
@@ -19,8 +10,6 @@ interface NavItem {
   label: string
   icon: LucideIcon
 }
-
-const GENERAL: NavItem[] = [{ id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard }]
 
 const INFRA: NavItem[] = [
   { id: 'devices', label: 'Fleet', icon: Server },
@@ -97,20 +86,7 @@ export function Sidebar(): React.JSX.Element {
       </div>
 
       <nav className="mt-1 flex-1 overflow-y-auto pb-4">
-        <div className="px-3">
-          <div className="px-3 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            General
-          </div>
-          <div className="space-y-0.5">
-            {GENERAL.map((i) => (
-              <NavRow key={i.id} item={i} badge={badges[i.id]} />
-            ))}
-          </div>
-        </div>
-        <div className="px-3">
-          <div className="px-3 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            Infrastructure
-          </div>
+        <div className="px-3 pt-3">
           <div className="space-y-0.5">
             {INFRA.map((i) => (
               <NavRow key={i.id} item={i} badge={badges[i.id]} />

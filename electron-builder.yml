@@ -1,0 +1,28 @@
+appId: com.argus.app
+productName: Argus
+copyright: © Danya Kubrak
+directories:
+  output: dist
+  buildResources: resources
+# Нативный модуль уже собран под ABI Electron (electron-rebuild) — не пересобираем.
+npmRebuild: false
+files:
+  - out/**
+  - package.json
+# SQLCipher-биндинг должен лежать распакованным (не в asar), иначе .node не загрузится.
+asarUnpack:
+  - '**/*.node'
+  - node_modules/better-sqlite3-multiple-ciphers/**
+linux:
+  target:
+    - AppImage
+  icon: resources/icon.png
+  category: Network
+  maintainer: Danya Kubrak <fordengiplatno@gmail.com>
+  desktop:
+    entry:
+      Name: Argus
+      Comment: Personal cross-device command center
+      Categories: Network;System;Utility;
+appImage:
+  artifactName: Argus-${version}.${ext}

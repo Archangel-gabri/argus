@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
-import { DashboardView } from './views/DashboardView'
 import { DevicesView } from './views/DevicesView'
 import { BanksView } from './views/BanksView'
 import { SubscriptionsView } from './views/SubscriptionsView'
@@ -21,8 +20,6 @@ import { loadPrefs, savePrefs, PREFS_EVENT } from './lib/prefs'
 
 function renderView(view: ViewId): React.JSX.Element {
   switch (view) {
-    case 'devices':
-      return <DevicesView />
     case 'banks':
       return <BanksView />
     case 'subscriptions':
@@ -32,7 +29,7 @@ function renderView(view: ViewId): React.JSX.Element {
     case 'settings':
       return <SettingsView />
     default:
-      return <DashboardView />
+      return <DevicesView />
   }
 }
 

@@ -3,7 +3,6 @@ import { Command } from 'cmdk'
 import {
   Search,
   Server,
-  LayoutDashboard,
   Landmark,
   Repeat,
   Bot,
@@ -26,7 +25,6 @@ import { useAi } from '@/store/ai'
 import { useWallets } from '@/store/wallets'
 
 const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'devices', label: 'Fleet', icon: Server },
   { id: 'banks', label: 'Finance', icon: Landmark },
   { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
