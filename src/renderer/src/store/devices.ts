@@ -84,7 +84,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   // Dual-boot ПК (alt) обрабатываются через refreshOsStatus (у них живой может быть Windows-эндпоинт).
   refreshMetrics: async () => {
     if (!api) return
-    const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && !d.alt)
+    const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0)
     await Promise.all(
       eligible.map(async (d) => {
         const r = await api.ssh.probe(d.id)
@@ -97,18 +97,17 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   // Dual-boot: живая ОС + метрики этой ОS (OS-aware) → статус + runningOs + cpu/ram/disk/uptime.
   refreshOsStatus: async () => {
     if (!api) return
-    const pcs = get().devices.filter((d) => d.alt)
+    const pcs = get().devices.filter((d) => d.altOs.length > 0)
     await Promise.all(
       pcs.map(async (d) => {
         const r = await api.pc.metrics(d.id)
-        const running =
-          r.current === 'windows' ? d.alt?.os || 'Windows' : r.current === 'linux' ? d.os || 'Linux' : null
+        const running = r.family === 'off' ? null : r.current || (r.family === 'windows' ? 'Windows' : d.os)
         set({
           devices: get().devices.map((x) =>
             x.id === d.id
               ? {
                   ...x,
-                  status: r.current === 'off' ? 'offline' : 'online',
+                  status: r.family === 'off' ? 'offline' : 'online',
                   runningOs: running,
                   cpu: r.cpu ?? x.cpu,
                   ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
@@ -127,16 +126,15 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     if (!api) return
     const d = get().devices.find((x) => x.id === deviceId)
     if (!d || !d.hasSecret || d.ip.includes('x.x')) return
-    if (d.alt) {
+    if (d.altOs.length > 0) {
       const r = await api.pc.metrics(deviceId)
-      const running =
-        r.current === 'windows' ? d.alt?.os || 'Windows' : r.current === 'linux' ? d.os || 'Linux' : null
+      const running = r.family === 'off' ? null : r.current || (r.family === 'windows' ? 'Windows' : d.os)
       set({
         devices: get().devices.map((x) =>
           x.id === deviceId
             ? {
                 ...x,
-                status: r.current === 'off' ? 'offline' : 'online',
+                status: r.family === 'off' ? 'offline' : 'online',
                 runningOs: running,
                 cpu: r.cpu ?? x.cpu,
                 ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },

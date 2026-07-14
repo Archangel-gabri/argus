@@ -46,12 +46,13 @@ interface FormFields {
   privateKey: string
   passphrase: string
   jumpId: string
+  altOs: Array<{ os: string; ip: string; user: string }>
 }
 
 const EMPTY: FormFields = {
   name: '', provider: '', kind: 'server', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
   status: 'online', amount: '', currency: 'USD', consoleUrl: '',
-  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: ''
+  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: []
 }
 
 function Field({ label, full, children }: { label: string; full?: boolean; children: ReactNode }): React.JSX.Element {
@@ -91,7 +92,8 @@ export function DeviceDialog(): React.JSX.Element | null {
         country: d.country, flag: d.flag, status: d.status,
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
-        password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? ''
+        password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
+        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user }))
       })
     } else if (dialog.mode === 'new') {
       setF(EMPTY)
@@ -209,7 +211,10 @@ export function DeviceDialog(): React.JSX.Element | null {
       password: f.authMethod === 'password' ? (f.password ? f.password : null) : undefined,
       privateKey: f.authMethod === 'key' ? (f.privateKey ? f.privateKey : undefined) : undefined,
       passphrase: f.authMethod === 'key' ? (f.passphrase ? f.passphrase : undefined) : undefined,
-      jumpId: f.jumpId || null
+      jumpId: f.jumpId || null,
+      altOs: f.altOs
+        .filter((a) => a.ip.trim())
+        .map((a) => ({ os: a.os.trim(), ip: a.ip.trim(), user: a.user.trim() || 'root' }))
     }
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
     setBusy(false)
@@ -337,6 +342,59 @@ export function DeviceDialog(): React.JSX.Element | null {
                   ))}
               </select>
             </Field>
+            {(f.kind === 'pc' || f.kind === 'server') && (
+              <Field label="Другие ОС (multi-boot) — тот же ключ" full>
+                <div className="space-y-2">
+                  {f.altOs.map((a, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input
+                        className={cn(inputCls, 'flex-1')}
+                        value={a.os}
+                        list="os-list"
+                        placeholder="Windows 11"
+                        onChange={(e) =>
+                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, os: e.target.value } : x)) }))
+                        }
+                      />
+                      <input
+                        className={cn(inputCls, 'w-32')}
+                        value={a.ip}
+                        placeholder="IP/host"
+                        onChange={(e) =>
+                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, ip: e.target.value } : x)) }))
+                        }
+                      />
+                      <input
+                        className={cn(inputCls, 'w-24')}
+                        value={a.user}
+                        placeholder="user"
+                        onChange={(e) =>
+                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)) }))
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setF((p) => ({ ...p, altOs: p.altOs.filter((_, j) => j !== i) }))}
+                        className="shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
+                        aria-label="Удалить ОС"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setF((p) => ({ ...p, altOs: [...p.altOs, { os: '', ip: '', user: 'root' }] }))}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-card px-2.5 py-1 text-[11px] font-medium text-slate-300 ring-1 ring-border hover:bg-card-hover"
+                  >
+                    + добавить ОС
+                  </button>
+                  <p className="text-[11px] text-slate-600">
+                    Для dual/triple-boot: каждая ОС на своём адресе (напр. Tailscale), тот же SSH-ключ. На карточке — переключатель.
+                  </p>
+                </div>
+              </Field>
+            )}
             <Field label="Авторизация" full>
               <div className="flex gap-1 rounded-lg border border-border bg-bg/60 p-1">
                 {(['password', 'key'] as const).map((m) => (

@@ -21,13 +21,14 @@ const PWR = {
   toLinux: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot'
 }
 
-// Dual-boot ПК: одна карточка, текущая ОС + выбор Linux/Windows + питание на живой ОС.
+// Multi-boot ПК: одна карточка, текущая ОС + выбор из N ОС + питание на живой ОС.
 function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
-  const [current, setCurrent] = useState<'linux' | 'windows' | 'off' | null>(null)
+  const [current, setCurrent] = useState<string | null>(null) // метка живой ОС; '' = off; null = проверяю
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  const winOs = d.alt?.os || 'Windows'
-  const linOs = d.os || 'Linux'
+  // Все ОС этой железки: основная (d.os) + доп. (d.altOs).
+  const osList = [d.os || 'Linux', ...d.altOs.map((a) => a.os || 'OS')]
+  const famOf = (os: string): 'windows' | 'linux' => (/win/i.test(os) ? 'windows' : 'linux')
 
   const refresh = async (): Promise<void> => {
     if (!api) return
@@ -40,12 +41,12 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.id])
 
-  const doBoot = async (target: 'linux' | 'windows', label: string): Promise<void> => {
+  const doBoot = async (targetOs: string): Promise<void> => {
     if (!api) return
-    if (!window.confirm(`Загрузить ${label} на «${d.name}»?\nПК перезагрузится в выбранную ОС.`)) return
-    setBusy('boot-' + target)
+    if (!window.confirm(`Загрузить ${targetOs} на «${d.name}»?\nПК перезагрузится в выбранную ОС.`)) return
+    setBusy('boot-' + targetOs)
     setMsg(null)
-    const r = await api.pc.boot(d.id, target)
+    const r = await api.pc.boot(d.id, targetOs)
     setBusy(null)
     setMsg(r.ok ? `✓ ${r.output || 'команда отправлена, ПК перезагружается'}` : `✖ ${r.error}`)
   }
@@ -62,11 +63,9 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   const badge =
     current === null
       ? { text: 'проверяю…', cls: 'text-slate-500' }
-      : current === 'off'
+      : current === ''
         ? { text: 'выключен / offline', cls: 'text-slate-500' }
-        : current === 'windows'
-          ? { text: `Сейчас: ${winOs}`, cls: 'text-sky-400' }
-          : { text: `Сейчас: ${linOs}`, cls: 'text-emerald-400' }
+        : { text: `Сейчас: ${current}`, cls: famOf(current) === 'windows' ? 'text-sky-400' : 'text-emerald-400' }
 
   const Btn = ({
     id,
@@ -101,28 +100,29 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   )
 
   const dotCls =
-    current === 'windows' ? 'bg-sky-400' : current === 'linux' ? 'bg-emerald-500' : 'bg-slate-500'
+    current && famOf(current) === 'windows' ? 'bg-sky-400' : current ? 'bg-emerald-500' : 'bg-slate-500'
 
   // Сегмент ОС: активная (запущенная) подсвечена; клик по неактивной — загрузить в неё.
-  const Seg = ({ os, label, target }: { os: 'linux' | 'windows'; label: string; target: 'linux' | 'windows' }): React.JSX.Element => {
-    const isCurrent = current === os
-    const loading = busy === 'boot-' + target
+  const Seg = ({ osLabel }: { osLabel: string }): React.JSX.Element => {
+    const isCurrent = current === osLabel
+    const loading = busy === 'boot-' + osLabel
+    const fam = famOf(osLabel)
     return (
       <button
-        onClick={() => (isCurrent ? undefined : doBoot(target, label))}
+        onClick={() => (isCurrent ? undefined : doBoot(osLabel))}
         disabled={!!busy || isCurrent}
-        title={isCurrent ? 'Запущена сейчас' : `Перезагрузить в ${label}`}
+        title={isCurrent ? 'Запущена сейчас' : `Перезагрузить в ${osLabel}`}
         className={cn(
           'flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold transition-colors',
           isCurrent
-            ? os === 'windows'
+            ? fam === 'windows'
               ? 'bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30'
               : 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
             : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
         )}
       >
         {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Monitor className="h-3.5 w-3.5" />}
-        {label}
+        {osLabel}
         {isCurrent && <span className={cn('ml-0.5 h-1.5 w-1.5 rounded-full', dotCls)} />}
       </button>
     )
@@ -141,10 +141,11 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
         </button>
       </div>
 
-      {/* Сегментный выбор ОС */}
-      <div className="mb-2.5 flex gap-1 rounded-lg border border-border bg-bg/40 p-1">
-        <Seg os="linux" label={linOs} target="linux" />
-        <Seg os="windows" label={winOs} target="windows" />
+      {/* Сегментный выбор ОС (N штук) */}
+      <div className="mb-2.5 flex flex-wrap gap-1 rounded-lg border border-border bg-bg/40 p-1">
+        {osList.map((os) => (
+          <Seg key={os} osLabel={os} />
+        ))}
       </div>
 
       {/* Питание живой ОС */}
@@ -294,7 +295,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
       {ssh ? (
         <>
           <div className="grid grid-cols-2 gap-2">
-            <Fact label={d.alt ? 'Сейчас ОС' : 'OS'} value={d.runningOs || d.os} />
+            <Fact label={d.altOs.length ? 'Сейчас ОС' : 'OS'} value={d.runningOs || d.os} />
             <Fact label="Страна" value={d.country} />
             <Fact label="Хост" value={`${d.ip || '—'}:${d.port}`} />
             <Fact label="Пользователь" value={d.user} />
@@ -353,7 +354,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             </div>
           )}
 
-          {d.kind === 'pc' && d.alt ? <DualBootSection device={d} /> : <PowerSection device={d} />}
+          {d.altOs.length > 0 ? <DualBootSection device={d} /> : <PowerSection device={d} />}
         </>
       ) : (
         // Паспорт-устройство: показываем то, что осмысленно, без SSH-полей и метрик.

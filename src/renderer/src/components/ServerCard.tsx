@@ -170,7 +170,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           <div className="truncate text-[15px] font-semibold text-white">{s.name}</div>
           <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
             {ssh ? `${s.user}@${s.ip || '—'}` : s.runningOs || s.os || s.country || KIND_LABEL[s.kind]}
-            {s.alt && s.runningOs ? ` · ${s.runningOs}` : s.role ? ` · ${s.role}` : ''}
+            {s.altOs.length && s.runningOs ? ` · ${s.runningOs}` : s.role ? ` · ${s.role}` : ''}
           </div>
         </div>
         <div className="relative shrink-0" ref={ref}>

@@ -8,6 +8,7 @@ import { deriveKeyHex } from './crypto'
 import { SEED_DEVICES } from './seed'
 import type {
   AuthType,
+  AltBoot,
   Currency,
   DeviceKind,
   DeviceRow,
@@ -189,7 +190,8 @@ interface LocalDevice {
   costCurrency?: Currency
   notes?: string
   keyPath?: string
-  alt?: { ip: string; user?: string; os?: string }
+  alt?: { ip: string; user?: string; os?: string; bootEntry?: string }
+  altOs?: Array<{ ip: string; user?: string; os?: string; bootEntry?: string }>
 }
 
 function expandHome(p: string): string {
@@ -254,7 +256,11 @@ function loadLocalFleet(): DeviceRow[] | null {
       secret_passphrase: null,
       notes: d.notes ?? null,
       jump_id: null,
-      alt: d.alt?.ip ? JSON.stringify({ ip: d.alt.ip, user: d.alt.user || 'root', os: d.alt.os || '' }) : null,
+      alt: (() => {
+        const list = d.altOs ?? (d.alt ? [d.alt] : [])
+        const clean = list.filter((a) => a && a.ip).map((a) => ({ ip: a.ip, user: a.user || 'root', os: a.os || '', bootEntry: a.bootEntry }))
+        return clean.length ? JSON.stringify(clean) : null
+      })(),
       sort: i,
       created_at: now,
       updated_at: now
@@ -442,18 +448,22 @@ function toDTO(r: DeviceRow): DeviceDTO {
     hasSecret: Boolean(r.secret_password || r.secret_key),
     notes: r.notes,
     jumpId: r.jump_id,
-    alt: parseAlt(r.alt)
+    altOs: parseAltOs(r.alt)
   }
 }
 
-function parseAlt(raw: string | null): DeviceDTO['alt'] {
-  if (!raw) return null
+/** JSON колонки alt → список AltBoot. Обратная совместимость: одиночный объект → [объект]. */
+function parseAltOs(raw: string | null): AltBoot[] {
+  if (!raw) return []
   try {
-    const o = JSON.parse(raw) as { ip?: string; user?: string; os?: string }
-    if (!o.ip) return null
-    return { ip: o.ip, user: o.user || 'root', os: o.os || '' }
+    const v = JSON.parse(raw) as unknown
+    const arr = Array.isArray(v) ? v : [v]
+    return arr
+      .map((o) => o as { ip?: string; user?: string; os?: string; bootEntry?: string })
+      .filter((o) => o && o.ip)
+      .map((o) => ({ ip: o.ip as string, user: o.user || 'root', os: o.os || '', bootEntry: o.bootEntry }))
   } catch {
-    return null
+    return []
   }
 }
 
@@ -493,7 +503,7 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     secret_passphrase: input.passphrase || null,
     notes: input.notes ?? null,
     jump_id: input.jumpId ?? null,
-    alt: input.alt ? JSON.stringify(input.alt) : null,
+    alt: input.altOs && input.altOs.length ? JSON.stringify(input.altOs) : null,
     sort: nextSort,
     created_at: now,
     updated_at: now
@@ -539,7 +549,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     secret_passphrase: newPassphrase,
     notes: input.notes ?? cur.notes,
     jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
-    alt: input.alt !== undefined ? (input.alt ? JSON.stringify(input.alt) : null) : cur.alt,
+    alt: input.altOs !== undefined ? (input.altOs.length ? JSON.stringify(input.altOs) : null) : cur.alt,
     updated_at: Date.now()
   }
   d.prepare(
@@ -623,47 +633,38 @@ export function getDeviceConn(id: string): DeviceConn | null {
   return conn
 }
 
-/** OS-строки основной и alt-ОС устройства (для тегирования dual-boot ПК). */
-export function getDeviceOsPair(id: string): { os: string; altOs: string } {
-  const r = requireDb().prepare('SELECT os, alt FROM devices WHERE id = ?').get(id) as
-    | { os: string; alt: string | null }
-    | undefined
-  let altOs = ''
-  if (r?.alt) {
-    try {
-      altOs = (JSON.parse(r.alt) as { os?: string }).os ?? ''
-    } catch {
-      /* ignore */
-    }
-  }
-  return { os: r?.os ?? '', altOs }
+export interface OsEndpoint {
+  os: string
+  bootEntry?: string
+  conn: DeviceConn
 }
 
-/** Main-process only: conn к альтернативной ОС dual-boot ПК (тот же ключ, alt.ip/alt.user). */
-export function getAltConn(id: string): DeviceConn | null {
+/** Main-process only: все ОС-эндпоинты multi-boot ПК (основной + доп.), с conn на каждом
+ *  (тот же ключ). Primary = device.ip/os; далее — каждый altOs. Для whichOs/metrics/boot. */
+export function getOsEndpoints(id: string): OsEndpoint[] {
   const r = requireDb()
-    .prepare('SELECT ip, port, user, auth_type, secret_password, secret_key, secret_passphrase, alt FROM devices WHERE id = ?')
-    .get(id) as (ConnRow & { alt: string | null }) | undefined
-  if (!r || !r.alt) return null
-  let alt: { ip?: string; user?: string }
-  try {
-    alt = JSON.parse(r.alt)
-  } catch {
-    return null
+    .prepare('SELECT ip, port, user, os, auth_type, secret_password, secret_key, secret_passphrase, alt FROM devices WHERE id = ?')
+    .get(id) as (ConnRow & { os: string; alt: string | null }) | undefined
+  if (!r) return []
+  const mkConn = (host: string, user: string): DeviceConn => {
+    const c: DeviceConn = {
+      host,
+      port: r.port || 22,
+      user: user || 'root',
+      authType: r.auth_type,
+      password: r.secret_password
+    }
+    if (r.auth_type === 'key' && r.secret_key) {
+      c.privateKey = r.secret_key
+      c.passphrase = r.secret_passphrase
+    }
+    return c
   }
-  if (!alt.ip) return null
-  const conn: DeviceConn = {
-    host: alt.ip,
-    port: r.port || 22,
-    user: alt.user || 'root',
-    authType: r.auth_type,
-    password: r.secret_password
-  }
-  if (r.auth_type === 'key' && r.secret_key) {
-    conn.privateKey = r.secret_key
-    conn.passphrase = r.secret_passphrase
-  }
-  return conn
+  const out: OsEndpoint[] = []
+  if (r.ip && !r.ip.includes('x.x')) out.push({ os: r.os || '', conn: mkConn(r.ip, r.user) })
+  const alts = parseAltOs(r.alt)
+  for (const a of alts) out.push({ os: a.os, bootEntry: a.bootEntry, conn: mkConn(a.ip, a.user) })
+  return out
 }
 
 /** TOFU host-key check: 'new' (just stored), 'match', or 'changed'. Main-process only. */

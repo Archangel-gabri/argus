@@ -139,9 +139,10 @@ export interface ArgusApi {
     }>
   }
   pc: {
-    whichOs: (deviceId: string) => Promise<{ current: 'linux' | 'windows' | 'off' }>
+    whichOs: (deviceId: string) => Promise<{ current: string; family: 'linux' | 'windows' | 'off' }>
     metrics: (deviceId: string) => Promise<{
-      current: 'linux' | 'windows' | 'off'
+      current: string
+      family: 'linux' | 'windows' | 'off'
       cpu?: number
       ramUsed?: number
       ramTotal?: number
@@ -150,7 +151,7 @@ export interface ArgusApi {
     }>
     boot: (
       deviceId: string,
-      target: 'linux' | 'windows'
+      targetOs: string
     ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
     power: (
       deviceId: string,
