@@ -106,6 +106,9 @@ const api = {
     list: (deviceId: string) => ipcRenderer.invoke('forward:list', deviceId),
     close: (id: string) => ipcRenderer.send('forward:close', id)
   },
+  ports: {
+    list: (deviceId: string) => ipcRenderer.invoke('ports:list', deviceId)
+  },
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
   },

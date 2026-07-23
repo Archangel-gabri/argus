@@ -19,6 +19,7 @@ import type {
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
 import type { ForwardInfo } from '../main/forward'
+import type { ListeningPort } from '../main/ports'
 
 export type VaultResult = { ok: boolean; error?: string; state: VaultState }
 export type DeviceResult = { ok: boolean; error?: string; device?: DeviceDTO }
@@ -142,6 +143,9 @@ export interface ArgusApi {
     ) => Promise<{ ok: boolean; id?: string; error?: string }>
     list: (deviceId: string) => Promise<ForwardInfo[]>
     close: (id: string) => void
+  }
+  ports: {
+    list: (deviceId: string) => Promise<{ ok: boolean; ports: ListeningPort[]; error?: string }>
   }
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
