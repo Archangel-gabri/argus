@@ -11,6 +11,7 @@ import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
 import * as geo from './geo'
 import * as ports from './ports'
+import * as hardware from './hardware'
 import { ipLookup } from './net'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
@@ -270,6 +271,10 @@ export function registerIpc(): void {
 
   // Список слушающих портов сервера (для вкладки «Порты» + one-click туннель)
   ipcMain.handle('ports:list', (_e, deviceId: unknown) => ports.listListening(asString(deviceId)))
+
+  // Сводка комплектующих: из кэша (быстро) + пересбор по кнопке
+  ipcMain.handle('hw:get', (_e, deviceId: unknown) => hardware.getHardware(asString(deviceId)))
+  ipcMain.handle('hw:refresh', (_e, deviceId: unknown) => hardware.refreshHardware(asString(deviceId)))
 
   // ~/.ssh/config import + Tailscale discovery
   ipcMain.handle('sshconfig:parse', () => parseSshConfig())

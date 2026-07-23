@@ -259,6 +259,33 @@ export interface AiCheck {
   detail?: string
 }
 
+export interface DiskInfo {
+  name: string
+  model?: string
+  sizeGb: number
+  ssd: boolean
+}
+/** Нормализованная сводка комплектующих (agentless-инвентарь, кэшируется — железо меняется редко). */
+export interface HardwareInfo {
+  os?: string
+  kernel?: string
+  arch?: string
+  virt?: string
+  hostname?: string
+  cpuModel?: string
+  cpuCores?: number
+  cpuThreads?: number
+  cpuMhzMax?: number
+  ramGb?: number
+  dimms?: string[]
+  board?: string
+  gpus?: string[]
+  gpuDriver?: string
+  disks?: DiskInfo[]
+  nics?: string[]
+  collectedAt?: number
+}
+
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
 export interface VaultState {

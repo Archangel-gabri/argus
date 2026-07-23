@@ -109,6 +109,10 @@ const api = {
   ports: {
     list: (deviceId: string) => ipcRenderer.invoke('ports:list', deviceId)
   },
+  hw: {
+    get: (deviceId: string) => ipcRenderer.invoke('hw:get', deviceId),
+    refresh: (deviceId: string) => ipcRenderer.invoke('hw:refresh', deviceId)
+  },
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
   },

@@ -24,7 +24,9 @@ export type {
   LiveMetrics,
   GpuInfo,
   MountInfo,
-  ProcInfo
+  ProcInfo,
+  HardwareInfo,
+  DiskInfo
 } from '../../main/types'
 // Значение (не только тип): единый список валют для дропдаунов.
 export { CURRENCY_CODES } from '../../main/types'

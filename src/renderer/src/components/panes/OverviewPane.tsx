@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   ExternalLink,
   RotateCw,
@@ -11,14 +11,21 @@ import {
   Gauge,
   ArrowDownUp,
   Layers,
-  Thermometer
+  Thermometer,
+  Cpu,
+  MemoryStick,
+  HardDrive,
+  CircuitBoard,
+  MonitorCog,
+  Server,
+  RefreshCw
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
 import { STATUS, ProviderBadge, KIND_LABEL, isSshCapable } from '@/components/ServerCard'
 import { useDevices } from '@/store/devices'
-import type { DeviceDTO, PowerResult } from '@/types'
+import type { DeviceDTO, PowerResult, HardwareInfo } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -395,6 +402,121 @@ function MetricChips({ device: d }: { device: DeviceDTO }): React.JSX.Element | 
   )
 }
 
+function Spec({ icon: Icon, label, value, sub }: { icon: typeof Cpu; label: string; value?: string; sub?: string }): React.JSX.Element {
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3">
+      <div className="mb-1 flex items-center gap-1.5">
+        <Icon className="h-3.5 w-3.5 text-slate-500" />
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">{label}</span>
+      </div>
+      <div className="truncate text-sm font-medium text-slate-200" title={value}>
+        {value || '—'}
+      </div>
+      {sub && (
+        <div className="mt-0.5 truncate text-[11px] text-slate-500" title={sub}>
+          {sub}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Полноценная сводка комплектующих (agentless-инвентарь, кэш). Авто-сбор при первом открытии.
+function HardwareSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
+  const [hw, setHw] = useState<HardwareInfo | null>(null)
+  const [collectedAt, setCollectedAt] = useState<number | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!api) return
+    setLoading(true)
+    setErr(null)
+    const r = await api.hw.refresh(d.id)
+    setLoading(false)
+    if (r.ok && r.info) {
+      setHw(r.info)
+      setCollectedAt(r.info.collectedAt ?? Date.now())
+    } else setErr(r.error ?? 'не удалось собрать сводку')
+  }, [d.id])
+
+  useEffect(() => {
+    let alive = true
+    if (!api) return
+    void api.hw.get(d.id).then((c) => {
+      if (!alive) return
+      if (c) {
+        setHw(c.info)
+        setCollectedAt(c.collectedAt)
+      } else void refresh() // авто-сбор, если кэша ещё нет
+    })
+    return () => {
+      alive = false
+    }
+  }, [d.id, refresh])
+
+  const when = collectedAt ? new Date(collectedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) : null
+  const mhz = hw?.cpuMhzMax ? `до ${(hw.cpuMhzMax / 1000).toFixed(1)} ГГц` : ''
+  const cores = hw?.cpuCores ? `${hw.cpuCores}я${hw.cpuThreads ? `/${hw.cpuThreads}п` : ''}` : ''
+
+  return (
+    <div className="rounded-lg border border-border bg-card/40 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">Железо</span>
+        <button
+          onClick={() => void refresh()}
+          disabled={loading}
+          className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 disabled:opacity-50"
+          title="Пересобрать сводку"
+        >
+          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          {when ? `собрано ${when}` : 'собрать'}
+        </button>
+      </div>
+      {err && !hw ? (
+        <p className="py-1 text-center text-xs text-slate-500">{err}</p>
+      ) : !hw ? (
+        <p className="py-2 text-center text-xs text-slate-600">{loading ? 'Собираю сводку…' : 'Нет данных.'}</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <Spec icon={Cpu} label="Процессор" value={hw.cpuModel} sub={[cores, mhz].filter(Boolean).join(' · ')} />
+            <Spec icon={MemoryStick} label="Память" value={hw.ramGb ? `${hw.ramGb} GB` : undefined} sub={hw.dimms?.join(' · ')} />
+            {hw.gpus && hw.gpus.length > 0 && (
+              <Spec icon={MonitorCog} label="Графика" value={hw.gpus.join(', ')} sub={hw.gpuDriver ? `драйвер ${hw.gpuDriver}` : undefined} />
+            )}
+            {hw.board && <Spec icon={CircuitBoard} label="Плата" value={hw.board} />}
+            <Spec icon={Server} label="Система" value={hw.os} sub={[hw.kernel, hw.virt].filter(Boolean).join(' · ')} />
+          </div>
+          {hw.disks && hw.disks.length > 0 && (
+            <div className="mt-2 rounded-lg border border-border bg-card/50 p-2.5">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <HardDrive className="h-3.5 w-3.5 text-slate-500" />
+                <span className="text-[11px] uppercase tracking-wide text-slate-500">Накопители</span>
+              </div>
+              <ul className="space-y-1">
+                {hw.disks.map((disk) => (
+                  <li key={disk.name} className="flex items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-slate-300" title={disk.model || disk.name}>
+                      {disk.model || disk.name}
+                    </span>
+                    <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 text-[10px] uppercase text-slate-500">
+                      {disk.ssd ? 'SSD' : 'HDD'}
+                    </span>
+                    <span className="w-20 shrink-0 text-right tabular-nums text-slate-400">
+                      {disk.sizeGb >= 1000 ? `${(disk.sizeGb / 1000).toFixed(1)} TB` : `${disk.sizeGb} GB`}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const refreshOne = useDevices((s) => s.refreshOne)
@@ -499,6 +621,8 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
               </div>
             </div>
           )}
+
+          <HardwareSection device={d} />
 
           {d.altOs.length > 0 ? <DualBootSection device={d} /> : <PowerSection device={d} />}
         </>

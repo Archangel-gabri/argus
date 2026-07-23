@@ -188,6 +188,13 @@ function migrate(d: Database.Database): void {
     json TEXT NOT NULL,
     checked_at INTEGER NOT NULL
   )`)
+
+  // Кэш сводки комплектующих (железо меняется редко — собираем раз, обновляем по кнопке).
+  d.exec(`CREATE TABLE IF NOT EXISTS device_hardware (
+    device_id TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    collected_at INTEGER NOT NULL
+  )`)
 }
 
 /** Локальный реальный флот владельца (gitignored `fleet.local.json` рядом с приложением).
@@ -937,6 +944,31 @@ export function applyGeoToDevice(
     id
   )
   return toDTO({ ...cur, country, flag, provider })
+}
+
+/** Кэш сводки железа устройства (или null). */
+export function getDeviceHardware(id: string): { info: Record<string, unknown>; collectedAt: number } | null {
+  if (!isUnlocked()) return null
+  const row = requireDb().prepare('SELECT json, collected_at FROM device_hardware WHERE device_id = ?').get(id) as
+    | { json: string; collected_at: number }
+    | undefined
+  if (!row) return null
+  try {
+    return { info: JSON.parse(row.json) as Record<string, unknown>, collectedAt: row.collected_at }
+  } catch {
+    return null
+  }
+}
+
+/** Записать сводку железа (upsert). */
+export function setDeviceHardware(id: string, info: Record<string, unknown>): void {
+  if (!isUnlocked()) return
+  requireDb()
+    .prepare(
+      `INSERT INTO device_hardware (device_id, json, collected_at) VALUES (?, ?, ?)
+       ON CONFLICT(device_id) DO UPDATE SET json=excluded.json, collected_at=excluded.collected_at`
+    )
+    .run(id, JSON.stringify(info), Date.now())
 }
 
 // AI accounts — api_key lives in the SQLCipher DB; the DTO exposes only hasKey (never the key).

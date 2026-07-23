@@ -14,7 +14,8 @@ import type {
   AiCheck,
   PowerResult,
   PowerDiag,
-  LiveMetrics
+  LiveMetrics,
+  HardwareInfo
 } from '../main/types'
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
@@ -146,6 +147,10 @@ export interface ArgusApi {
   }
   ports: {
     list: (deviceId: string) => Promise<{ ok: boolean; ports: ListeningPort[]; error?: string }>
+  }
+  hw: {
+    get: (deviceId: string) => Promise<{ info: HardwareInfo; collectedAt: number } | null>
+    refresh: (deviceId: string) => Promise<{ ok: boolean; info?: HardwareInfo; error?: string }>
   }
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
