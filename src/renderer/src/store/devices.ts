@@ -157,6 +157,16 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   }
 }))
 
+// Фоновая гео-подстановка из main: обновляем ТОЛЬКО country/flag/provider, чтобы не затирать
+// живые метрики (cpu/ram/status), приходящие поллингом. Подписка одна на жизнь процесса.
+api?.devices.onGeo(({ device }) => {
+  useDevices.setState((s) => ({
+    devices: s.devices.map((d) =>
+      d.id === device.id ? { ...d, country: device.country, flag: device.flag, provider: device.provider } : d
+    )
+  }))
+})
+
 export function totals(devices: DeviceDTO[]): { monthly: number; yearly: number } {
   const monthly = devices.reduce((s, d) => s + d.cost.usd, 0)
   return { monthly, yearly: monthly * 12 }

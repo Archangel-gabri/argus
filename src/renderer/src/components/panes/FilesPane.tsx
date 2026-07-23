@@ -7,10 +7,14 @@ import {
   Download,
   Trash2,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { DeviceDTO, SftpEntry } from '@/types'
+
+type Toast = { kind: 'ok' | 'err'; text: string }
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -30,6 +34,14 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [toast, setToast] = useState<Toast | null>(null)
+
+  // Автоскрытие тоста результата (скачано/загружено/удалено/ошибка).
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3800)
+    return () => clearTimeout(t)
+  }, [toast])
 
   const load = async (sid: string, p: string): Promise<void> => {
     if (!api) return
@@ -56,7 +68,11 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
       setLoading(true)
       setError(null)
       const r = await api.sftp.open(device.id)
-      if (disposed) return
+      if (disposed) {
+        // компонент размонтировался, пока открывали — не оставляем сессию в main висеть
+        if (r.ok && r.sessionId && api) api.sftp.close(r.sessionId)
+        return
+      }
       if (!r.ok || !r.sessionId) {
         setError(r.error ?? 'Не удалось открыть SFTP')
         setLoading(false)
@@ -89,27 +105,39 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
   const download = async (e: SftpEntry): Promise<void> => {
     if (!sessionId || !api) return
     setBusy(true)
-    await api.sftp.download(sessionId, joinPath(path, e.name))
+    const r = await api.sftp.download(sessionId, joinPath(path, e.name))
     setBusy(false)
+    if (r.ok) setToast({ kind: 'ok', text: `Скачано: ${e.name}` })
+    else if (r.error && r.error !== 'canceled') setToast({ kind: 'err', text: `Не скачалось: ${r.error}` })
   }
   const upload = async (): Promise<void> => {
     if (!sessionId || !api) return
     setBusy(true)
     const r = await api.sftp.upload(sessionId, path)
     setBusy(false)
-    if (r.ok) refresh()
+    if (r.ok) {
+      setToast({ kind: 'ok', text: `Загружено: ${r.name ?? 'файл'}` })
+      refresh()
+    } else if (r.error && r.error !== 'canceled') {
+      setToast({ kind: 'err', text: `Не загрузилось: ${r.error}` })
+    }
   }
   const remove = async (e: SftpEntry): Promise<void> => {
     if (!sessionId || !api) return
     if (!window.confirm(`Удалить «${e.name}»?`)) return
     setBusy(true)
-    await api.sftp.remove(sessionId, joinPath(path, e.name), e.type === 'd')
+    const r = await api.sftp.remove(sessionId, joinPath(path, e.name), e.type === 'd')
     setBusy(false)
-    refresh()
+    if (r.ok) {
+      setToast({ kind: 'ok', text: `Удалено: ${e.name}` })
+      refresh()
+    } else {
+      setToast({ kind: 'err', text: `Не удалось удалить: ${r.error ?? 'ошибка'}` })
+    }
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface/40">
+    <div className="relative flex h-full flex-col overflow-hidden rounded-lg border border-border bg-surface/40">
       <div className="flex items-center gap-2 border-b border-border bg-bg/40 px-3 py-2">
         <button onClick={up} className="rounded-md p-1.5 text-slate-400 hover:bg-white/5 hover:text-slate-200" title="Вверх">
           <ArrowUp className="h-4 w-4" />
@@ -173,6 +201,24 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
           </ul>
         )}
       </div>
+
+      {toast && (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium shadow-lg ring-1 backdrop-blur-sm',
+            toast.kind === 'ok'
+              ? 'bg-emerald-500/15 text-emerald-200 ring-emerald-500/30'
+              : 'bg-rose-500/15 text-rose-200 ring-rose-500/30'
+          )}
+        >
+          {toast.kind === 'ok' ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+          )}
+          <span className="truncate">{toast.text}</span>
+        </div>
+      )}
     </div>
   )
 }

@@ -180,6 +180,14 @@ function migrate(d: Database.Database): void {
     notes TEXT,
     created_at INTEGER
   )`)
+
+  // Кэш IP-геолокации (страна/флаг/хостер/ASN) — привязан к IP, а не к устройству. Живёт в
+  // зашифрованном vault (IP+инфраструктура приватны). Питает авто-подстановку при добавлении/показе.
+  d.exec(`CREATE TABLE IF NOT EXISTS ip_geo (
+    ip TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    checked_at INTEGER NOT NULL
+  )`)
 }
 
 /** Локальный реальный флот владельца (gitignored `fleet.local.json` рядом с приложением).
@@ -874,6 +882,61 @@ export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
     )
     .all(deviceId, limit) as MetricSnapshot[]
   return rows.reverse()
+}
+
+// ── IP-геолокация: кэш + авто-подстановка страны/флага/хостера ────────────────────────
+const GEO_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 дней
+
+/** Гео из кэша, если не старше TTL (иначе null → нужен свежий запрос). */
+export function getIpGeo(ip: string): Record<string, unknown> | null {
+  if (!isUnlocked()) return null
+  const row = requireDb().prepare('SELECT json, checked_at FROM ip_geo WHERE ip = ?').get(ip) as
+    | { json: string; checked_at: number }
+    | undefined
+  if (!row || Date.now() - row.checked_at > GEO_TTL_MS) return null
+  try {
+    return JSON.parse(row.json) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** Записать гео IP в кэш (upsert). */
+export function setIpGeo(ip: string, data: Record<string, unknown>): void {
+  if (!isUnlocked()) return
+  requireDb()
+    .prepare(
+      `INSERT INTO ip_geo (ip, json, checked_at) VALUES (?, ?, ?)
+       ON CONFLICT(ip) DO UPDATE SET json=excluded.json, checked_at=excluded.checked_at`
+    )
+    .run(ip, JSON.stringify(data), Date.now())
+}
+
+/** Заполнить ПУСТЫЕ country/flag/provider устройства из гео. Введённое руками не трогаем
+ *  (реселлеры: провайдер владельца важнее ASN-владельца). Возвращает обновлённый DTO или null. */
+export function applyGeoToDevice(
+  id: string,
+  geo: { country?: string; flag?: string; provider?: string }
+): DeviceDTO | null {
+  if (!isUnlocked()) return null
+  const d = requireDb()
+  const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
+  if (!cur) return null
+  const hasCountry = Boolean(cur.country?.trim())
+  const hasFlag = Boolean(cur.flag && cur.flag !== '🖥️')
+  const hasProvider = Boolean(cur.provider && !['Custom', 'SSH', ''].includes(cur.provider))
+  const country = hasCountry ? cur.country : geo.country?.trim() || cur.country
+  const flag = hasFlag ? cur.flag : geo.flag || cur.flag
+  const provider = hasProvider ? cur.provider : geo.provider?.trim() || cur.provider
+  if (country === cur.country && flag === cur.flag && provider === cur.provider) return null
+  d.prepare('UPDATE devices SET country=?, flag=?, provider=?, updated_at=? WHERE id=?').run(
+    country,
+    flag,
+    provider,
+    Date.now(),
+    id
+  )
+  return toDTO({ ...cur, country, flag, provider })
 }
 
 // AI accounts — api_key lives in the SQLCipher DB; the DTO exposes only hasKey (never the key).

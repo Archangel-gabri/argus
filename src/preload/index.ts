@@ -16,7 +16,13 @@ const api = {
     list: () => ipcRenderer.invoke('devices:list'),
     create: (input: unknown) => ipcRenderer.invoke('devices:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('devices:update', id, input),
-    remove: (id: string) => ipcRenderer.invoke('devices:delete', id)
+    remove: (id: string) => ipcRenderer.invoke('devices:delete', id),
+    // Событие фоновой гео-подстановки: main прислал обновлённое устройство (страна/флаг/хостер).
+    onGeo: (cb: (p: { device: unknown }) => void) => {
+      const h = (_e: IpcRendererEvent, p: { device: unknown }): void => cb(p)
+      ipcRenderer.on('devices:geo', h)
+      return () => ipcRenderer.removeListener('devices:geo', h)
+    }
   },
   ssh: {
     open: (deviceId: string, cols: number, rows: number) =>
@@ -25,6 +31,7 @@ const api = {
     resize: (sessionId: string, cols: number, rows: number) =>
       ipcRenderer.send('ssh:resize', sessionId, cols, rows),
     close: (sessionId: string) => ipcRenderer.send('ssh:close', sessionId),
+    attach: (sessionId: string) => ipcRenderer.send('ssh:attach', sessionId),
     probe: (deviceId: string) => ipcRenderer.invoke('ssh:probe', deviceId),
     probeHost: (opts: {
       host: string
@@ -110,7 +117,8 @@ const api = {
     boot: (deviceId: string, targetOs: string) => ipcRenderer.invoke('pc:boot', deviceId, targetOs),
     power: (deviceId: string, action: 'reboot' | 'poweroff' | 'suspend') =>
       ipcRenderer.invoke('pc:power', deviceId, action),
-    wake: (deviceId: string) => ipcRenderer.invoke('pc:wake', deviceId)
+    wake: (deviceId: string) => ipcRenderer.invoke('pc:wake', deviceId),
+    powerDiag: (deviceId: string) => ipcRenderer.invoke('pc:powerDiag', deviceId)
   }
 }
 

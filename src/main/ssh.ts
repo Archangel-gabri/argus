@@ -118,6 +118,11 @@ interface Session {
   client: Client
   stream: ClientChannel | null
   deviceId: string
+  wc: WebContents
+  // Байты, пришедшие ДО того как рендерер подписался (ssh:attach), буферизуем — иначе
+  // приглашение/баннер, отправленные между resolve(open) и подпиской onData, терялись.
+  attached: boolean
+  buffer: string[]
 }
 
 const sessions = new Map<string, Session>()
@@ -160,9 +165,17 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
           client.end()
           return
         }
-        sessions.set(id, { id, client, stream, deviceId })
+        sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [] })
         const forward = (d: Buffer): void => {
-          if (!wc.isDestroyed()) wc.send('ssh:data', { sessionId: id, data: d.toString('base64') })
+          const s = sessions.get(id)
+          if (!s) return
+          const b64 = d.toString('base64')
+          if (!s.attached) {
+            s.buffer.push(b64)
+            if (s.buffer.length > 2000) s.buffer.shift() // страховка от разрастания, если рендерер не подписался
+            return
+          }
+          if (!wc.isDestroyed()) wc.send('ssh:data', { sessionId: id, data: b64 })
         }
         stream.on('data', forward)
         stream.stderr.on('data', forward)
@@ -195,6 +208,15 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
 
 export function writeShell(sessionId: string, data: string): void {
   sessions.get(sessionId)?.stream?.write(data)
+}
+
+/** Рендерер подписался на ssh:data — сливаем накопленный до подписки буфер и включаем прямой поток. */
+export function attachShell(sessionId: string): void {
+  const s = sessions.get(sessionId)
+  if (!s || s.attached) return
+  s.attached = true
+  if (!s.wc.isDestroyed()) for (const data of s.buffer) s.wc.send('ssh:data', { sessionId, data })
+  s.buffer = []
 }
 
 export function resizeShell(sessionId: string, cols: number, rows: number): void {
@@ -233,21 +255,34 @@ export interface ProbeResult {
   error?: string
 }
 
-// Agentless: loadavg CPU%, free -m RAM, df / диск%, /proc/uptime. Один exec, без агента.
-const PROBE_CMD = `cat /proc/loadavg | cut -d' ' -f1; nproc; free -m | awk '/^Mem:/{print $2, $3}'; df -P / | awk 'NR==2{gsub(/%/,"",$5);print $5}'; awk '{print int($1)}' /proc/uptime`
+// Agentless, один exec, без агента. CPU% — РЕАЛЬНАЯ утилизация по дельте /proc/stat (два сэмпла с
+// паузой 0.3с), а не load average (прежний load1/cores врал: >100% при I/O-очереди, 0% при коротком
+// всплеске). Далее: loadavg (задел на Stage 2), free -m RAM, df / диск%, /proc/uptime.
+const PROBE_CMD =
+  `awk '/^cpu /{idle=$5+$6;non=$2+$3+$4+$7+$8+$9;print non+idle, idle}' /proc/stat; ` +
+  `sleep 0.3; ` +
+  `awk '/^cpu /{idle=$5+$6;non=$2+$3+$4+$7+$8+$9;print non+idle, idle}' /proc/stat; ` +
+  `cut -d' ' -f1 /proc/loadavg; ` +
+  `free -m | awk '/^Mem:/{print $2, $3}'; ` +
+  `df -P / | awk 'NR==2{gsub(/%/,"",$5);print $5}'; ` +
+  `awk '{print int($1)}' /proc/uptime`
 
-/** Разбор вывода PROBE_CMD в метрики (переиспользуется pc.ts для Linux-эндпоинта). */
+/** Разбор вывода PROBE_CMD в метрики (переиспользуется pc.ts для Linux-эндпоинта).
+ *  Строки: 0=«total idle» сэмпл1, 1=«total idle» сэмпл2, 2=load1, 3=«memTotal memUsed», 4=disk%, 5=uptime. */
 export function parseLinuxProbe(out: string): ProbeResult {
   const lines = out.trim().split('\n')
-  const load1 = parseFloat(lines[0]) || 0
-  const cores = parseInt(lines[1], 10) || 1
-  const [totalMb, usedMb] = (lines[2] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
-  const disk = parseFloat(lines[3])
-  const uptime = parseInt(lines[4], 10)
+  const [t1, i1] = (lines[0] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
+  const [t2, i2] = (lines[1] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
+  const dt = t2 - t1
+  const di = i2 - i1
+  const cpu = dt > 0 ? Math.min(100, Math.max(0, Math.round((100 * (dt - di)) / dt))) : 0
+  const [totalMb, usedMb] = (lines[3] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
+  const disk = parseFloat(lines[4])
+  const uptime = parseInt(lines[5], 10)
   return {
     ok: true,
     status: 'online',
-    cpu: Math.min(100, Math.round((load1 / cores) * 100)),
+    cpu,
     ramTotal: Math.round((totalMb / 1024) * 10) / 10,
     ramUsed: Math.round((usedMb / 1024) * 10) / 10,
     disk: Number.isFinite(disk) ? disk : undefined,

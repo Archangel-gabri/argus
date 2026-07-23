@@ -11,7 +11,9 @@ import type {
   MetricSnapshot,
   AiAccount,
   AiAccountInput,
-  AiCheck
+  AiCheck,
+  PowerResult,
+  PowerDiag
 } from '../main/types'
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
@@ -41,12 +43,14 @@ export interface ArgusApi {
     create: (input: DeviceInput) => Promise<DeviceResult>
     update: (id: string, input: DeviceInput) => Promise<DeviceResult>
     remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+    onGeo: (cb: (p: { device: DeviceDTO }) => void) => () => void
   }
   ssh: {
     open: (deviceId: string, cols: number, rows: number) => Promise<{ ok: boolean; sessionId?: string; error?: string }>
     input: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     close: (sessionId: string) => void
+    attach: (sessionId: string) => void
     probe: (deviceId: string) => Promise<ProbeResult>
     exec: (deviceId: string, command: string) => Promise<{ ok: boolean; output: string; error?: string }>
     probeHost: (opts: {
@@ -157,11 +161,9 @@ export interface ArgusApi {
       deviceId: string,
       targetOs: string
     ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
-    power: (
-      deviceId: string,
-      action: 'reboot' | 'poweroff' | 'suspend'
-    ) => Promise<{ ok: boolean; os: string; output?: string; error?: string }>
+    power: (deviceId: string, action: 'reboot' | 'poweroff' | 'suspend') => Promise<PowerResult>
     wake: (deviceId: string) => Promise<{ ok: boolean; error?: string }>
+    powerDiag: (deviceId: string) => Promise<PowerDiag>
   }
 }
 

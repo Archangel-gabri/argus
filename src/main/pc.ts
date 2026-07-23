@@ -4,6 +4,7 @@
 import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn, parseLinuxProbe, LINUX_PROBE_CMD } from './ssh'
+import type { PowerResult, PowerDiag } from './types'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
 
@@ -131,29 +132,108 @@ export async function wake(deviceId: string): Promise<{ ok: boolean; error?: str
   })
 }
 
+// Windows suspend — через -EncodedCommand (base64 UTF-16LE), НЕ inline -Command: если Windows
+// OpenSSH DefaultShell = PowerShell (как на Castiel — проверено вживую 2026-07-23), то внешний
+// PowerShell раскрывает `$false` внутри "-Command "…$false…"" в строку 'False' и команда падает.
+// EncodedCommand устойчив к любому DefaultShell (нет кавычек/$ для внешнего шелла). Проверено
+// end-to-end: Castiel реально уснул и проснулся по WoL.
+const WIN_SUSPEND_PS =
+  "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)"
+const WIN_SUSPEND_CMD = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(
+  WIN_SUSPEND_PS,
+  'utf16le'
+).toString('base64')}`
+
+// `-i` = ignore-inhibitors: без него logind/polkit отклоняют выключение при активной
+// графической сессии (Steam-стрим, KDE Connect, запись экрана и т.п.). Финальное плечо —
+// прямой sudo poweroff/reboot на случай отсутствия systemctl. Windows: /f = force (не давать
+// приложениям заблокировать); shutdown.exe без $-переменных — устойчив под PowerShell-DefaultShell.
 const CMD = {
   linux: {
-    reboot: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot',
-    poweroff: 'sudo -n systemctl poweroff 2>/dev/null || systemctl poweroff',
-    suspend: 'sudo -n systemctl suspend 2>/dev/null || systemctl suspend'
+    reboot: 'sudo -n systemctl reboot -i 2>/dev/null || systemctl reboot -i 2>/dev/null || sudo -n reboot',
+    poweroff: 'sudo -n systemctl poweroff -i 2>/dev/null || systemctl poweroff -i 2>/dev/null || sudo -n poweroff',
+    suspend: 'sudo -n systemctl suspend -i 2>/dev/null || systemctl suspend -i'
   },
   windows: {
-    reboot: 'shutdown.exe /r /t 0',
-    poweroff: 'shutdown.exe /s /t 0',
-    suspend: 'rundll32.exe powrprof.dll,SetSuspendState 0,1,0'
+    reboot: 'shutdown.exe /r /t 0 /f',
+    poweroff: 'shutdown.exe /s /t 0 /f',
+    suspend: WIN_SUSPEND_CMD
   }
 } as const
 
-/** Питание на живой ОС. */
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+// Разрыв SSH-канала — ожидаемый исход poweroff/reboot: команда ушла, но exit-код прийти не успел.
+// Не считать это провалом (иначе кнопка врёт «✖», хотя машина гасится).
+const isDropped = (err: string | undefined): boolean =>
+  /closed|disconnect|ECONNRESET|timed?\s?out|exit \?|signal /i.test(err ?? '')
+
+/** Питание на живой ОС. Двухфазно: отправляем команду, затем для poweroff/suspend проверяем,
+ *  что машина реально погасла (иначе честно сообщаем «всё ещё отвечает» + причину из stderr). */
 export async function power(
   deviceId: string,
   action: 'reboot' | 'poweroff' | 'suspend'
-): Promise<{ ok: boolean; os: string; output?: string; error?: string }> {
+): Promise<PowerResult> {
   const ep = await liveEndpoint(deviceId)
-  if (!ep) return { ok: false, os: '', error: 'ПК не в сети (ни одна ОС не отвечает)' }
+  if (!ep) return { ok: false, os: '', phase: 'no-endpoint', error: 'ПК не в сети (ни одна ОС не отвечает)' }
   const cmd = CMD[ep.family][action]
   const r = await execOnConn(ep.conn, cmd, 10000)
-  return { ok: r.ok || /closed|disconnect|ECONNRESET/i.test(r.error ?? ''), os: ep.os, output: r.output, error: r.error }
+  const dropped = isDropped(r.error)
+
+  // Явный отказ хоста (не разрыв): показать РЕАЛЬНУЮ причину (inhibitor/polkit/нет прав).
+  if (!r.ok && !dropped) {
+    return {
+      ok: false,
+      os: ep.os,
+      phase: 'rejected',
+      output: r.output,
+      error: (r.output?.trim() || r.error || 'команда отклонена хостом').slice(0, 400)
+    }
+  }
+
+  // reboot: verify занял бы минуты — сообщаем «принято».
+  if (action === 'reboot') {
+    return { ok: true, os: ep.os, phase: 'accepted', output: 'команда отправлена — ПК перезагружается' }
+  }
+
+  // poweroff/suspend: ждём и проверяем, что эндпоинт действительно умер.
+  await delay(7000)
+  const stillAlive = await isAlive(ep.conn)
+  if (stillAlive) {
+    return {
+      ok: false,
+      os: ep.os,
+      phase: 'still-up',
+      error:
+        (r.output?.trim() ||
+          'команда отправлена, но ПК всё ещё отвечает — вероятно, блокирует активная сессия/инхибитор (см. «Диагностика»)').slice(0, 400)
+    }
+  }
+  return {
+    ok: true,
+    os: ep.os,
+    phase: 'verified',
+    output: action === 'poweroff' ? '✓ ПК выключился' : '✓ ПК уснул'
+  }
+}
+
+// Пред-полётная диагностика: кто мы, есть ли passwordless-sudo, что блокирует выключение.
+const DIAG_LINUX =
+  'echo "USER=$(whoami) UID=$(id -u)"; ' +
+  'sudo -n true 2>/dev/null && echo "SUDO_N=ok" || echo "SUDO_N=нет (нужен пароль)"; ' +
+  'echo "--- инхибиторы (что блокирует выключение) ---"; ' +
+  'systemd-inhibit --list 2>/dev/null | grep -iE "shutdown|sleep|Who|What|Mode" | head -12 || echo "(нет / systemd-inhibit недоступен)"'
+const DIAG_WIN =
+  'powershell.exe -NoProfile -NonInteractive -Command "whoami; ' +
+  '(whoami /priv | Select-String SeShutdown); ' +
+  'Write-Output ((Get-CimInstance Win32_ComputerSystem).UserName)"'
+
+/** Диагностика питания живой ОС — «почему не выключается». */
+export async function powerDiag(deviceId: string): Promise<PowerDiag> {
+  const ep = await liveEndpoint(deviceId)
+  if (!ep) return { ok: false, os: '', text: 'ПК не в сети (ни одна ОС не отвечает)' }
+  const r = await execOnConn(ep.conn, ep.family === 'windows' ? DIAG_WIN : DIAG_LINUX, 12000)
+  return { ok: r.ok, os: ep.os, text: (r.output || r.error || 'нет вывода').slice(0, 1500) }
 }
 
 /** Загрузить target-ОС (по метке) с той, что сейчас запущена. Linux → grub-reboot к записи

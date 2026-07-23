@@ -1,7 +1,17 @@
 import { Client, type SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
-import { dialog } from 'electron'
+import { dialog, type BrowserWindow } from 'electron'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
+
+/** Понятные тексты вместо сырых ssh2-ошибок (частые причины «Файлы не работают»). */
+function friendlyErr(msg: string): string {
+  if (/channel open failure|subsystem|sftp/i.test(msg))
+    return 'SFTP-подсистема недоступна на сервере (проверь `Subsystem sftp` в sshd_config)'
+  if (/permission denied|EACCES/i.test(msg)) return 'Нет прав (permission denied)'
+  if (/no such file|ENOENT/i.test(msg)) return 'Путь не существует / нет доступа к каталогу'
+  if (/host key/i.test(msg)) return 'Ключ хоста изменился — открой Terminal и подтверди новый ключ'
+  return msg
+}
 
 interface SftpSession {
   id: string
@@ -25,25 +35,43 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
   return new Promise((resolve) => {
     const client = new Client()
     let settled = false
+    let ok = false // сессия реально открылась — не глушить это ложным «close»-сообщением
+    // Страховочный таймаут: без него молчаливый DROP TCP после SYN-ACK (файрвол/MaxStartups/
+    // обрыв jump-плеча) оставлял промис нерезолвнутым → в UI вечная «Загрузка…».
+    const timer = setTimeout(() => {
+      try {
+        client.end()
+      } catch {
+        /* ignore */
+      }
+      done({ ok: false, error: 'Таймаут открытия SFTP (20с) — хост не ответил' })
+    }, 20000)
     const done = (r: { ok: boolean; sessionId?: string; error?: string }): void => {
       if (!settled) {
         settled = true
+        clearTimeout(timer)
         resolve(r)
       }
     }
     client.on('ready', () => {
       client.sftp((err, sftp) => {
         if (err) {
-          done({ ok: false, error: err.message })
+          done({ ok: false, error: friendlyErr(err.message) })
           client.end()
           return
         }
         const id = randomUUID()
+        ok = true
         sessions.set(id, { id, client, sftp })
+        client.on('close', () => sessions.delete(id)) // не течь сессией при обрыве
         done({ ok: true, sessionId: id })
       })
     })
-    client.on('error', (e) => done({ ok: false, error: e.message }))
+    client.on('error', (e) => done({ ok: false, error: friendlyErr(e.message) }))
+    // Канал закрылся ДО открытия SFTP — почти всегда выключенный/запрещённый sftp-subsystem.
+    client.on('close', () => {
+      if (!ok) done({ ok: false, error: 'Соединение закрылось до открытия SFTP (проверь SFTP-subsystem на сервере)' })
+    })
     // Через jump-бастион если задан — иначе Файлы не открывались у jump-хостов.
     establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
   })
@@ -61,7 +89,7 @@ export function sftpList(
       const dir = rerr ? p : abs
       s.sftp.readdir(dir, (err, list) => {
         if (err) {
-          resolve({ ok: false, path: dir, error: err.message })
+          resolve({ ok: false, path: dir, error: friendlyErr(err.message) })
           return
         }
         const entries: SftpEntry[] = list
@@ -78,31 +106,42 @@ export function sftpList(
   })
 }
 
-export async function sftpDownload(sessionId: string, remotePath: string): Promise<{ ok: boolean; error?: string }> {
+export async function sftpDownload(
+  sessionId: string,
+  remotePath: string,
+  win: BrowserWindow | null
+): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return { ok: false, error: 'session closed' }
   const base = remotePath.split('/').pop() || 'download'
-  const res = await dialog.showSaveDialog({ defaultPath: base })
+  // parent-окно ОБЯЗАТЕЛЬНО: на KDE Wayland диалог без родителя открывается позади окна/без фокуса
+  // → «нажал Скачать, ничего не произошло».
+  const res = win
+    ? await dialog.showSaveDialog(win, { defaultPath: base })
+    : await dialog.showSaveDialog({ defaultPath: base })
   if (res.canceled || !res.filePath) return { ok: false, error: 'canceled' }
   const target = res.filePath
   return new Promise((resolve) => {
-    s.sftp.fastGet(remotePath, target, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }))
+    s.sftp.fastGet(remotePath, target, (err) => resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true }))
   })
 }
 
 export async function sftpUpload(
   sessionId: string,
-  remoteDir: string
+  remoteDir: string,
+  win: BrowserWindow | null
 ): Promise<{ ok: boolean; name?: string; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return { ok: false, error: 'session closed' }
-  const res = await dialog.showOpenDialog({ properties: ['openFile'] })
+  const res = win
+    ? await dialog.showOpenDialog(win, { properties: ['openFile'] })
+    : await dialog.showOpenDialog({ properties: ['openFile'] })
   if (res.canceled || res.filePaths.length === 0) return { ok: false, error: 'canceled' }
   const local = res.filePaths[0]
   const name = local.split('/').pop() || 'file'
   const remote = remoteDir.replace(/\/$/, '') + '/' + name
   return new Promise((resolve) => {
-    s.sftp.fastPut(local, remote, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, name }))
+    s.sftp.fastPut(local, remote, (err) => resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true, name }))
   })
 }
 

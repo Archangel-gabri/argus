@@ -170,6 +170,25 @@ export interface MetricSnapshot {
   status: string
 }
 
+/** Результат операции питания (двухфазный вердикт: принято → проверено).
+ *  phase: accepted = команда ушла (для reboot); verified = машина реально погасла/уснула;
+ *  rejected = хост отклонил (inhibitor/polkit/нет прав) — error несёт реальный stderr;
+ *  still-up = команда ушла, но хост всё ещё отвечает; no-endpoint = не в сети. */
+export interface PowerResult {
+  ok: boolean
+  os: string
+  phase: 'accepted' | 'verified' | 'rejected' | 'still-up' | 'no-endpoint'
+  output?: string
+  error?: string
+}
+
+/** Пред-полётная диагностика питания (почему «не выключается»). */
+export interface PowerDiag {
+  ok: boolean
+  os: string
+  text: string
+}
+
 export interface AiAccount {
   id: string
   provider: string

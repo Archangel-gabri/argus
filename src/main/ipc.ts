@@ -1,4 +1,4 @@
-import { ipcMain, safeStorage } from 'electron'
+import { ipcMain, safeStorage, BrowserWindow } from 'electron'
 import * as vault from './vault'
 import * as ssh from './ssh'
 import * as sftp from './sftp'
@@ -9,6 +9,7 @@ import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
+import * as geo from './geo'
 import { ipLookup } from './net'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
@@ -70,19 +71,32 @@ export function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('devices:list', () => (vault.isUnlocked() ? vault.listDevices() : []))
+  ipcMain.handle('devices:list', (e) => {
+    if (!vault.isUnlocked()) return []
+    const list = vault.listDevices()
+    // Фоновая дозагрузка гео (страна/флаг/хостер) для устройств без них — не блокирует ответ.
+    void geo.enrichMissing(
+      e.sender,
+      list.map((d) => ({ id: d.id, ip: d.ip, country: d.country, flag: d.flag }))
+    )
+    return list
+  })
 
-  ipcMain.handle('devices:create', (_e, input: DeviceInput) => {
+  ipcMain.handle('devices:create', (e, input: DeviceInput) => {
     try {
-      return { ok: true, device: vault.createDevice(input) }
+      const device = vault.createDevice(input)
+      void geo.enrichDevice(e.sender, device.id, device.ip) // авто-подстановка гео в фоне
+      return { ok: true, device }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
   })
 
-  ipcMain.handle('devices:update', (_e, id: unknown, input: DeviceInput) => {
+  ipcMain.handle('devices:update', (e, id: unknown, input: DeviceInput) => {
     try {
-      return { ok: true, device: vault.updateDevice(asString(id), input) }
+      const device = vault.updateDevice(asString(id), input)
+      void geo.enrichDevice(e.sender, device.id, device.ip)
+      return { ok: true, device }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
@@ -112,6 +126,7 @@ export function registerIpc(): void {
     ssh.resizeShell(asString(sessionId), Number(cols) || 80, Number(rows) || 24)
   )
   ipcMain.on('ssh:close', (_e, sessionId: unknown) => ssh.closeShell(asString(sessionId)))
+  ipcMain.on('ssh:attach', (_e, sessionId: unknown) => ssh.attachShell(asString(sessionId)))
   ipcMain.handle('ssh:probe', async (_e, deviceId: unknown) => {
     const id = asString(deviceId)
     const r = await ssh.probe(id)
@@ -215,17 +230,18 @@ export function registerIpc(): void {
     return pc.power(asString(id), a === 'poweroff' || a === 'suspend' ? a : 'reboot')
   })
   ipcMain.handle('pc:wake', (_e, id: unknown) => pc.wake(asString(id)))
+  ipcMain.handle('pc:powerDiag', (_e, id: unknown) => pc.powerDiag(asString(id)))
 
   // SFTP file browser
   ipcMain.handle('sftp:open', (_e, deviceId: unknown) => sftp.sftpOpen(asString(deviceId)))
   ipcMain.handle('sftp:list', (_e, sessionId: unknown, path: unknown) =>
     sftp.sftpList(asString(sessionId), asString(path))
   )
-  ipcMain.handle('sftp:download', (_e, sessionId: unknown, path: unknown) =>
-    sftp.sftpDownload(asString(sessionId), asString(path))
+  ipcMain.handle('sftp:download', (e, sessionId: unknown, path: unknown) =>
+    sftp.sftpDownload(asString(sessionId), asString(path), BrowserWindow.fromWebContents(e.sender))
   )
-  ipcMain.handle('sftp:upload', (_e, sessionId: unknown, remoteDir: unknown) =>
-    sftp.sftpUpload(asString(sessionId), asString(remoteDir))
+  ipcMain.handle('sftp:upload', (e, sessionId: unknown, remoteDir: unknown) =>
+    sftp.sftpUpload(asString(sessionId), asString(remoteDir), BrowserWindow.fromWebContents(e.sender))
   )
   ipcMain.handle('sftp:delete', (_e, sessionId: unknown, path: unknown, isDir: unknown) =>
     sftp.sftpDelete(asString(sessionId), asString(path), Boolean(isDir))

@@ -1,31 +1,41 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2, Zap } from 'lucide-react'
+import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2, Zap, Stethoscope } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
 import { STATUS, ProviderBadge, KIND_LABEL, isSshCapable } from '@/components/ServerCard'
 import { useDevices } from '@/store/devices'
-import type { DeviceDTO } from '@/types'
+import type { DeviceDTO, PowerResult } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
-// Питание через существующий ssh:exec. sudo -n на случай не-root (root-сессии игнорируют sudo).
-const PWR = {
-  reboot: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot',
-  poweroff: 'sudo -n systemctl poweroff 2>/dev/null || systemctl poweroff',
-  suspend: 'sudo -n systemctl suspend 2>/dev/null || systemctl suspend',
-  // Ребут в Windows: grub сам находит menuentry с "Windows" (имя записи может отличаться на разных ПК).
-  toWindows:
-    'e=$(awk -F"\'" \'/menuentry / && /[Ww]indows/{print $2; exit}\' /boot/grub/grub.cfg 2>/dev/null); ' +
-    'if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "Windows entry not found in grub"; fi',
-  toLinux: 'sudo -n systemctl reboot 2>/dev/null || systemctl reboot'
+// Человекочитаемое сообщение по двухфазному результату питания (main/pc.ts).
+function powerMsg(r: PowerResult): string {
+  switch (r.phase) {
+    case 'verified':
+      return r.output || '✓ выполнено'
+    case 'accepted':
+      return r.output || '✓ команда отправлена'
+    case 'rejected':
+      return `✖ отклонено хостом: ${r.error}`
+    case 'still-up':
+      return `⚠ ${r.error}`
+    case 'no-endpoint':
+      return `✖ ${r.error}`
+    default:
+      return r.ok ? '✓' : `✖ ${r.error ?? 'не удалось'}`
+  }
 }
+// После неуспеха показываем кнопку «Диагностика».
+const powerFailed = (r: PowerResult): boolean => r.phase === 'rejected' || r.phase === 'still-up'
 
 // Multi-boot ПК: одна карточка, текущая ОС + выбор из N ОС + питание на живой ОС.
 function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const [current, setCurrent] = useState<string | null>(null) // метка живой ОС; '' = off; null = проверяю
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [diag, setDiag] = useState<string | null>(null)
   // Все ОС этой железки: основная (d.os) + доп. (d.altOs).
   const osList = [d.os || 'Linux', ...d.altOs.map((a) => a.os || 'OS')]
   const famOf = (os: string): 'windows' | 'linux' => (/win/i.test(os) ? 'windows' : 'linux')
@@ -59,17 +69,30 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     if (!window.confirm(`${label} «${d.name}»?`)) return
     setBusy(action)
     setMsg(null)
+    setDiag(null)
+    setFailed(false)
     const r = await api.pc.power(d.id, action)
     setBusy(null)
-    setMsg(r.ok ? '✓ команда отправлена' : `✖ ${r.error}`)
+    setMsg(powerMsg(r))
+    setFailed(powerFailed(r))
+    refresh() // сразу перечитать живую ОС (после ребута/выключения статус обновится)
   }
   const doWake = async (): Promise<void> => {
     if (!api) return
     setBusy('wake')
     setMsg(null)
+    setDiag(null)
     const r = await api.pc.wake(d.id)
     setBusy(null)
-    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — ПК должен проснуться' : `✖ ${r.error}`)
+    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — ПК должен проснуться (из сна S3, не из полного выкл.)' : `✖ ${r.error}`)
+  }
+  const doDiag = async (): Promise<void> => {
+    if (!api) return
+    setBusy('diag')
+    setDiag(null)
+    const r = await api.pc.powerDiag(d.id)
+    setBusy(null)
+    setDiag(r.text || '(нет данных)')
   }
 
   const badge =
@@ -160,19 +183,24 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
         ))}
       </div>
 
-      {/* Питание живой ОС + Включить (WoL) */}
+      {/* Питание живой ОС + Включить (WoL). «Включить» видна ВСЕГДА при заданном MAC
+          (не прячется во время проверки); disabled только когда ПК подтверждённо online. */}
       <div className="flex flex-wrap gap-2">
-        {d.mac && current === '' && (
-          <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} />
-        )}
+        {d.mac && <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={!!current} />}
         <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
         <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
+        {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
 
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
+      {diag && (
+        <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-bg/60 p-2 font-mono text-[11px] leading-relaxed text-slate-400">
+          {diag}
+        </pre>
+      )}
       <p className="mt-1.5 text-[11px] text-slate-600">
-        Клик по неактивной ОС — перезагрузка в неё.{d.mac ? ' «Включить» — Wake-on-LAN (когда ПК выключен).' : ' Укажи MAC в карточке для WoL.'}
+        Клик по неактивной ОС — перезагрузка в неё.{d.mac ? ' «Включить» — Wake-on-LAN (будит из сна S3).' : ' Укажи MAC в карточке для WoL.'}
       </p>
     </div>
   )
@@ -181,46 +209,66 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
 function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const [busy, setBusy] = useState<string | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
-  const isPc = d.kind === 'pc'
+  const [failed, setFailed] = useState(false)
+  const [diag, setDiag] = useState<string | null>(null)
+  const online = d.status === 'online'
 
-  const run = async (key: string, label: string, cmd: string): Promise<void> => {
+  // Питание идёт через main (pc.power → живая ОС): -i/inhibitors, двухфазный вердикт, реальный stderr.
+  const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
     if (!api) return
-    if (!window.confirm(`${label} — «${d.name}»?\nДействие выполнится по SSH немедленно.`)) return
-    setBusy(key)
+    if (!window.confirm(`${label} — «${d.name}»?\nДействие выполнится по SSH на живой ОС.`)) return
+    setBusy(action)
     setMsg(null)
-    const r = await api.ssh.exec(d.id, cmd)
+    setDiag(null)
+    setFailed(false)
+    const r = await api.pc.power(d.id, action)
     setBusy(null)
-    // Успех по РЕАЛЬНОМУ коду возврата (execOnConn теперь его читает). Разрыв соединения
-    // (closed/disconnect/ECONNRESET) на reboot/poweroff — ожидаем, трактуем как «отправлено».
-    // ВАЖНО: таймаут хендшейка (хост недоступен) НЕ считаем успехом — иначе кнопка врёт,
-    // что машина перезагружается, хотя команда не дошла.
-    if (r.ok) setMsg(r.output?.trim() || '✓ команда отправлена')
-    else if (/closed|disconnect|ECONNRESET/i.test(r.error ?? ''))
-      setMsg('✓ команда отправлена (соединение закрылось — вероятно, перезагрузка)')
-    else setMsg(`✖ ${r.error || 'не удалось'}`)
+    setMsg(powerMsg(r))
+    setFailed(powerFailed(r))
+  }
+  const doWake = async (): Promise<void> => {
+    if (!api) return
+    setBusy('wake')
+    setMsg(null)
+    setDiag(null)
+    const r = await api.pc.wake(d.id)
+    setBusy(null)
+    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — устройство должно проснуться' : `✖ ${r.error}`)
+  }
+  const doDiag = async (): Promise<void> => {
+    if (!api) return
+    setBusy('diag')
+    setDiag(null)
+    const r = await api.pc.powerDiag(d.id)
+    setBusy(null)
+    setDiag(r.text || '(нет данных)')
   }
 
   const Btn = ({
     id,
     label,
     icon: Icon,
-    cmd,
-    danger
+    onClick,
+    danger,
+    active
   }: {
     id: string
     label: string
     icon: typeof Power
-    cmd: string
+    onClick: () => void
     danger?: boolean
+    active?: boolean
   }): React.JSX.Element => (
     <button
-      onClick={() => run(id, label, cmd)}
-      disabled={!!busy}
+      onClick={onClick}
+      disabled={!!busy || active}
       className={cn(
         'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
-        danger
-          ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
-          : 'text-slate-200 ring-border hover:bg-white/5'
+        active
+          ? 'bg-accent/15 text-accent ring-accent/30'
+          : danger
+            ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
+            : 'text-slate-200 ring-border hover:bg-white/5'
       )}
     >
       {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
@@ -232,21 +280,38 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
     <div className="rounded-lg border border-border bg-card/50 p-3">
       <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Питание</div>
       <div className="flex flex-wrap gap-2">
-        <Btn id="reboot" label="Ребут" icon={RotateCw} cmd={PWR.reboot} />
-        <Btn id="suspend" label="Сон" icon={Moon} cmd={PWR.suspend} />
-        <Btn id="poweroff" label="Выключить" icon={Power} cmd={PWR.poweroff} danger />
-        {isPc && (
-          <>
-            <Btn id="win" label="→ Windows" icon={Monitor} cmd={PWR.toWindows} />
-            <Btn id="lin" label="→ Linux" icon={Monitor} cmd={PWR.toLinux} />
-          </>
+        {/* «Включить»: WoL при заданном MAC (видна всегда, disabled когда уже online);
+            иначе — ссылка на консоль хостера; иначе — disabled-подсказка. Честно, без фейка. */}
+        {d.mac ? (
+          <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={online} />
+        ) : d.consoleUrl ? (
+          <a
+            href={d.consoleUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-white/5"
+          >
+            <Zap className="h-3.5 w-3.5" /> Включить в панели ↗
+          </a>
+        ) : (
+          <button
+            disabled
+            title="Укажи MAC (Wake-on-LAN в своей сети) или ссылку на консоль хостера"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 opacity-50 ring-1 ring-border"
+          >
+            <Zap className="h-3.5 w-3.5" /> Включить
+          </button>
         )}
+        <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
+        <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
+        <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
+        {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
-      {isPc && (
-        <p className="mt-1.5 text-[11px] text-slate-600">
-          «Включить» из выключенного — через Wake-on-LAN (нужен MAC + сеть); добавим отдельно.
-        </p>
+      {diag && (
+        <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-bg/60 p-2 font-mono text-[11px] leading-relaxed text-slate-400">
+          {diag}
+        </pre>
       )}
     </div>
   )

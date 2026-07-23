@@ -18,7 +18,9 @@ export type {
   MetricSnapshot,
   AiAccount,
   AiAccountInput,
-  AiCheck
+  AiCheck,
+  PowerResult,
+  PowerDiag
 } from '../../main/types'
 // Значение (не только тип): единый список валют для дропдаунов.
 export { CURRENCY_CODES } from '../../main/types'

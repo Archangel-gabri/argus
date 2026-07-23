@@ -92,6 +92,8 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
             setStatus('closed')
           }
         })
+        // Подписки готовы — просим main слить буфер первых байт (приглашение/баннер).
+        api.ssh.attach(sessionId)
         term.onData((d) => {
           if (sessionId) api.ssh.input(sessionId, d)
         })
