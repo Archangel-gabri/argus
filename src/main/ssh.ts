@@ -2,6 +2,8 @@ import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { getDeviceConn, getOsEndpoints, checkHostKey, type DeviceConn } from './vault'
+import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
+import type { LiveMetrics } from './types'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -252,7 +254,36 @@ export interface ProbeResult {
   ramTotal?: number
   disk?: number
   uptime?: number
+  // v2-сводка для карточек/обзора (rate-поля — байт/с)
+  load1?: number
+  netRx?: number
+  netTx?: number
+  swapUsed?: number
+  swapTotal?: number
+  tempCpu?: number
+  // полный live-снимок для вкладки «Метрики»
+  metrics?: LiveMetrics
   error?: string
+}
+
+/** LiveMetrics → ProbeResult (сводка + полный снимок). */
+export function liveToProbe(m: LiveMetrics): ProbeResult {
+  return {
+    ok: true,
+    status: 'online',
+    cpu: m.cpu,
+    ramUsed: m.ramUsed,
+    ramTotal: m.ramTotal,
+    disk: m.disk,
+    uptime: m.uptime,
+    load1: m.load[0],
+    netRx: m.netRx,
+    netTx: m.netTx,
+    swapUsed: m.swapUsed,
+    swapTotal: m.swapTotal,
+    tempCpu: m.tempCpu,
+    metrics: m
+  }
 }
 
 // Agentless, один exec, без агента. CPU% — РЕАЛЬНАЯ утилизация по дельте /proc/stat (два сэмпла с
@@ -312,14 +343,14 @@ export function probe(deviceId: string): Promise<ProbeResult> {
       }
     }
     client.on('ready', () => {
-      client.exec(PROBE_CMD, (err, stream) => {
+      client.exec(LINUX_PROBE_V2, (err, stream) => {
         if (err) {
           done({ ok: false, status: 'offline', error: err.message })
           return
         }
         let out = ''
         stream.on('data', (d: Buffer) => (out += d.toString()))
-        stream.on('close', () => done(parseLinuxProbe(out)))
+        stream.on('close', () => done(liveToProbe(parseProbeV2(out))))
       })
     })
     client.on('error', (e) => done({ ok: false, status: 'offline', error: e.message }))

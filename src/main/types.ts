@@ -85,6 +85,13 @@ export interface DeviceDTO {
   /** Эфемерно: диск % занято и аптайм (сек) из последней пробы. */
   disk?: number | null
   uptime?: number | null
+  /** Эфемерная v2-сводка (только renderer-стор): чипы обзора/карточки. rate — байт/с. */
+  load1?: number | null
+  netRx?: number | null
+  netTx?: number | null
+  swapUsed?: number | null
+  swapTotal?: number | null
+  tempCpu?: number | null
 }
 
 /** Renderer → main payload for create/update. May carry a secret to STORE (never to read back). */
@@ -168,6 +175,47 @@ export interface MetricSnapshot {
   ramUsed: number | null
   ramTotal: number | null
   status: string
+}
+
+// ── Богатые live-метрики (AIDA-вкладка). Rate-поля (net/disk) — байт/с из дельты двух сэмплов. ──
+export interface GpuInfo {
+  util: number
+  temp: number
+  memUsed: number // GB
+  memTotal: number // GB
+  power?: number // Вт
+}
+export interface MountInfo {
+  mount: string
+  usedPct: number
+  usedGb: number
+  totalGb: number
+}
+export interface ProcInfo {
+  cmd: string
+  cpu: number
+  mem: number
+}
+/** Полный live-снимок для вкладки «Метрики». Optional-поля отсутствуют, если утилиты/датчика нет. */
+export interface LiveMetrics {
+  cpu: number
+  cores: number[]
+  load: [number, number, number]
+  ramUsed: number // GB
+  ramTotal: number // GB
+  cacheGb: number
+  swapUsed: number // GB
+  swapTotal: number // GB
+  netRx: number // байт/с
+  netTx: number // байт/с
+  diskR: number // байт/с
+  diskW: number // байт/с
+  disk?: number // % корня
+  uptime?: number // сек
+  tempCpu?: number // °C
+  gpu?: GpuInfo
+  mounts: MountInfo[]
+  top: ProcInfo[]
 }
 
 /** Результат операции питания (двухфазный вердикт: принято → проверено).

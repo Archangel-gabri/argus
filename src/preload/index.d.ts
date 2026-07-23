@@ -13,7 +13,8 @@ import type {
   AiAccountInput,
   AiCheck,
   PowerResult,
-  PowerDiag
+  PowerDiag,
+  LiveMetrics
 } from '../main/types'
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
@@ -27,6 +28,15 @@ export type ProbeResult = {
   cpu?: number
   ramUsed?: number
   ramTotal?: number
+  disk?: number
+  uptime?: number
+  load1?: number
+  netRx?: number
+  netTx?: number
+  swapUsed?: number
+  swapTotal?: number
+  tempCpu?: number
+  metrics?: LiveMetrics
   error?: string
 }
 
@@ -112,6 +122,9 @@ export interface ArgusApi {
   }
   metrics: {
     history: (deviceId: string, limit?: number) => Promise<MetricSnapshot[]>
+    live: (
+      deviceId: string
+    ) => Promise<{ ok: boolean; family: string; os: string; metrics: LiveMetrics | null }>
   }
   ai: {
     list: () => Promise<AiAccount[]>
@@ -156,6 +169,13 @@ export interface ArgusApi {
       ramTotal?: number
       disk?: number
       uptime?: number
+      load1?: number
+      netRx?: number
+      netTx?: number
+      swapUsed?: number
+      swapTotal?: number
+      tempCpu?: number
+      metrics?: LiveMetrics
     }>
     boot: (
       deviceId: string,

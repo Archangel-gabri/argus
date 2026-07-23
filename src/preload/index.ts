@@ -90,7 +90,8 @@ const api = {
     balance: (chain: string, address: string) => ipcRenderer.invoke('wallets:balance', chain, address)
   },
   metrics: {
-    history: (deviceId: string, limit?: number) => ipcRenderer.invoke('metrics:history', deviceId, limit ?? 30)
+    history: (deviceId: string, limit?: number) => ipcRenderer.invoke('metrics:history', deviceId, limit ?? 30),
+    live: (deviceId: string) => ipcRenderer.invoke('metrics:live', deviceId)
   },
   ai: {
     list: () => ipcRenderer.invoke('ai:list'),

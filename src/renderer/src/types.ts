@@ -20,7 +20,11 @@ export type {
   AiAccountInput,
   AiCheck,
   PowerResult,
-  PowerDiag
+  PowerDiag,
+  LiveMetrics,
+  GpuInfo,
+  MountInfo,
+  ProcInfo
 } from '../../main/types'
 // Значение (не только тип): единый список валют для дропдаунов.
 export { CURRENCY_CODES } from '../../main/types'

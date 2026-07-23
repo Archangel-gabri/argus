@@ -138,6 +138,18 @@ export function registerIpc(): void {
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
     vault.isUnlocked() ? vault.getSnapshots(asString(deviceId), Number(limit) || 30) : []
   )
+  // Полный live-снимок для вкладки «Метрики» (per-core/сеть/диск/темпы/GPU/топ). НЕ пишет
+  // снапшот в историю (иначе 3-сек поллинг выест retention) — история копится ssh:probe/pc:metrics.
+  ipcMain.handle('metrics:live', async (_e, deviceId: unknown) => {
+    const id = asString(deviceId)
+    const dev = vault.isUnlocked() ? vault.listDevices().find((d) => d.id === id) : undefined
+    if (dev && dev.altOs.length > 0) {
+      const r = await pc.metrics(id)
+      return { ok: r.family !== 'off', family: r.family, os: r.current, metrics: r.metrics ?? null }
+    }
+    const r = await ssh.probe(id)
+    return { ok: r.ok, family: 'linux' as const, os: '', metrics: r.metrics ?? null }
+  })
   ipcMain.handle('ssh:probeHost', (_e, opts: unknown) => {
     const o = (opts ?? {}) as Record<string, unknown>
     return ssh.probeHost({

@@ -3,8 +3,9 @@
 // (Linux systemctl/grub, Windows PowerShell/shutdown.exe).
 import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
-import { execOnConn, parseLinuxProbe, LINUX_PROBE_CMD } from './ssh'
-import type { PowerResult, PowerDiag } from './types'
+import { execOnConn } from './ssh'
+import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
+import type { PowerResult, PowerDiag, LiveMetrics } from './types'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
 
@@ -46,6 +47,13 @@ export interface PcMetrics {
   ramTotal?: number
   disk?: number
   uptime?: number
+  load1?: number
+  netRx?: number
+  netTx?: number
+  swapUsed?: number
+  swapTotal?: number
+  tempCpu?: number
+  metrics?: LiveMetrics
 }
 
 const WIN_METRICS =
@@ -81,10 +89,25 @@ export async function metrics(deviceId: string): Promise<PcMetrics> {
     const r = await execOnConn(ep.conn, WIN_METRICS, 12000)
     return { current: label, family: 'windows', ...(r.ok ? parseWinMetrics(r.output) : {}) }
   }
-  const r = await execOnConn(ep.conn, LINUX_PROBE_CMD, 12000)
+  const r = await execOnConn(ep.conn, LINUX_PROBE_V2, 12000)
   if (!r.ok) return { current: label, family: 'linux' }
-  const m = parseLinuxProbe(r.output)
-  return { current: label, family: 'linux', cpu: m.cpu, ramUsed: m.ramUsed, ramTotal: m.ramTotal, disk: m.disk, uptime: m.uptime }
+  const m = parseProbeV2(r.output)
+  return {
+    current: label,
+    family: 'linux',
+    cpu: m.cpu,
+    ramUsed: m.ramUsed,
+    ramTotal: m.ramTotal,
+    disk: m.disk,
+    uptime: m.uptime,
+    load1: m.load[0],
+    netRx: m.netRx,
+    netTx: m.netTx,
+    swapUsed: m.swapUsed,
+    swapTotal: m.swapTotal,
+    tempCpu: m.tempCpu,
+    metrics: m
+  }
 }
 
 /** Wake-on-LAN: magic packet (6×0xFF + 16×MAC) в широковещалку. «Включить» из выключенного.

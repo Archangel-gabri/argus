@@ -20,6 +20,12 @@ interface DevicesStore {
       status?: DeviceDTO['status']
       disk?: number
       uptime?: number
+      load1?: number
+      netRx?: number
+      netTx?: number
+      swapUsed?: number
+      swapTotal?: number
+      tempCpu?: number
     }
   ) => void
   refreshMetrics: () => Promise<void>
@@ -80,7 +86,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
               ram: { used: m.ramUsed ?? d.ram.used, total: m.ramTotal ?? d.ram.total },
               status: m.status ?? d.status,
               disk: m.disk ?? d.disk,
-              uptime: m.uptime ?? d.uptime
+              uptime: m.uptime ?? d.uptime,
+              load1: m.load1 ?? d.load1,
+              netRx: m.netRx ?? d.netRx,
+              netTx: m.netTx ?? d.netTx,
+              swapUsed: m.swapUsed ?? d.swapUsed,
+              swapTotal: m.swapTotal ?? d.swapTotal,
+              tempCpu: m.tempCpu ?? d.tempCpu
             }
           : d
       )
@@ -118,7 +130,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                   cpu: r.cpu ?? x.cpu,
                   ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
                   disk: r.disk ?? x.disk,
-                  uptime: r.uptime ?? x.uptime
+                  uptime: r.uptime ?? x.uptime,
+                  load1: r.load1 ?? x.load1,
+                  netRx: r.netRx ?? x.netRx,
+                  netTx: r.netTx ?? x.netTx,
+                  swapUsed: r.swapUsed ?? x.swapUsed,
+                  swapTotal: r.swapTotal ?? x.swapTotal,
+                  tempCpu: r.tempCpu ?? x.tempCpu
                 }
               : x
           )
@@ -145,7 +163,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                 cpu: r.cpu ?? x.cpu,
                 ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
                 disk: r.disk ?? x.disk,
-                uptime: r.uptime ?? x.uptime
+                uptime: r.uptime ?? x.uptime,
+                load1: r.load1 ?? x.load1,
+                netRx: r.netRx ?? x.netRx,
+                netTx: r.netTx ?? x.netTx,
+                swapUsed: r.swapUsed ?? x.swapUsed,
+                swapTotal: r.swapTotal ?? x.swapTotal,
+                tempCpu: r.tempCpu ?? x.tempCpu
               }
             : x
         )

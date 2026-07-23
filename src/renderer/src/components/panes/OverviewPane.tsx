@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, RotateCw, Power, Moon, Monitor, Loader2, Zap, Stethoscope } from 'lucide-react'
+import {
+  ExternalLink,
+  RotateCw,
+  Power,
+  Moon,
+  Monitor,
+  Loader2,
+  Zap,
+  Stethoscope,
+  Gauge,
+  ArrowDownUp,
+  Layers,
+  Thermometer
+} from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
@@ -335,6 +348,53 @@ function Fact({ label, value }: { label: string; value: string }): React.JSX.Ele
   )
 }
 
+/** Байт/с → человекочитаемо (МБ/с · КБ/с · Б/с). */
+export function fmtBps(bps?: number | null): string {
+  const b = bps ?? 0
+  if (b >= 1048576) return `${(b / 1048576).toFixed(1)} МБ/с`
+  if (b >= 1024) return `${Math.round(b / 1024)} КБ/с`
+  return `${Math.round(b)} Б/с`
+}
+
+function Chip({
+  icon: Icon,
+  label,
+  value,
+  tone
+}: {
+  icon: typeof Gauge
+  label: string
+  value: string
+  tone?: string
+}): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-card/50 px-3 py-1.5">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <span className={cn('ml-auto truncate text-xs font-medium tabular-nums', tone ?? 'text-slate-200')}>{value}</span>
+    </div>
+  )
+}
+
+// Компактный ряд метрик обзора (AIDA-минимум): Load, Сеть ↓/↑, Swap (если есть), Темп (если есть).
+function MetricChips({ device: d }: { device: DeviceDTO }): React.JSX.Element | null {
+  const hasLoad = d.load1 != null
+  const hasNet = d.netRx != null || d.netTx != null
+  const hasSwap = (d.swapTotal ?? 0) > 0
+  const hasTemp = d.tempCpu != null
+  if (!hasLoad && !hasNet && !hasSwap && !hasTemp) return null
+  const tempTone =
+    d.tempCpu == null ? undefined : d.tempCpu >= 80 ? 'text-rose-400' : d.tempCpu >= 60 ? 'text-amber-400' : 'text-emerald-400'
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {hasLoad && <Chip icon={Gauge} label="Load" value={d.load1!.toFixed(2)} />}
+      {hasNet && <Chip icon={ArrowDownUp} label="Сеть" value={`↓${fmtBps(d.netRx)} ↑${fmtBps(d.netTx)}`} />}
+      {hasSwap && <Chip icon={Layers} label="Swap" value={`${d.swapUsed}/${d.swapTotal} GB`} />}
+      {hasTemp && <Chip icon={Thermometer} label="Темп." value={`${d.tempCpu}°C`} tone={tempTone} />}
+    </div>
+  )
+}
+
 export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const refreshOne = useDevices((s) => s.refreshOne)
@@ -412,6 +472,8 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
               </div>
             </div>
           </div>
+
+          <MetricChips device={d} />
 
           {(d.disk != null || d.uptime != null) && (
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
