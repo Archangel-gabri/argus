@@ -206,8 +206,11 @@ export async function screenStart(
         port: '3389',
         username: conn.user,
         password: opts.password,
-        security: 'any',
-        'ignore-cert': 'true',
+        // Безопасность: форсим NLA (включён на Windows) — без даунгрейда на слабый RDP-security;
+        // TOFU-пиннинг серверного сертификата (как SSH host-key), а НЕ слепой ignore-cert. Транспорт
+        // и так в Tailscale (WireGuard) + firewall только tailnet, но прикладной слой тоже не ослабляем.
+        security: 'nla',
+        'cert-tofu': 'true',
         'resize-method': 'display-update',
         width: String(opts.width || 1280),
         height: String(opts.height || 720),
