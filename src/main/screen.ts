@@ -4,7 +4,12 @@
 // Архитектура (из docs/overhaul-2026-07-23/screen-research.md + синтеза Fable/Claude): свой единый
 // тонкий агент (GStreamer webrtcsink / Pion), авто-provision по SSH, WebRTC в изолированном
 // WebContentsView, ввод Win SendInput / Linux libei→uinput, энкод-каскад NVENC→VAAPI→софт.
-import { execOnce } from './ssh'
+import crypto from 'node:crypto'
+import http from 'node:http'
+import net, { type AddressInfo } from 'node:net'
+import { execFile } from 'node:child_process'
+import GuacamoleLite from 'guacamole-lite'
+import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
 import type { ScreenPreflight } from './types'
 
@@ -95,4 +100,123 @@ export async function screenPreflight(deviceId: string): Promise<ScreenPreflight
   const r = await execOnce(deviceId, os.family === 'windows' ? winPreflightCmd() : LINUX_PREFLIGHT)
   if (!r.ok) return { ok: false, os: os.family === 'windows' ? 'windows' : 'linux', warnings: [], error: r.error }
   return os.family === 'windows' ? parseWin(r.output) : parseLinux(r.output)
+}
+
+// ── Встроенный просмотр+управление (Windows-путь: RDP → guacd → guacamole-lite → canvas в Argus) ──
+// guacd крутится в Docker на ноуте (loopback:4822); guacamole-lite — WS-мост на loopback; renderer
+// рисует canvas guacamole-common-js. RDP-креды летят в ШИФРОВАННОМ токене (AES-256-CBC), не в URL открыто.
+const GUACD = { host: '127.0.0.1', port: 4822 }
+const CRYPT_KEY = crypto.randomBytes(16).toString('hex') // 32 ASCII-символа = 32 байта для aes-256
+
+function encryptToken(obj: unknown): string {
+  const iv = crypto.randomBytes(16)
+  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(CRYPT_KEY), iv)
+  const value = Buffer.concat([cipher.update(JSON.stringify(obj), 'utf8'), cipher.final()]).toString('base64')
+  return Buffer.from(JSON.stringify({ iv: iv.toString('base64'), value })).toString('base64')
+}
+
+// Включение RDP на Windows (idempotent, tailnet-only firewall). Нужны права admin (Windows-фолбэк-путь).
+const WIN_RDP_ENABLE_PS =
+  `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$ErrorActionPreference='SilentlyContinue';` +
+  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0;` +
+  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -Value 1;` +
+  `if(-not(Get-NetFirewallRule -DisplayName 'Argus RDP tailnet' -EA 0)){New-NetFirewallRule -DisplayName 'Argus RDP tailnet' -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null};'ok'`
+const winRdpEnableCmd = (): string =>
+  `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_RDP_ENABLE_PS, 'utf16le').toString('base64')}`
+
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** TCP-жив ли порт (для проверки guacd). */
+function tcpAlive(host: string, port: number, ms = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = net.connect({ host, port })
+    const done = (ok: boolean): void => {
+      s.destroy()
+      resolve(ok)
+    }
+    s.setTimeout(ms)
+    s.once('connect', () => done(true))
+    s.once('timeout', () => done(false))
+    s.once('error', () => done(false))
+  })
+}
+
+/** guacd крутится в Docker-контейнере `argus-guacd` на ноуте; поднимаем, если приспал. */
+async function ensureGuacd(): Promise<boolean> {
+  if (await tcpAlive(GUACD.host, GUACD.port)) return true
+  await new Promise<void>((r) => execFile('docker', ['start', 'argus-guacd'], () => r())) // best-effort
+  for (let i = 0; i < 6; i++) {
+    if (await tcpAlive(GUACD.host, GUACD.port)) return true
+    await delay(500)
+  }
+  return false
+}
+
+// Один guacamole-lite WS-сервер на loopback (ленивый старт), общий для всех подключений.
+let guacServer: GuacamoleLite | null = null
+let guacPort = 0
+async function ensureGuacServer(): Promise<number> {
+  if (guacServer && guacPort) return guacPort
+  const httpServer = http.createServer()
+  await new Promise<void>((res, rej) => {
+    httpServer.once('error', rej)
+    httpServer.listen(0, '127.0.0.1', () => res())
+  })
+  guacPort = (httpServer.address() as AddressInfo).port
+  guacServer = new GuacamoleLite(
+    { server: httpServer },
+    GUACD,
+    { crypt: { cipher: 'aes-256-cbc', key: CRYPT_KEY }, log: { level: 'ERRORS' } }
+  )
+  return guacPort
+}
+
+export interface ScreenStartResult {
+  ok: boolean
+  wsPort?: number
+  token?: string
+  error?: string
+}
+
+/** Запустить встроенный RDP-сеанс (Windows): включить RDP по SSH, поднять мост, вернуть WS-порт+токен. */
+export async function screenStart(
+  deviceId: string,
+  opts: { password: string; width?: number; height?: number }
+): Promise<ScreenStartResult> {
+  const os = await whichOs(deviceId)
+  if (os.family === 'off') return { ok: false, error: 'ПК не в сети' }
+  if (os.family !== 'windows')
+    return { ok: false, error: 'Пока встроен Windows-путь (RDP). Linux/единый агент — следующий инкремент.' }
+  if (!opts.password) return { ok: false, error: 'Нужен пароль Windows-аккаунта' }
+
+  // Best-effort включить RDP (на Castiel уже включён; для других admin-ПК — с одного клика).
+  await execOnce(deviceId, winRdpEnableCmd()).catch(() => undefined)
+
+  const conn = await resolveConn(deviceId) // живой Windows-эндпоинт (host = Tailscale 100.x)
+  if (!conn) return { ok: false, error: 'не удалось определить адрес ПК' }
+
+  if (!(await ensureGuacd()))
+    return { ok: false, error: 'guacd не запущен (Docker). Запусти: docker start argus-guacd' }
+  const wsPort = await ensureGuacServer()
+  const token = encryptToken({
+    connection: {
+      type: 'rdp',
+      settings: {
+        hostname: conn.host,
+        port: '3389',
+        username: conn.user,
+        password: opts.password,
+        security: 'any',
+        'ignore-cert': 'true',
+        'resize-method': 'display-update',
+        width: String(opts.width || 1280),
+        height: String(opts.height || 720),
+        dpi: '96',
+        'enable-wallpaper': 'false',
+        'enable-theming': 'true',
+        'enable-font-smoothing': 'true'
+      }
+    }
+  })
+  return { ok: true, wsPort, token }
 }

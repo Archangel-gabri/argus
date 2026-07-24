@@ -114,7 +114,9 @@ const api = {
     refresh: (deviceId: string) => ipcRenderer.invoke('hw:refresh', deviceId)
   },
   screen: {
-    preflight: (deviceId: string) => ipcRenderer.invoke('screen:preflight', deviceId)
+    preflight: (deviceId: string) => ipcRenderer.invoke('screen:preflight', deviceId),
+    start: (deviceId: string, opts: { password: string; width?: number; height?: number }) =>
+      ipcRenderer.invoke('screen:start', deviceId, opts)
   },
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)

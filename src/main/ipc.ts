@@ -277,8 +277,16 @@ export function registerIpc(): void {
   ipcMain.handle('hw:get', (_e, deviceId: unknown) => hardware.getHardware(asString(deviceId)))
   ipcMain.handle('hw:refresh', (_e, deviceId: unknown) => hardware.refreshHardware(asString(deviceId)))
 
-  // Скринеринг (Этап 4): пред-полётная проба готовности ПК
+  // Скринеринг (Этап 4): пред-полётная проба готовности ПК + запуск встроенного RDP-сеанса
   ipcMain.handle('screen:preflight', (_e, deviceId: unknown) => screen.screenPreflight(asString(deviceId)))
+  ipcMain.handle('screen:start', (_e, deviceId: unknown, opts: unknown) => {
+    const o = (opts ?? {}) as Record<string, unknown>
+    return screen.screenStart(asString(deviceId), {
+      password: asString(o.password),
+      width: Number(o.width) || 0,
+      height: Number(o.height) || 0
+    })
+  })
 
   // ~/.ssh/config import + Tailscale discovery
   ipcMain.handle('sshconfig:parse', () => parseSshConfig())

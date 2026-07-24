@@ -155,6 +155,10 @@ export interface ArgusApi {
   }
   screen: {
     preflight: (deviceId: string) => Promise<ScreenPreflight>
+    start: (
+      deviceId: string,
+      opts: { password: string; width?: number; height?: number }
+    ) => Promise<{ ok: boolean; wsPort?: number; token?: string; error?: string }>
   }
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
