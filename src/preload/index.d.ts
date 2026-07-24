@@ -15,7 +15,8 @@ import type {
   PowerResult,
   PowerDiag,
   LiveMetrics,
-  HardwareInfo
+  HardwareInfo,
+  ScreenPreflight
 } from '../main/types'
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
@@ -151,6 +152,9 @@ export interface ArgusApi {
   hw: {
     get: (deviceId: string) => Promise<{ info: HardwareInfo; collectedAt: number } | null>
     refresh: (deviceId: string) => Promise<{ ok: boolean; info?: HardwareInfo; error?: string }>
+  }
+  screen: {
+    preflight: (deviceId: string) => Promise<ScreenPreflight>
   }
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>

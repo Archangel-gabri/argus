@@ -5,7 +5,7 @@ export type ViewId = 'devices' | 'banks' | 'subscriptions' | 'ai' | 'settings'
 
 export type DialogState = { mode: 'closed' } | { mode: 'new' } | { mode: 'edit'; device: DeviceDTO }
 
-export type DrawerTab = 'overview' | 'terminal' | 'files' | 'forwards' | 'metrics'
+export type DrawerTab = 'overview' | 'terminal' | 'files' | 'forwards' | 'metrics' | 'screen'
 
 interface UIState {
   view: ViewId

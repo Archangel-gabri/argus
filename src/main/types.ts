@@ -286,6 +286,22 @@ export interface HardwareInfo {
   collectedAt?: number
 }
 
+/** Пред-полётная готовность ПК к скринерингу (Этап 4): что за ОС/сессия, есть ли аппаратный
+ *  энкодер, тип захвата, установлен ли агент. Питает вкладку «Экран» + выбор бэкенда. */
+export interface ScreenPreflight {
+  ok: boolean
+  os: 'windows' | 'linux' | 'off' | 'unknown'
+  sessionType?: 'wayland' | 'x11' | 'windows' | 'headless'
+  gpu?: string
+  nvenc?: boolean
+  vaapi?: boolean
+  agentInstalled?: boolean
+  /** Рекомендованный бэкенд захвата/энкода для этой машины. */
+  backend?: 'nvenc' | 'vaapi' | 'software' | 'unknown'
+  warnings: string[]
+  error?: string
+}
+
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
 export interface VaultState {

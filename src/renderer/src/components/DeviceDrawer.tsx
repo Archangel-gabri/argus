@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { X, LayoutDashboard, TerminalSquare, FolderOpen, Network, Activity } from 'lucide-react'
+import { X, LayoutDashboard, TerminalSquare, FolderOpen, Network, Activity, MonitorPlay } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type DrawerTab } from '@/store/ui'
 import { useDevices } from '@/store/devices'
@@ -9,6 +9,7 @@ import { TerminalPane } from '@/components/panes/TerminalPane'
 import { FilesPane } from '@/components/panes/FilesPane'
 import { ForwardsPane } from '@/components/panes/ForwardsPane'
 import { MetricsPane } from '@/components/panes/MetricsPane'
+import { ScreenPane } from '@/components/panes/ScreenPane'
 import type { DeviceDTO } from '@/types'
 
 const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }> = [
@@ -16,7 +17,8 @@ const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }>
   { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
   { id: 'files', label: 'Файлы', icon: FolderOpen },
   { id: 'forwards', label: 'Порты', icon: Network },
-  { id: 'metrics', label: 'Метрики', icon: Activity }
+  { id: 'metrics', label: 'Метрики', icon: Activity },
+  { id: 'screen', label: 'Экран', icon: MonitorPlay }
 ]
 
 function paneFor(tab: DrawerTab, device: DeviceDTO): React.JSX.Element {
@@ -29,6 +31,8 @@ function paneFor(tab: DrawerTab, device: DeviceDTO): React.JSX.Element {
       return <ForwardsPane device={device} />
     case 'metrics':
       return <MetricsPane device={device} />
+    case 'screen':
+      return <ScreenPane device={device} />
     default:
       return <OverviewPane device={device} />
   }
@@ -81,7 +85,8 @@ export function DeviceDrawer(): React.JSX.Element | null {
   if (!detail || !live) return null
 
   const sshCapable = isSshCapable(live.kind)
-  const tabs = sshCapable ? TABS : TABS.filter((t) => t.id === 'overview')
+  // Вкладка «Экран» — только для ПК (у серверов обычно нет графической сессии).
+  const tabs = sshCapable ? TABS.filter((t) => t.id !== 'screen' || live.kind === 'pc') : TABS.filter((t) => t.id === 'overview')
   // Синхронно: не-SSH устройство никогда не отрисовывает SSH-грань, даже если стор просит
   // (например openTerminal попал на паспорт). Никакой панели-гонки — чистое выражение.
   const activeTab: DrawerTab = sshCapable ? (detail.tab ?? 'overview') : 'overview'
