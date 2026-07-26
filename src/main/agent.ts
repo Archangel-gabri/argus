@@ -60,8 +60,15 @@ function targetPaths(family: string): { dir: string; bin: string; token: string 
 /** HTTP-запрос к агенту напрямую (через Tailscale). Короткий таймаут: это проверка, а не работа. */
 function agentHTTP(host: string, token: string, timeoutMs = 4000): Promise<AgentStatus> {
   return new Promise((resolve) => {
+    // Токен — заголовком, не в URL: строка запроса попадает в логи по всему пути.
     const req = http.get(
-      { host, port: AGENT_PORT, path: `/health?token=${encodeURIComponent(token)}`, timeout: timeoutMs },
+      {
+        host,
+        port: AGENT_PORT,
+        path: '/health',
+        timeout: timeoutMs,
+        headers: { 'X-Argus-Token': token }
+      },
       (res) => {
         let body = ''
         res.on('data', (c) => (body += c))
@@ -203,8 +210,14 @@ async function installService(
     // Задача в планировщике с триггером на вход в систему: процесс живёт в ИНТЕРАКТИВНОЙ сессии
     // пользователя. Служба здесь не годится — она попадает в сессию 0, где нет рабочего стола,
     // и захватывать было бы нечего.
+    // Порт агента открываем ТОЛЬКО для диапазона Tailscale. Агент слушает 0.0.0.0 (иначе он не
+    // виден в tailnet), а значит без этого правила он торчал бы и в локальную сеть — где трафик
+    // идёт без шифрования и сосед по Wi-Fi мог бы снять токен вместе с экраном и управлением.
     const ps =
       `$exe="$env:LOCALAPPDATA\\Argus\\argus-agent.exe";` +
+      `if(-not(Get-NetFirewallRule -DisplayName 'Argus agent tailnet' -EA 0)){` +
+      `New-NetFirewallRule -DisplayName 'Argus agent tailnet' -Direction Inbound -Protocol TCP ` +
+      `-LocalPort ${AGENT_PORT} -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null};` +
       `$a=New-ScheduledTaskAction -Execute $exe -Argument '--addr 0.0.0.0:${AGENT_PORT}';` +
       `$t=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME;` +
       `$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew;` +

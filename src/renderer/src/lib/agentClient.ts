@@ -47,8 +47,9 @@ export class AgentClient {
       return
     }
     this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true })
-    const sep = this.url.includes('?') ? '&' : '?'
-    const ws = new WebSocket(`${this.url}${sep}token=${encodeURIComponent(this.token)}`)
+    // Токен передаём подпротоколом, а НЕ строкой запроса: URL оседает в логах любого
+    // промежуточного узла, и секрет из него утекает вместе с ними.
+    const ws = new WebSocket(this.url, [`argus.token.${this.token}`])
     ws.binaryType = 'arraybuffer'
     this.ws = ws
 

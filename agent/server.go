@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,19 +30,66 @@ func NewServer(token string, fps, w, h int) *Server {
 		upgr: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 1 << 20,
-			// Проверять Origin бессмысленно: клиент — десктопное приложение, а не сайт.
-			// Единственная реальная защита здесь — токен, выданный по SSH при провижининге.
-			CheckOrigin: func(*http.Request) bool { return true },
+			CheckOrigin:     allowOrigin,
 		},
 	}
 }
 
-func (s *Server) authOK(r *http.Request) bool {
-	t := r.URL.Query().Get("token")
-	if t == "" {
-		t = r.Header.Get("X-Argus-Token")
-	}
+// tokenProto — префикс подпротокола WebSocket, которым клиент передаёт токен.
+// Браузерный WebSocket не умеет ставить заголовки, а тащить секрет в URL нельзя:
+// строка запроса оседает в логах прокси и серверов. Подпротокол — единственный
+// штатный способ передать значение в рукопожатии.
+const tokenProto = "argus.token."
+
+func (s *Server) equal(t string) bool {
 	return subtle.ConstantTimeCompare([]byte(t), []byte(s.token)) == 1
+}
+
+func (s *Server) authOK(r *http.Request) bool {
+	if t := r.Header.Get("X-Argus-Token"); t != "" {
+		return s.equal(t)
+	}
+	// Query оставлен только для ручной диагностики курлом на своей же машине;
+	// Argus им не пользуется и по нему нельзя открыть поток (см. handleStream).
+	return s.equal(r.URL.Query().Get("token"))
+}
+
+// wsToken достаёт токен из предложенных клиентом подпротоколов.
+func wsToken(r *http.Request) (string, string) {
+	for _, p := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(p, tokenProto) {
+			return strings.TrimPrefix(p, tokenProto), p
+		}
+	}
+	return "", ""
+}
+
+// allowOrigin отсекает подключения из браузера.
+//
+// Кросс-доменные WebSocket-подключения браузер НЕ блокирует — проверять Origin обязан сервер.
+// Без этого вредоносная страница через DNS rebinding (перепривязку своего домена на адрес
+// машины) стучится в агент как «свой». Наш клиент — окно Electron, оно грузится с file://
+// и присылает Origin: null либо не присылает вовсе. Любой http(s)-Origin — это страница, и ей
+// здесь делать нечего.
+func allowOrigin(r *http.Request) bool {
+	o := r.Header.Get("Origin")
+	if o == "" || o == "null" || strings.HasPrefix(o, "file://") {
+		return hostIsAddress(r.Host)
+	}
+	return false
+}
+
+// hostIsAddress — вторая половина защиты от rebinding: при подмене DNS в Host приезжает
+// ДОМЕННОЕ имя атакующего, а легальный клиент всегда обращается по адресу.
+func hostIsAddress(host string) bool {
+	h := host
+	if v, _, err := net.SplitHostPort(host); err == nil {
+		h = v
+	}
+	if h == "" || h == "localhost" {
+		return true
+	}
+	return net.ParseIP(strings.Trim(h, "[]")) != nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,7 +113,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	if !s.authOK(r) {
+	// Поток авторизуется ТОЛЬКО подпротоколом: токен не должен попадать в строку запроса,
+	// иначе он оседает в логах любого промежуточного узла.
+	tok, proto := wsToken(r)
+	if !s.equal(tok) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -82,7 +134,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
-	conn, err := s.upgr.Upgrade(w, r, nil)
+	// Выбранный подпротокол обязан быть отражён в ответе, иначе браузер разорвёт соединение.
+	conn, err := s.upgr.Upgrade(w, r, http.Header{"Sec-WebSocket-Protocol": {proto}})
 	if err != nil {
 		log.Printf("upgrade: %v", err)
 		return
