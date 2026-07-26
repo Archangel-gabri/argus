@@ -8,6 +8,7 @@ import {
   Loader2,
   Zap,
   Stethoscope,
+  AlertTriangle,
   Gauge,
   ArrowDownUp,
   Layers,
@@ -49,6 +50,35 @@ function powerMsg(r: PowerResult): string {
 // После неуспеха показываем кнопку «Диагностика».
 const powerFailed = (r: PowerResult): boolean => r.phase === 'rejected' || r.phase === 'still-up'
 
+/** Есть ли чем разбудить устройство обратно. Wake-on-LAN работает только в своей L2-сети и
+ *  только при заданном MAC — у VPS его нет, значит выключение необратимо средствами Argus. */
+const hasWakePath = (d: DeviceDTO): boolean => !!d.mac
+
+/** Постоянная пометка под кнопками, чтобы тупик был виден ДО клика, а не только в диалоге. */
+function OneWayHint(): React.JSX.Element {
+  return (
+    <div className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-200/70">
+      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+      <span>
+        «Выключить» и «Сон» здесь необратимы: Wake-on-LAN недоступен без MAC, поднимать придётся
+        вручную (панель хостера или сама машина).
+      </span>
+    </div>
+  )
+}
+
+/** Текст подтверждения. Для необратимых действий говорим прямо, чем это кончится, — иначе
+ *  приложение само заводит в тупик: «Выключить» есть, а «Включить» не появится. */
+function confirmPowerText(d: DeviceDTO, action: 'reboot' | 'poweroff' | 'suspend', label: string): string {
+  const head = `${label} — «${d.name}»?`
+  if (action === 'reboot') return `${head}\nКоманда уйдёт по SSH на живую ОС.`
+  if (hasWakePath(d)) return `${head}\nПоднять обратно можно кнопкой «Включить» (Wake-on-LAN).`
+  const back = 'ВЕРНУТЬ ИЗ ARGUS БУДЕТ НЕЧЕМ: MAC не задан, Wake-on-LAN недоступен.\nВключать придётся вручную — из панели хостера или с самой машины.'
+  return action === 'suspend'
+    ? `${head}\n\n${back}\n\nДля виртуального сервера сон ХУЖЕ выключения: машина повиснет в спячке, и панель хостера сможет только принудительно её сбросить.`
+    : `${head}\n\n${back}`
+}
+
 // Multi-boot ПК: одна карточка, текущая ОС + выбор из N ОС + питание на живой ОС.
 function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const [current, setCurrent] = useState<string | null>(null) // метка живой ОС; '' = off; null = проверяю
@@ -86,7 +116,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   }
   const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
     if (!api) return
-    if (!window.confirm(`${label} «${d.name}»?`)) return
+    if (!window.confirm(confirmPowerText(d, action, label))) return
     setBusy(action)
     setMsg(null)
     setDiag(null)
@@ -212,6 +242,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
         {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
+      {!hasWakePath(d) && <OneWayHint />}
 
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
       {diag && (
@@ -236,7 +267,7 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   // Питание идёт через main (pc.power → живая ОС): -i/inhibitors, двухфазный вердикт, реальный stderr.
   const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
     if (!api) return
-    if (!window.confirm(`${label} — «${d.name}»?\nДействие выполнится по SSH на живой ОС.`)) return
+    if (!window.confirm(confirmPowerText(d, action, label))) return
     setBusy(action)
     setMsg(null)
     setDiag(null)
@@ -327,6 +358,7 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
         {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
+      {!hasWakePath(d) && <OneWayHint />}
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
       {diag && (
         <pre className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-bg/60 p-2 font-mono text-[11px] leading-relaxed text-slate-400">

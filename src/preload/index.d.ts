@@ -53,6 +53,8 @@ export interface ArgusApi {
   }
   devices: {
     list: () => Promise<DeviceDTO[]>
+    /** Быстрая TCP-живость по всему парку: id → { up, ms }. Мс вместо секунд. */
+    liveness: () => Promise<Record<string, { up: boolean; ms: number }>>
     create: (input: DeviceInput) => Promise<DeviceResult>
     update: (id: string, input: DeviceInput) => Promise<DeviceResult>
     remove: (id: string) => Promise<{ ok: boolean; error?: string }>
@@ -155,10 +157,20 @@ export interface ArgusApi {
   }
   screen: {
     preflight: (deviceId: string) => Promise<ScreenPreflight>
-    start: (
-      deviceId: string,
-      opts: { password: string; width?: number; height?: number }
+    open: (deviceId: string, opts: { password: string }) => Promise<{ ok: boolean; error?: string }>
+    claim: (
+      handle: string
     ) => Promise<{ ok: boolean; wsPort?: number; token?: string; error?: string }>
+  }
+  win: {
+    setFullScreen: (on: boolean) => Promise<boolean>
+    isFullScreen: () => Promise<boolean>
+    minimize: () => void
+    close: () => void
+  }
+  clip: {
+    read: () => Promise<string>
+    write: (text: string) => void
   }
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>

@@ -4,8 +4,9 @@
 import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn } from './ssh'
+import { tcpAlive } from './liveness'
 import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
-import type { PowerResult, PowerDiag, LiveMetrics } from './types'
+import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
 
@@ -24,13 +25,41 @@ interface LiveEp extends OsEndpoint {
   family: 'linux' | 'windows'
 }
 
-/** Первый отвечающий ОС-эндпоинт (= какая ОС сейчас запущена). */
+/** Гонка: отдаём ПЕРВЫЙ ответивший эндпоинт, не дожидаясь таймаута остальных. */
+function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
+  return new Promise((resolve) => {
+    let pending = eps.length
+    if (!pending) return resolve(null)
+    for (const ep of eps) {
+      void isAlive(ep.conn)
+        .then((ok) => {
+          if (ok) resolve({ ...ep, family: family(ep.os) })
+          else if (--pending === 0) resolve(null)
+        })
+        .catch(() => {
+          if (--pending === 0) resolve(null)
+        })
+    }
+  })
+}
+
+/** Первый отвечающий ОС-эндпоинт (= какая ОС сейчас запущена).
+ *
+ *  Было: Promise.all по ВСЕМ эндпоинтам — значит ждали самый медленный. У двухзагрузочного ПК
+ *  выключенная половина съедала весь 8-секундный SSH-таймаут, и опрос ПК стоил 9.4с, упирая в себя
+ *  весь параллельный проход по парку. Стало: дешёвый TCP-отсев (~200мс) + гонка за первым живым. */
 async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
   const eps = getOsEndpoints(deviceId)
-  const checked = await Promise.all(
-    eps.map(async (ep) => ((await isAlive(ep.conn)) ? { ...ep, family: family(ep.os) } : null))
-  )
-  return checked.find((r): r is LiveEp => r !== null) ?? null
+  if (!eps.length) return null
+  if (eps.length === 1) return firstAlive(eps)
+
+  const reach = await Promise.all(eps.map(async (ep) => ({ ep, r: await tcpAlive(ep.conn.host, ep.conn.port, 2500) })))
+  const open = reach.filter((x) => x.r.up).map((x) => x.ep)
+  // Ровно один эндпоинт отдал SSH-баннер — этого достаточно: одновременно две ОС на одной
+  // железке не работают. Второе SSH-подключение ради `echo` стоило бы ещё ~2с на ровном месте.
+  if (open.length === 1) return { ...open[0], family: family(open[0].os) }
+  // Никто не ответил (фаервол/нестандартный порт) или ответили несколько — проверяем по-честному.
+  return firstAlive(open.length ? open : eps)
 }
 
 /** Текущая запущенная ОС: метка + семейство (или off). */
@@ -56,6 +85,49 @@ export interface PcMetrics {
   metrics?: LiveMetrics
 }
 
+// Богатый Windows-зонд — ровно тот же контракт LiveMetrics, что у LINUX_PROBE_V2, иначе вкладка
+// «Метрики» у ПК на Windows оставалась пустой (она рендерит именно LiveMetrics, а старый сборщик
+// отдавал только cpu/ram/disk/uptime для карточки). Классы Win32_PerfFormattedData_* отдают уже
+// посчитанные значения «в секунду», поэтому второй сэмпл с паузой не нужен — сбор ~1с.
+const WIN_METRICS_V2_PS = `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+$ErrorActionPreference='SilentlyContinue'
+$ProgressPreference='SilentlyContinue'
+$cpuAll = @(Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor)
+$total  = ($cpuAll | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1).PercentProcessorTime
+$cores  = @($cpuAll | Where-Object { $_.Name -ne '_Total' } | Sort-Object { [int]$_.Name } | ForEach-Object { [int]$_.PercentProcessorTime })
+$os = Get-CimInstance Win32_OperatingSystem
+$cs = Get-CimInstance Win32_ComputerSystem
+$pf = Get-CimInstance Win32_PageFileUsage | Select-Object -First 1
+$net = @(Get-CimInstance Win32_PerfFormattedData_Tcpip_NetworkInterface | Where-Object { $_.Name -notmatch 'Loopback|isatap|Teredo' })
+$rx = ($net | Measure-Object -Property BytesReceivedPersec -Sum).Sum
+$tx = ($net | Measure-Object -Property BytesSentPersec -Sum).Sum
+$dsk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+$mounts = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
+  $tot=[double]$_.Size; $used=$tot-[double]$_.FreeSpace
+  [ordered]@{ mount=$_.DeviceID; usedPct=if($tot){[int](($used/$tot)*100)}else{0}; usedGb=[math]::Round($used/1GB,1); totalGb=[math]::Round($tot/1GB,1) } })
+$ramBytes = [double]$cs.TotalPhysicalMemory
+$top = @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $_.Name -ne '_Total' -and $_.Name -ne 'Idle' } |
+  Sort-Object -Property PercentProcessorTime -Descending | Select-Object -First 8 | ForEach-Object {
+    [ordered]@{ cmd=$_.Name; cpu=[math]::Round([double]$_.PercentProcessorTime,1); mem=if($ramBytes){[math]::Round(([double]$_.WorkingSetPrivate/$ramBytes)*100,1)}else{0} } })
+$tz = Get-CimInstance -Namespace root/WMI -ClassName MSAcpi_ThermalZoneTemperature | Select-Object -First 1
+$tempC = $null
+if ($tz -and $tz.CurrentTemperature) { $tempC = [math]::Round(($tz.CurrentTemperature - 2732) / 10.0, 1) }
+$gpu = $null
+if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
+  $g = (& nvidia-smi.exe --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits 2>$null | Select-Object -First 1)
+  if ($g) { $p = $g -split '\\s*,\\s*'
+    $gpu = [ordered]@{ util=[int]$p[0]; temp=[int]$p[1]; memUsed=[math]::Round([double]$p[2]/1024,1); memTotal=[math]::Round([double]$p[3]/1024,1); power=[math]::Round([double]$p[4],0) } } }
+$sys = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'" | Select-Object -First 1
+$diskPct = if ($sys -and $sys.Size) { [int]((([double]$sys.Size - [double]$sys.FreeSpace) / [double]$sys.Size) * 100) } else { $null }
+[ordered]@{ cpu=[int]$total; cores=$cores; ramTotalGb=[math]::Round($ramBytes/1GB,1)
+  ramUsedGb=[math]::Round(([double]$os.TotalVisibleMemorySize - [double]$os.FreePhysicalMemory)/1MB,1)
+  swapUsedGb=[math]::Round([double]$pf.CurrentUsage/1024,1); swapTotGb=[math]::Round([double]$pf.AllocatedBaseSize/1024,1)
+  netRx=[int64]$rx; netTx=[int64]$tx; diskR=[int64]$dsk.DiskReadBytesPersec; diskW=[int64]$dsk.DiskWriteBytesPersec
+  diskPct=$diskPct; uptimeSec=[int]((Get-Date) - $os.LastBootUpTime).TotalSeconds; tempCpu=$tempC; gpu=$gpu
+  mounts=$mounts; top=$top } | ConvertTo-Json -Compress -Depth 4`
+
+const WIN_METRICS_V2 = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_METRICS_V2_PS, 'utf16le').toString('base64')}`
+
 const WIN_METRICS =
   '$c=(Get-CimInstance Win32_Processor|Measure-Object -Property LoadPercentage -Average).Average; ' +
   '$o=Get-CimInstance Win32_OperatingSystem; ' +
@@ -63,6 +135,72 @@ const WIN_METRICS =
   '$up=[int]((Get-Date)-$o.LastBootUpTime).TotalSeconds; ' +
   'Write-Output "$c"; Write-Output "$($o.TotalVisibleMemorySize) $($o.FreePhysicalMemory)"; ' +
   'Write-Output "$([int](($d.Size-$d.FreeSpace)/$d.Size*100))"; Write-Output "$up"'
+
+interface WinRawV2 {
+  cpu?: number
+  cores?: number[]
+  ramTotalGb?: number
+  ramUsedGb?: number
+  swapUsedGb?: number
+  swapTotGb?: number
+  netRx?: number
+  netTx?: number
+  diskR?: number
+  diskW?: number
+  diskPct?: number | null
+  uptimeSec?: number
+  tempCpu?: number | null
+  gpu?: GpuInfo | null
+  mounts?: MountInfo[]
+  top?: ProcInfo[]
+}
+
+/** Ответ богатого Windows-зонда → те же поля, что даёт Linux-ветка, включая полный LiveMetrics. */
+function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }) | null {
+  const line = out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('{'))
+  if (!line) return null
+  let o: WinRawV2
+  try {
+    o = JSON.parse(line) as WinRawV2
+  } catch {
+    return null
+  }
+  const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const metrics: LiveMetrics = {
+    cpu: n(o.cpu),
+    cores: Array.isArray(o.cores) ? o.cores.map(n) : [],
+    // У Windows нет loadavg как понятия — не выдумываем, отдаём нули.
+    load: [0, 0, 0],
+    ramUsed: n(o.ramUsedGb),
+    ramTotal: n(o.ramTotalGb),
+    cacheGb: 0,
+    swapUsed: n(o.swapUsedGb),
+    swapTotal: n(o.swapTotGb),
+    netRx: n(o.netRx),
+    netTx: n(o.netTx),
+    diskR: n(o.diskR),
+    diskW: n(o.diskW),
+    disk: o.diskPct ?? undefined,
+    uptime: n(o.uptimeSec),
+    tempCpu: o.tempCpu ?? undefined,
+    gpu: o.gpu ?? undefined,
+    mounts: Array.isArray(o.mounts) ? o.mounts : [],
+    top: Array.isArray(o.top) ? o.top : []
+  }
+  return {
+    cpu: metrics.cpu,
+    ramUsed: metrics.ramUsed,
+    ramTotal: metrics.ramTotal,
+    disk: metrics.disk,
+    uptime: metrics.uptime,
+    netRx: metrics.netRx,
+    netTx: metrics.netTx,
+    swapUsed: metrics.swapUsed,
+    swapTotal: metrics.swapTotal,
+    tempCpu: metrics.tempCpu,
+    metrics
+  }
+}
 
 function parseWinMetrics(out: string): { cpu?: number; ramUsed?: number; ramTotal?: number; disk?: number; uptime?: number } {
   const l = out.trim().split('\n').map((s) => s.trim())
@@ -86,8 +224,12 @@ export async function metrics(deviceId: string): Promise<PcMetrics> {
   if (!ep) return { current: '', family: 'off' }
   const label = ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux')
   if (ep.family === 'windows') {
-    const r = await execOnConn(ep.conn, WIN_METRICS, 12000)
-    return { current: label, family: 'windows', ...(r.ok ? parseWinMetrics(r.output) : {}) }
+    const r = await execOnConn(ep.conn, WIN_METRICS_V2, 15000)
+    const rich = r.ok ? parseWinV2(r.output) : null
+    if (rich) return { current: label, family: 'windows', ...rich }
+    // Фолбэк на старый короткий сборщик: лучше цифры на карточке, чем ничего.
+    const f = await execOnConn(ep.conn, WIN_METRICS, 12000)
+    return { current: label, family: 'windows', ...(f.ok ? parseWinMetrics(f.output) : {}) }
   }
   const r = await execOnConn(ep.conn, LINUX_PROBE_V2, 12000)
   if (!r.ok) return { current: label, family: 'linux' }
@@ -193,12 +335,32 @@ const isDropped = (err: string | undefined): boolean =>
 
 /** Питание на живой ОС. Двухфазно: отправляем команду, затем для poweroff/suspend проверяем,
  *  что машина реально погасла (иначе честно сообщаем «всё ещё отвечает» + причину из stderr). */
+/** Живой эндпоинт с повторами.
+ *
+ *  Замерено на живом стенде: канал до дальней ноды флапает примерно в одном случае из шести, и
+ *  ОДНА неудачная проверка молча превращала команду питания в отказ «не в сети» — при полностью
+ *  живом сервере. Команда просто не выполнялась, а пользователь видел враньё. */
+async function liveEndpointRetry(deviceId: string, attempts = 3): Promise<LiveEp | null> {
+  for (let i = 0; i < attempts; i++) {
+    const ep = await liveEndpoint(deviceId)
+    if (ep) return ep
+    if (i < attempts - 1) await delay(1200)
+  }
+  return null
+}
+
 export async function power(
   deviceId: string,
   action: 'reboot' | 'poweroff' | 'suspend'
 ): Promise<PowerResult> {
-  const ep = await liveEndpoint(deviceId)
-  if (!ep) return { ok: false, os: '', phase: 'no-endpoint', error: 'ПК не в сети (ни одна ОС не отвечает)' }
+  const ep = await liveEndpointRetry(deviceId)
+  if (!ep)
+    return {
+      ok: false,
+      os: '',
+      phase: 'no-endpoint',
+      error: 'не отвечает ни одна ОС (проверено 3 раза) — устройство выключено или канал недоступен'
+    }
   const cmd = CMD[ep.family][action]
   const r = await execOnConn(ep.conn, cmd, 10000)
   const dropped = isDropped(r.error)
@@ -253,8 +415,8 @@ const DIAG_WIN =
 
 /** Диагностика питания живой ОС — «почему не выключается». */
 export async function powerDiag(deviceId: string): Promise<PowerDiag> {
-  const ep = await liveEndpoint(deviceId)
-  if (!ep) return { ok: false, os: '', text: 'ПК не в сети (ни одна ОС не отвечает)' }
+  const ep = await liveEndpointRetry(deviceId)
+  if (!ep) return { ok: false, os: '', text: 'не отвечает ни одна ОС (проверено 3 раза)' }
   const r = await execOnConn(ep.conn, ep.family === 'windows' ? DIAG_WIN : DIAG_LINUX, 12000)
   return { ok: r.ok, os: ep.os, text: (r.output || r.error || 'нет вывода').slice(0, 1500) }
 }

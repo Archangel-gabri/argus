@@ -8,9 +8,12 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import net, { type AddressInfo } from 'node:net'
 import { execFile } from 'node:child_process'
+import { screen as electronScreen } from 'electron'
 import GuacamoleLite from 'guacamole-lite'
 import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
+import { createScreenWindow } from './windows'
+import { listDevices } from './vault'
 import type { ScreenPreflight } from './types'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
@@ -222,4 +225,52 @@ export async function screenStart(
     }
   })
   return { ok: true, wsPort, token }
+}
+
+// ── Сеансы в отдельных окнах ───────────────────────────────────────────────────────────────────
+// Окно экрана — самостоятельный renderer, у которого НЕТ доступа к vault и который НИКОГДА не
+// видит пароль: main запускает сеанс сам и отдаёт окну только адрес моста и шифрованный токен.
+// Токен переиспользуемый (guacamole-lite не хранит состояния) — на этом держится автореконнект.
+interface LiveSession {
+  deviceId: string
+  wsPort: number
+  token: string
+  winId: number
+}
+const sessions = new Map<string, LiveSession>()
+
+const deviceName = (deviceId: string): string =>
+  listDevices().find((d) => d.id === deviceId)?.name ?? 'ПК'
+
+/** Запустить сеанс и открыть под него отдельное окно. Пароль дальше main не уходит. */
+export async function screenOpen(
+  deviceId: string,
+  opts: { password: string }
+): Promise<{ ok: boolean; error?: string }> {
+  // Стартовое разрешение — по рабочей области монитора; точный размер окно допросит через
+  // sendSize сразу после коннекта (resize-method=display-update), так что картинка будет 1:1.
+  const area = electronScreen.getPrimaryDisplay().workAreaSize
+  const r = await screenStart(deviceId, { password: opts.password, width: area.width, height: area.height })
+  if (!r.ok || !r.wsPort || !r.token) return { ok: false, error: r.error ?? 'не удалось запустить сеанс' }
+
+  const handle = crypto.randomUUID()
+  const win = createScreenWindow(handle, `Экран — ${deviceName(deviceId)}`, {
+    width: Math.min(1600, Math.round(area.width * 0.8)),
+    height: Math.min(1000, Math.round(area.height * 0.8))
+  })
+  // winId ставим синхронно: окно уже создано, а грузиться (и звать claim) начнёт позже.
+  sessions.set(handle, { deviceId, wsPort: r.wsPort, token: r.token, winId: win.id })
+  win.on('closed', () => sessions.delete(handle))
+  return { ok: true }
+}
+
+/** Окно забирает параметры своего сеанса. Повторно — можно (реконнект), из чужого окна — нельзя. */
+export function screenClaim(
+  handle: string,
+  senderWinId: number | null
+): { ok: boolean; wsPort?: number; token?: string; error?: string } {
+  const s = sessions.get(handle)
+  if (!s) return { ok: false, error: 'сеанс не найден или уже закрыт' }
+  if (s.winId !== senderWinId) return { ok: false, error: 'сеанс принадлежит другому окну' }
+  return { ok: true, wsPort: s.wsPort, token: s.token }
 }

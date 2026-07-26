@@ -43,6 +43,15 @@ function paneFor(tab: DrawerTab, device: DeviceDTO): React.JSX.Element {
  *  убивал живую SSH-сессию (htop/tail -f/деплой обрывались). Сессии НЕ открываются для
  *  непосещённых вкладок — нет утечки. Смена устройства (key={device.id} на месте вызова)
  *  ремонтирует тело → cleanup всех панелей закрывает их сессии. */
+/** Адрес ЗАПУЩЕННОЙ ОС, а не основной записи. У двухзагрузочного ПК под Windows шапка показывала
+ *  адрес Linux-половины — то есть данные из карточки относились к одной ОС, а адрес к другой. */
+function endpointLabel(d: DeviceDTO): string {
+  const alt = d.runningOs ? d.altOs.find((a) => a.os === d.runningOs) : undefined
+  const user = alt?.user || d.user
+  const ip = alt?.ip || d.ip
+  return `${user}@${ip || '—'}:${d.port}`
+}
+
 function DrawerBody({ activeTab, device }: { activeTab: DrawerTab; device: DeviceDTO }): React.JSX.Element {
   const [visited, setVisited] = useState<DrawerTab[]>([activeTab])
   useEffect(() => {
@@ -101,7 +110,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
           <div className="min-w-0">
             <div className="truncate text-base font-semibold text-white">{live.name}</div>
             <div className="truncate font-mono text-xs text-slate-500">
-              {sshCapable ? `${live.user}@${live.ip || '—'}:${live.port}` : live.os || live.provider}
+              {sshCapable ? endpointLabel(live) : live.os || live.provider}
             </div>
           </div>
           <button

@@ -18,6 +18,16 @@ export default defineConfig({
         '@': resolve('src/renderer/src')
       }
     },
+    // Два окна = две точки входа: index (приложение) и screen (окно «экран ПК»).
+    // Окно экрана монтирует только плеер — ни vault, ни store, ни drawer в нём не поднимаются.
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/renderer/index.html'),
+          screen: resolve('src/renderer/screen.html')
+        }
+      }
+    },
     plugins: [react(), tailwindcss()]
   }
 })

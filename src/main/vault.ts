@@ -14,6 +14,7 @@ import type {
   DeviceRow,
   DeviceDTO,
   DeviceInput,
+  Status,
   VaultStatus,
   Snippet,
   Subscription,
@@ -499,9 +500,40 @@ function parseAltOs(raw: string | null): AltBoot[] {
   }
 }
 
+/** Последний снапшот по каждому устройству — одним запросом (для мгновенной отрисовки). */
+function latestStates(): Map<string, { ts: number; cpu: number | null; ramUsed: number | null; ramTotal: number | null; status: string }> {
+  const rows = requireDb()
+    .prepare(
+      `SELECT s.device_id AS id, s.ts, s.cpu, s.ram_used AS ramUsed, s.ram_total AS ramTotal, s.status
+         FROM metric_snapshots s
+         JOIN (SELECT device_id, MAX(ts) AS mts FROM metric_snapshots GROUP BY device_id) m
+           ON m.device_id = s.device_id AND m.mts = s.ts`
+    )
+    .all() as Array<{ id: string; ts: number; cpu: number | null; ramUsed: number | null; ramTotal: number | null; status: string }>
+  return new Map(rows.map((r) => [r.id, r]))
+}
+
+// Снапшоты ПК пишутся со status = семейство ОС ('windows'/'linux'/'off'), а не Status.
+const snapStatus = (s: string): Status | null =>
+  s === 'off' ? 'offline' : s === 'windows' || s === 'linux' ? 'online' : (s as Status) || null
+
+/** Устройства + ПОСЛЕДНЕЕ ИЗВЕСТНОЕ состояние из снапшотов. Без этого после входа рисовалась
+ *  пустая сетка («0 online», нули) до конца первого опроса — по замеру это 70 секунд. */
 export function listDevices(): DeviceDTO[] {
   const rows = requireDb().prepare('SELECT * FROM devices ORDER BY sort, created_at').all() as DeviceRow[]
-  return rows.map(toDTO)
+  const states = latestStates()
+  return rows.map((r) => {
+    const dto = toDTO(r)
+    const s = states.get(r.id)
+    if (!s) return dto
+    return {
+      ...dto,
+      status: snapStatus(s.status) ?? dto.status,
+      cpu: s.cpu ?? dto.cpu,
+      ram: { used: s.ramUsed ?? dto.ram.used, total: s.ramTotal ?? dto.ram.total },
+      lastSeen: s.ts
+    }
+  })
 }
 
 export function createDevice(input: DeviceInput): DeviceDTO {

@@ -4,6 +4,12 @@ import { FALLBACK_DEVICES } from '@/data/mock'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
+/** Идёт ли полный опрос прямо сейчас — чтобы проходы не накладывались друг на друга. */
+let metricsInFlight = false
+
+/** Подряд идущие промахи быстрой проверки живости, по устройствам (гасим флаппинг). */
+const missStreak = new Map<string, number>()
+
 interface DevicesStore {
   devices: DeviceDTO[]
   loaded: boolean
@@ -28,6 +34,7 @@ interface DevicesStore {
       tempCpu?: number
     }
   ) => void
+  refreshLiveness: () => Promise<void>
   refreshMetrics: () => Promise<void>
   refreshOsStatus: () => Promise<void>
   refreshOne: (deviceId: string) => Promise<void>
@@ -42,9 +49,19 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       set({ devices: FALLBACK_DEVICES, loaded: true })
       return
     }
+    // Сначала рисуем последнее известное состояние из базы (мгновенно), потом уточняем.
+    // Живые метрики, уже набранные в этой сессии, кэшем НЕ перетираем — иначе повторная
+    // загрузка списка воскрешала бы выключенный хост как «online» из старого снимка.
     const list = await api.devices.list()
-    set({ devices: list, loaded: true })
-    get().refreshOsStatus()
+    const prev = new Map(get().devices.map((d) => [d.id, d]))
+    set({
+      devices: list.map((d) => {
+        const p = prev.get(d.id)
+        return p ? { ...d, status: p.status, cpu: p.cpu, ram: p.ram, runningOs: p.runningOs } : d
+      }),
+      loaded: true
+    })
+    void get().refreshLiveness()
   },
 
   create: async (input) => {
@@ -98,18 +115,49 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       )
     }),
 
+  // Быстрая живость: один TCP-коннект на устройство. Даёт точку «онлайн/офлайн» за сотни
+  // миллисекунд, пока полноценный опрос (секунды) ещё едет за цифрами. Метрики НЕ трогаем —
+  // только статус, иначе затрём свежие значения нулями.
+  refreshLiveness: async () => {
+    if (!api) return
+    const reach = await api.devices.liveness()
+    set({
+      devices: get().devices.map((d) => {
+        const r = reach[d.id]
+        if (!r) return d
+        if (r.up) {
+          missStreak.set(d.id, 0)
+          return { ...d, status: 'online' }
+        }
+        // Один промах в offline НЕ роняем: канал до дальних нод флапает (замерено — 1 ложный
+        // промах из 6 на LAX), и мигание «online→offline→online» врало бы чаще, чем помогало.
+        const n = (missStreak.get(d.id) ?? 0) + 1
+        missStreak.set(d.id, n)
+        return n >= 2 ? { ...d, status: 'offline' } : d
+      })
+    })
+  },
+
   // Agentless: probe only devices that have a real host + stored credential.
   // Dual-boot ПК (alt) обрабатываются через refreshOsStatus (у них живой может быть Windows-эндпоинт).
   refreshMetrics: async () => {
     if (!api) return
-    const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0)
-    await Promise.all(
-      eligible.map(async (d) => {
-        const r = await api.ssh.probe(d.id)
-        get().updateMetrics(d.id, r.ok ? r : { status: 'offline' })
-      })
-    )
-    get().refreshOsStatus()
+    // Защита от наложения проходов: один опрос может идти дольше интервала (офлайновый хост —
+    // это таймаут в 10с), и без флага проходы копились бы очередью, без конца долбя SSH.
+    if (metricsInFlight) return
+    metricsInFlight = true
+    try {
+      const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0)
+      await Promise.all(
+        eligible.map(async (d) => {
+          const r = await api.ssh.probe(d.id)
+          get().updateMetrics(d.id, r.ok ? r : { status: 'offline' })
+        })
+      )
+      await get().refreshOsStatus()
+    } finally {
+      metricsInFlight = false
+    }
   },
 
   // Dual-boot: живая ОС + метрики этой ОS (OS-aware) → статус + runningOs + cpu/ram/disk/uptime.

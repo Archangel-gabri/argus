@@ -39,6 +39,7 @@ export default function App(): React.JSX.Element {
   const view = useUI((s) => s.view)
   const loadDevices = useDevices((s) => s.load)
   const refreshMetrics = useDevices((s) => s.refreshMetrics)
+  const refreshLiveness = useDevices((s) => s.refreshLiveness)
 
   useEffect(() => {
     refresh()
@@ -88,10 +89,18 @@ export default function App(): React.JSX.Element {
   // Poll agentless metrics while unlocked so history + sparklines accumulate.
   useEffect(() => {
     if (status !== 'unlocked') return
-    refreshMetrics()
-    const t = setInterval(() => refreshMetrics(), 90000)
-    return () => clearInterval(t)
-  }, [status, refreshMetrics])
+    // Два контура вместо одного: живость дешёвая (TCP, мс) — гоняем часто; полные метрики
+    // дорогие (SSH, секунды) — реже. Раньше был один контур раз в 90с, поэтому после входа
+    // сетка стояла пустой около минуты.
+    void refreshLiveness()
+    void refreshMetrics()
+    const fast = setInterval(() => void refreshLiveness(), 10000)
+    const t = setInterval(() => refreshMetrics(), 30000)
+    return () => {
+      clearInterval(fast)
+      clearInterval(t)
+    }
+  }, [status, refreshMetrics, refreshLiveness])
 
   if (status !== 'unlocked') return <LockScreen />
 

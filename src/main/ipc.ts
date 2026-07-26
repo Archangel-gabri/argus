@@ -1,4 +1,4 @@
-import { ipcMain, safeStorage, BrowserWindow } from 'electron'
+import { ipcMain, safeStorage, BrowserWindow, clipboard } from 'electron'
 import * as vault from './vault'
 import * as ssh from './ssh'
 import * as sftp from './sftp'
@@ -14,6 +14,7 @@ import * as ports from './ports'
 import * as hardware from './hardware'
 import * as screen from './screen'
 import { ipLookup } from './net'
+import { fleetReach } from './liveness'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
@@ -74,6 +75,10 @@ export function registerIpc(): void {
     }
   })
 
+  // Быстрая живость по всему парку: TCP-коннект вместо полного SSH-опроса (мс вместо секунд).
+  // Зовётся сразу после входа, чтобы точки «онлайн» загорались мгновенно, а не через минуту.
+  ipcMain.handle('devices:liveness', async () => (vault.isUnlocked() ? fleetReach() : {}))
+
   ipcMain.handle('devices:list', (e) => {
     if (!vault.isUnlocked()) return []
     const list = vault.listDevices()
@@ -133,9 +138,11 @@ export function registerIpc(): void {
   ipcMain.handle('ssh:probe', async (_e, deviceId: unknown) => {
     const id = asString(deviceId)
     const r = await ssh.probe(id)
-    // Пишем снапшот ТОЛЬКО для успешного опроса — иначе offline-хост даёт точки cpu/ram=0,
-    // и график истории выглядит как ровные 0% вместо честного пропуска.
-    if (r.ok && vault.isUnlocked()) vault.recordSnapshot(id, r)
+    // Успех — пишем полный снапшот. Провал — пишем ТОЛЬКО статус, без cpu/ram: график истории
+    // получает честный пропуск (не ровные 0%), а кэш последнего состояния перестаёт врать.
+    // Раньше провалы не писались вовсе, и выключенный сервер после перезагрузки списка
+    // воскресал как «online» из устаревшего снимка.
+    if (vault.isUnlocked()) vault.recordSnapshot(id, r.ok ? r : { status: 'offline' })
     return r
   })
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
@@ -277,16 +284,34 @@ export function registerIpc(): void {
   ipcMain.handle('hw:get', (_e, deviceId: unknown) => hardware.getHardware(asString(deviceId)))
   ipcMain.handle('hw:refresh', (_e, deviceId: unknown) => hardware.refreshHardware(asString(deviceId)))
 
-  // Скринеринг (Этап 4): пред-полётная проба готовности ПК + запуск встроенного RDP-сеанса
+  // Скринеринг (Этап 4): проба готовности ПК + запуск сеанса в ОТДЕЛЬНОМ окне.
+  // Пароль принимает только screen:open (главное окно) — окну экрана он не отдаётся никогда.
   ipcMain.handle('screen:preflight', (_e, deviceId: unknown) => screen.screenPreflight(asString(deviceId)))
-  ipcMain.handle('screen:start', (_e, deviceId: unknown, opts: unknown) => {
+  ipcMain.handle('screen:open', (_e, deviceId: unknown, opts: unknown) => {
     const o = (opts ?? {}) as Record<string, unknown>
-    return screen.screenStart(asString(deviceId), {
-      password: asString(o.password),
-      width: Number(o.width) || 0,
-      height: Number(o.height) || 0
-    })
+    return screen.screenOpen(asString(deviceId), { password: asString(o.password) })
   })
+  ipcMain.handle('screen:claim', (e, handle: unknown) =>
+    screen.screenClaim(asString(handle), BrowserWindow.fromWebContents(e.sender)?.id ?? null)
+  )
+
+  // Управление собственным окном (окну экрана нужны полный экран / свернуть / закрыть,
+  // потому что в полноэкранном титлбар ОС исчезает). Действует только на окно-отправитель.
+  const senderWin = (e: { sender: Electron.WebContents }): BrowserWindow | null =>
+    BrowserWindow.fromWebContents(e.sender)
+  ipcMain.handle('window:setFullScreen', (e, on: unknown) => {
+    const w = senderWin(e)
+    w?.setFullScreen(!!on)
+    return !!w?.isFullScreen()
+  })
+  ipcMain.handle('window:isFullScreen', (e) => !!senderWin(e)?.isFullScreen())
+  ipcMain.on('window:minimize', (e) => senderWin(e)?.minimize())
+  ipcMain.on('window:close', (e) => senderWin(e)?.close())
+
+  // Буфер обмена — через main, а не navigator.clipboard: тот в Electron требует фокуса
+  // и жеста пользователя, а вставка из удалённого ПК прилетает асинхронно.
+  ipcMain.handle('clip:read', () => clipboard.readText())
+  ipcMain.on('clip:write', (_e, text: unknown) => clipboard.writeText(asString(text)))
 
   // ~/.ssh/config import + Tailscale discovery
   ipcMain.handle('sshconfig:parse', () => parseSshConfig())

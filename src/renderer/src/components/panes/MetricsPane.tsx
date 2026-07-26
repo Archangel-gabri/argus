@@ -137,14 +137,20 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
   const txBuf = useRef<number[]>([])
   const [, force] = useState(0)
 
-  // Живой поток каждые 3с (полный снимок; в историю НЕ пишется).
+  // Живой поток (полный снимок; в историю НЕ пишется).
+  //
+  // Самопланирующийся цикл вместо setInterval: опрос стоит от 0.3с (сервер рядом) до 9с (ПК с
+  // выключенной второй ОС), а тик стоял жёстко на 3с — запросы наслаивались, очередь не
+  // рассасывалась и SSH долбился без остановки. Теперь следующий тик планируется ПОСЛЕ ответа.
   useEffect(() => {
     let alive = true
+    let timer: ReturnType<typeof setTimeout> | null = null
     if (!api) {
       setLiveOk(false)
       return
     }
-    const tick = async (): Promise<void> => {
+    const loop = async (): Promise<void> => {
+      const t0 = Date.now()
       const r = await api.metrics.live(device.id)
       if (!alive) return
       setLiveOk(r.ok)
@@ -156,12 +162,14 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
         txBuf.current = [...txBuf.current, m.netTx].slice(-40)
         force((n) => n + 1)
       }
+      // Между опросами всегда есть пауза: быстрый хост опрашивается раз в 3с, медленный — реже,
+      // но не чаще чем раз в секунду после ответа.
+      timer = setTimeout(() => void loop(), Math.max(1000, 3000 - (Date.now() - t0)))
     }
-    void tick()
-    const t = setInterval(() => void tick(), 3000)
+    void loop()
     return () => {
       alive = false
-      clearInterval(t)
+      if (timer) clearTimeout(timer)
     }
   }, [device.id])
 
@@ -191,7 +199,8 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
   return (
     <div className="h-full space-y-3 overflow-y-auto pr-1">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-wide text-slate-500">Live-метрики · обновление 3с</span>
+        {/* Не пишем «3с»: интервал теперь адаптивный (следующий опрос планируется после ответа). */}
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">Live-метрики · автообновление</span>
         <span className="inline-flex items-center gap-1.5">
           <span
             className={cn(

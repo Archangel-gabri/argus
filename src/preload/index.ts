@@ -14,6 +14,7 @@ const api = {
   },
   devices: {
     list: () => ipcRenderer.invoke('devices:list'),
+    liveness: () => ipcRenderer.invoke('devices:liveness'),
     create: (input: unknown) => ipcRenderer.invoke('devices:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('devices:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('devices:delete', id),
@@ -115,8 +116,20 @@ const api = {
   },
   screen: {
     preflight: (deviceId: string) => ipcRenderer.invoke('screen:preflight', deviceId),
-    start: (deviceId: string, opts: { password: string; width?: number; height?: number }) =>
-      ipcRenderer.invoke('screen:start', deviceId, opts)
+    // Пароль уходит только сюда, в main. Окно экрана получает по claim лишь порт моста + токен.
+    open: (deviceId: string, opts: { password: string }) =>
+      ipcRenderer.invoke('screen:open', deviceId, opts),
+    claim: (handle: string) => ipcRenderer.invoke('screen:claim', handle)
+  },
+  win: {
+    setFullScreen: (on: boolean) => ipcRenderer.invoke('window:setFullScreen', on),
+    isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),
+    minimize: () => ipcRenderer.send('window:minimize'),
+    close: () => ipcRenderer.send('window:close')
+  },
+  clip: {
+    read: () => ipcRenderer.invoke('clip:read'),
+    write: (text: string) => ipcRenderer.send('clip:write', text)
   },
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
