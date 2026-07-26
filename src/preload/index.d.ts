@@ -157,7 +157,11 @@ export interface ArgusApi {
   }
   screen: {
     preflight: (deviceId: string) => Promise<ScreenPreflight>
-    open: (deviceId: string, opts: { password: string }) => Promise<{ ok: boolean; error?: string }>
+    open: (
+      deviceId: string,
+      opts: { password: string; remember?: boolean }
+    ) => Promise<{ ok: boolean; error?: string }>
+    forgetPassword: (deviceId: string) => Promise<{ ok: boolean }>
     claim: (
       handle: string
     ) => Promise<{ ok: boolean; wsPort?: number; token?: string; error?: string }>

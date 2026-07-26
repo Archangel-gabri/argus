@@ -49,6 +49,9 @@ export interface DeviceRow {
   /** JSON AltBoot[] | null — доп. эндпоинты ОС (multi-boot ПК). */
   alt: string | null
   mac: string | null
+  /** Пароль учётки ОС для трансляции экрана (RDP/NLA) — отдельно от SSH-секрета.
+   *  Опционально: старые строки колонки не имеют, INSERT его не заполняет. */
+  screen_password?: string | null
   sort: number
   created_at: number
   updated_at: number
@@ -82,6 +85,8 @@ export interface DeviceDTO {
   mac: string | null
   /** Когда состояние было снято в последний раз (мс). Есть = данные из кэша, можно показать «N мин назад». */
   lastSeen?: number | null
+  /** Сохранён ли пароль для трансляции экрана. Само значение через IPC НЕ ходит. */
+  hasScreenSecret?: boolean
   /** Эфемерно (только в renderer-сторе, не из БД): какая ОС сейчас РЕАЛЬНО запущена (multi-boot). */
   runningOs?: string | null
   /** Эфемерно: диск % занято и аптайм (сек) из последней пробы. */

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { getDeviceConn, getOsEndpoints, checkHostKey, type DeviceConn } from './vault'
 import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
+import { tcpAlive } from './liveness'
 import type { LiveMetrics } from './types'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
@@ -45,8 +46,33 @@ async function isConnAlive(conn: DeviceConn): Promise<boolean> {
 export async function resolveConn(deviceId: string): Promise<DeviceConn | null> {
   const eps = getOsEndpoints(deviceId)
   if (eps.length <= 1) return getDeviceConn(deviceId)
-  const checked = await Promise.all(eps.map(async (ep) => ((await isConnAlive(ep.conn)) ? ep.conn : null)))
-  return checked.find((c): c is DeviceConn => c !== null) ?? getDeviceConn(deviceId)
+
+  // Было Promise.all — то есть ожидание САМОГО МЕДЛЕННОГО эндпоинта: выключенная половина
+  // двухзагрузочного ПК съедала весь 8-секундный SSH-таймаут. А через resolveConn ходят
+  // терминал, файлы, порты и экран — этот же штраф платили все они.
+  // Стало: отсев по SSH-баннеру (~2.5с максимум) + гонка за первым ответившим.
+  const reach = await Promise.all(
+    eps.map(async (ep) => ({ ep, up: (await tcpAlive(ep.conn.host, ep.conn.port, 2500)).up }))
+  )
+  const open = reach.filter((r) => r.up).map((r) => r.ep)
+  // Ровно один живой sshd — дальше проверять нечего, две ОС разом не работают.
+  if (open.length === 1) return open[0].conn
+
+  const list = open.length ? open : eps
+  return new Promise<DeviceConn | null>((resolve) => {
+    let pending = list.length
+    const giveUp = (): void => resolve(getDeviceConn(deviceId))
+    for (const ep of list) {
+      void isConnAlive(ep.conn)
+        .then((ok) => {
+          if (ok) resolve(ep.conn)
+          else if (--pending === 0) giveUp()
+        })
+        .catch(() => {
+          if (--pending === 0) giveUp()
+        })
+    }
+  })
 }
 
 /** Подключить уже созданный ssh2-Client к conn — напрямую или ТУННЕЛЕМ через conn.jump.

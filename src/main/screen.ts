@@ -8,12 +8,12 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import net, { type AddressInfo } from 'node:net'
 import { execFile } from 'node:child_process'
-import { screen as electronScreen } from 'electron'
+import { screen as electronScreen, BrowserWindow } from 'electron'
 import GuacamoleLite from 'guacamole-lite'
 import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
 import { createScreenWindow } from './windows'
-import { listDevices } from './vault'
+import { listDevices, getScreenPassword, setScreenPassword } from './vault'
 import type { ScreenPreflight } from './types'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
@@ -129,6 +129,9 @@ const winRdpEnableCmd = (): string =>
 
 const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/** Устройства, на которых RDP уже включали в этом запуске приложения (операция идемпотентная). */
+const rdpReady = new Set<string>()
+
 /** TCP-жив ли порт (для проверки guacd). */
 function tcpAlive(host: string, port: number, ms = 1500): Promise<boolean> {
   return new Promise((resolve) => {
@@ -192,14 +195,22 @@ export async function screenStart(
     return { ok: false, error: 'Пока встроен Windows-путь (RDP). Linux/единый агент — следующий инкремент.' }
   if (!opts.password) return { ok: false, error: 'Нужен пароль Windows-аккаунта' }
 
-  // Best-effort включить RDP (на Castiel уже включён; для других admin-ПК — с одного клика).
-  await execOnce(deviceId, winRdpEnableCmd()).catch(() => undefined)
-
-  const conn = await resolveConn(deviceId) // живой Windows-эндпоинт (host = Tailscale 100.x)
+  // Три независимые операции — параллельно, а не цепочкой. Последовательно они давали ~22с на
+  // открытие экрана: включение RDP это отдельное SSH-подключение с запуском PowerShell,
+  // resolveConn — ещё одна проба живости, ensureGuacd — локальный докер.
+  // Само включение RDP делаем ОДИН раз за запуск приложения: операция идемпотентная, и повторять
+  // её при каждом открытии — это лишние ~8с на ровном месте.
+  const [, conn, guacd] = await Promise.all([
+    rdpReady.has(deviceId)
+      ? Promise.resolve(undefined)
+      : execOnce(deviceId, winRdpEnableCmd())
+          .then(() => rdpReady.add(deviceId))
+          .catch(() => undefined),
+    resolveConn(deviceId), // живой Windows-эндпоинт (host = Tailscale 100.x)
+    ensureGuacd()
+  ])
   if (!conn) return { ok: false, error: 'не удалось определить адрес ПК' }
-
-  if (!(await ensureGuacd()))
-    return { ok: false, error: 'guacd не запущен (Docker). Запусти: docker start argus-guacd' }
+  if (!guacd) return { ok: false, error: 'guacd не запущен (Docker). Запусти: docker start argus-guacd' }
   const wsPort = await ensureGuacServer()
   const token = encryptToken({
     connection: {
@@ -245,16 +256,38 @@ const deviceName = (deviceId: string): string =>
 /** Запустить сеанс и открыть под него отдельное окно. Пароль дальше main не уходит. */
 export async function screenOpen(
   deviceId: string,
-  opts: { password: string }
+  opts: { password: string; remember?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
+  // Второе окно на то же устройство открывать НЕЛЬЗЯ: Windows-клиент держит один сеанс, и
+  // новое подключение выбивает предыдущее — оба окна начинают драться, картинка чернеет.
+  // (Поймано на живом тесте: два открытых окна дали чёрный экран при статусе «подключено».)
+  const existing = [...sessions.entries()].find(([, s]) => s.deviceId === deviceId)
+  if (existing) {
+    const w = BrowserWindow.fromId(existing[1].winId)
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore()
+      w.focus()
+      return { ok: true }
+    }
+    sessions.delete(existing[0])
+  }
+
+  // Пустой ввод = берём сохранённый в хранилище (SQLCipher под мастер-паролем).
+  const password = opts.password || getScreenPassword(deviceId) || ''
+  if (!password) return { ok: false, error: 'Нужен пароль Windows-аккаунта' }
+
   // Стартовое разрешение — по рабочей области монитора; точный размер окно допросит через
   // sendSize сразу после коннекта (resize-method=display-update), так что картинка будет 1:1.
   const area = electronScreen.getPrimaryDisplay().workAreaSize
-  const r = await screenStart(deviceId, { password: opts.password, width: area.width, height: area.height })
+  const r = await screenStart(deviceId, { password, width: area.width, height: area.height })
   if (!r.ok || !r.wsPort || !r.token) return { ok: false, error: r.error ?? 'не удалось запустить сеанс' }
+  // Сохраняем только явно введённый пароль и только по галочке. Верность пароля тут ещё не
+  // известна (RDP проверит его позже) — поэтому в интерфейсе есть «забыть» одним кликом.
+  if (opts.remember && opts.password) setScreenPassword(deviceId, opts.password)
 
   const handle = crypto.randomUUID()
   const win = createScreenWindow(handle, `Экран — ${deviceName(deviceId)}`, {
+
     width: Math.min(1600, Math.round(area.width * 0.8)),
     height: Math.min(1000, Math.round(area.height * 0.8))
   })

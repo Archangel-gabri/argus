@@ -1,6 +1,7 @@
 // Список слушающих портов сервера (agentless, read-only). `ss -H -lntup` (sudo -n → fallback
 // без sudo: без прав имя процесса не видно — не ошибка). Питает вкладку «Порты» + one-click туннель.
 import { execOnce } from './ssh'
+import { whichOs } from './pc'
 
 export interface ListeningPort {
   proto: 'tcp' | 'udp'
@@ -50,9 +51,66 @@ export function parseSs(out: string): ListeningPort[] {
   return ports.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto))
 }
 
+// ── Windows ────────────────────────────────────────────────────────────────────────────────────
+// `ss` есть только в Linux, поэтому на ПК под Windows вкладка «Порты» просто отваливалась.
+// Get-NetTCPConnection даёт слушающие сокеты, имя процесса добираем по PID.
+const WIN_PORTS_PS =
+  `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$ErrorActionPreference='SilentlyContinue';` +
+  `$procs=@{};Get-Process|ForEach-Object{$procs[$_.Id]=$_.ProcessName};` +
+  `@(Get-NetTCPConnection -State Listen|ForEach-Object{` +
+  `[ordered]@{proto='tcp';addr=$_.LocalAddress;port=[int]$_.LocalPort;pid=[int]$_.OwningProcess;name=$procs[[int]$_.OwningProcess]}})+` +
+  `@(Get-NetUDPEndpoint|ForEach-Object{` +
+  `[ordered]@{proto='udp';addr=$_.LocalAddress;port=[int]$_.LocalPort;pid=[int]$_.OwningProcess;name=$procs[[int]$_.OwningProcess]}})` +
+  `|ConvertTo-Json -Compress -Depth 3`
+const winPortsCmd = (): string =>
+  `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_PORTS_PS, 'utf16le').toString('base64')}`
+
+interface WinPortRow {
+  proto?: string
+  addr?: string
+  port?: number
+  pid?: number
+  name?: string
+}
+
+export function parseWinPorts(out: string): ListeningPort[] {
+  const line = out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('[') || l.startsWith('{'))
+  if (!line) return []
+  let rows: WinPortRow[]
+  try {
+    const parsed: unknown = JSON.parse(line)
+    rows = Array.isArray(parsed) ? (parsed as WinPortRow[]) : [parsed as WinPortRow]
+  } catch {
+    return []
+  }
+  const seen = new Set<string>()
+  const ports: ListeningPort[] = []
+  for (const r of rows) {
+    const proto = r.proto === 'udp' ? 'udp' : 'tcp'
+    const addr = String(r.addr ?? '')
+    const port = Number(r.port)
+    if (!port) continue
+    const key = `${proto}/${addr}/${port}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    ports.push({ proto, addr, port, process: r.name || undefined, pid: r.pid || undefined, bind: classifyBind(addr) })
+  }
+  return ports.sort((a, b) => a.port - b.port || a.proto.localeCompare(b.proto))
+}
+
 export async function listListening(
   deviceId: string
 ): Promise<{ ok: boolean; ports: ListeningPort[]; error?: string }> {
+  const os = await whichOs(deviceId)
+  if (os.family === 'off') return { ok: false, ports: [], error: 'устройство не в сети' }
+  if (os.family === 'windows') {
+    const w = await execOnce(deviceId, winPortsCmd())
+    if (!w.ok) return { ok: false, ports: [], error: w.error }
+    const parsed = parseWinPorts(w.output)
+    return parsed.length
+      ? { ok: true, ports: parsed }
+      : { ok: false, ports: [], error: 'не удалось прочитать список портов Windows' }
+  }
   const r = await execOnce(deviceId, LIST_CMD)
   if (!r.ok) return { ok: false, ports: [], error: r.error }
   if (r.output.includes('ARGUS_NO_SS')) return { ok: false, ports: [], error: 'ss/netstat недоступны на хосте' }

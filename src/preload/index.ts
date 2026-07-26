@@ -117,8 +117,9 @@ const api = {
   screen: {
     preflight: (deviceId: string) => ipcRenderer.invoke('screen:preflight', deviceId),
     // Пароль уходит только сюда, в main. Окно экрана получает по claim лишь порт моста + токен.
-    open: (deviceId: string, opts: { password: string }) =>
+    open: (deviceId: string, opts: { password: string; remember?: boolean }) =>
       ipcRenderer.invoke('screen:open', deviceId, opts),
+    forgetPassword: (deviceId: string) => ipcRenderer.invoke('screen:forgetPassword', deviceId),
     claim: (handle: string) => ipcRenderer.invoke('screen:claim', handle)
   },
   win: {

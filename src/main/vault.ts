@@ -117,6 +117,12 @@ function migrate(d: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  // Экран: пароль учётки ОС для трансляции (RDP/NLA) — отдельный секрет, не SSH.
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN screen_password TEXT')
+  } catch {
+    /* column already exists */
+  }
   // C: MAC for Wake-on-LAN.
   try {
     d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
@@ -481,7 +487,8 @@ function toDTO(r: DeviceRow): DeviceDTO {
     notes: r.notes,
     jumpId: r.jump_id,
     altOs: parseAltOs(r.alt),
-    mac: r.mac
+    mac: r.mac,
+    hasScreenSecret: Boolean(r.screen_password)
   }
 }
 
@@ -498,6 +505,22 @@ function parseAltOs(raw: string | null): AltBoot[] {
   } catch {
     return []
   }
+}
+
+// ── Пароль трансляции экрана ───────────────────────────────────────────────────────────────────
+// Лежит в том же SQLCipher-хранилище под мастер-паролем, что и SSH-секреты. В renderer уходит
+// только факт наличия (hasScreenSecret), само значение через IPC не передаётся никогда.
+export function setScreenPassword(id: string, password: string | null): void {
+  requireDb()
+    .prepare('UPDATE devices SET screen_password = ?, updated_at = ? WHERE id = ?')
+    .run(password && password.length ? password : null, Date.now(), id)
+}
+
+export function getScreenPassword(id: string): string | null {
+  const r = requireDb().prepare('SELECT screen_password FROM devices WHERE id = ?').get(id) as
+    | { screen_password: string | null }
+    | undefined
+  return r?.screen_password || null
 }
 
 /** Последний снапшот по каждому устройству — одним запросом (для мгновенной отрисовки). */

@@ -2,7 +2,7 @@
 // (см. ScreenWindow.tsx): так «свернуть»/«закрыть»/«во весь экран» работают средствами ОС,
 // сеанс не умирает при закрытии drawer'а, и можно смотреть на ПК, параллельно работая в Argus.
 import { useEffect, useState } from 'react'
-import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink } from 'lucide-react'
+import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink, Lock } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { DeviceDTO, ScreenPreflight } from '@/types'
 
@@ -25,6 +25,10 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   const [opening, setOpening] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(true)
+  // Факт наличия сохранённого пароля приходит из main; само значение через IPC не ходит.
+  const [saved, setSaved] = useState(!!device.hasScreenSecret)
+  useEffect(() => setSaved(!!device.hasScreenSecret), [device.hasScreenSecret, device.id])
 
   const probe = async (): Promise<void> => {
     if (!api) return
@@ -40,19 +44,26 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
 
   const open = async (): Promise<void> => {
     if (!api) return
-    if (!password) {
+    if (!password && !saved) {
       setErr('Введи пароль Windows-аккаунта')
       return
     }
     setOpening(true)
     setErr(null)
-    const r = await api.screen.open(device.id, { password })
+    const r = await api.screen.open(device.id, { password, remember: remember && !!password })
     setOpening(false)
     if (!r.ok) {
       setErr(r.error ?? 'не удалось запустить сеанс')
       return
     }
+    if (password && remember) setSaved(true)
     setPassword('') // пароль ушёл в main и больше в интерфейсе не нужен
+  }
+
+  const forget = async (): Promise<void> => {
+    if (!api) return
+    await api.screen.forgetPassword(device.id)
+    setSaved(false)
   }
 
   const backendLabel =
@@ -93,7 +104,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           onKeyDown={(e) => {
             if (e.key === 'Enter') void open()
           }}
-          placeholder="Пароль Windows-аккаунта"
+          placeholder={saved ? 'Пароль сохранён — можно просто открыть' : 'Пароль Windows-аккаунта'}
           className="min-w-0 flex-1 rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40"
         />
         <button
@@ -104,6 +115,28 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />} Открыть
           экран
         </button>
+      </div>
+      <div className="flex items-center justify-between text-[11px]">
+        {saved ? (
+          <span className="inline-flex items-center gap-1.5 text-emerald-300/80">
+            <Lock className="h-3 w-3" /> пароль сохранён в хранилище
+          </span>
+        ) : (
+          <label className="inline-flex cursor-pointer items-center gap-1.5 text-slate-500">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              className="h-3 w-3 accent-accent"
+            />
+            запомнить пароль (в зашифрованном хранилище)
+          </label>
+        )}
+        {saved && (
+          <button onClick={() => void forget()} className="text-slate-500 underline-offset-2 hover:text-slate-300 hover:underline">
+            забыть
+          </button>
+        )}
       </div>
       {err && <div className="text-xs text-rose-400">{err}</div>}
 

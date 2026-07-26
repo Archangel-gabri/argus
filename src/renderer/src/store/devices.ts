@@ -150,6 +150,10 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0)
       await Promise.all(
         eligible.map(async (d) => {
+          // Хост, который быстрая проверка уже уверенно признала мёртвым, полным опросом не
+          // мучаем: это 10с SSH-таймаута на ровном месте, а ответ известен. Как только живость
+          // (раз в 10с) увидит его снова, следующий проход соберёт метрики.
+          if (d.status === 'offline') return
           const r = await api.ssh.probe(d.id)
           get().updateMetrics(d.id, r.ok ? r : { status: 'offline' })
         })

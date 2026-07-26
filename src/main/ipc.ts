@@ -289,7 +289,12 @@ export function registerIpc(): void {
   ipcMain.handle('screen:preflight', (_e, deviceId: unknown) => screen.screenPreflight(asString(deviceId)))
   ipcMain.handle('screen:open', (_e, deviceId: unknown, opts: unknown) => {
     const o = (opts ?? {}) as Record<string, unknown>
-    return screen.screenOpen(asString(deviceId), { password: asString(o.password) })
+    return screen.screenOpen(asString(deviceId), { password: asString(o.password), remember: !!o.remember })
+  })
+  // Забыть сохранённый пароль трансляции. Само значение в renderer не уходит ни при каких условиях.
+  ipcMain.handle('screen:forgetPassword', (_e, deviceId: unknown) => {
+    vault.setScreenPassword(asString(deviceId), null)
+    return { ok: true }
   })
   ipcMain.handle('screen:claim', (e, handle: unknown) =>
     screen.screenClaim(asString(handle), BrowserWindow.fromWebContents(e.sender)?.id ?? null)
