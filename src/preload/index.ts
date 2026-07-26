@@ -122,6 +122,11 @@ const api = {
     forgetPassword: (deviceId: string) => ipcRenderer.invoke('screen:forgetPassword', deviceId),
     claim: (handle: string) => ipcRenderer.invoke('screen:claim', handle)
   },
+  agent: {
+    status: (deviceId: string) => ipcRenderer.invoke('agent:status', deviceId),
+    provision: (deviceId: string) => ipcRenderer.invoke('agent:provision', deviceId),
+    forget: (deviceId: string) => ipcRenderer.invoke('agent:forget', deviceId)
+  },
   win: {
     setFullScreen: (on: boolean) => ipcRenderer.invoke('window:setFullScreen', on),
     isFullScreen: () => ipcRenderer.invoke('window:isFullScreen'),

@@ -13,6 +13,7 @@ import * as geo from './geo'
 import * as ports from './ports'
 import * as hardware from './hardware'
 import * as screen from './screen'
+import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
@@ -294,6 +295,14 @@ export function registerIpc(): void {
   // Забыть сохранённый пароль трансляции. Само значение в renderer не уходит ни при каких условиях.
   ipcMain.handle('screen:forgetPassword', (_e, deviceId: unknown) => {
     vault.setScreenPassword(asString(deviceId), null)
+    return { ok: true }
+  })
+
+  // Собственный агент трансляции: статус, установка, удаление.
+  ipcMain.handle('agent:status', (_e, deviceId: unknown) => agent.agentStatus(asString(deviceId)))
+  ipcMain.handle('agent:provision', (_e, deviceId: unknown) => agent.provisionAgent(asString(deviceId)))
+  ipcMain.handle('agent:forget', (_e, deviceId: unknown) => {
+    vault.setAgentToken(asString(deviceId), null)
     return { ok: true }
   })
   ipcMain.handle('screen:claim', (e, handle: unknown) =>

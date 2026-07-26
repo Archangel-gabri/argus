@@ -2,9 +2,10 @@
 // (см. ScreenWindow.tsx): так «свернуть»/«закрыть»/«во весь экран» работают средствами ОС,
 // сеанс не умирает при закрытии drawer'а, и можно смотреть на ПК, параллельно работая в Argus.
 import { useEffect, useState } from 'react'
-import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink, Lock } from 'lucide-react'
+import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink, Lock, Cpu, Download } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { DeviceDTO, ScreenPreflight } from '@/types'
+import type { AgentStatus } from '../../../../main/agent'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -26,6 +27,9 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   const [err, setErr] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
+  const [agent, setAgent] = useState<AgentStatus | null>(null)
+  const [installing, setInstalling] = useState(false)
+  const [selftest, setSelftest] = useState<string | null>(null)
   // Факт наличия сохранённого пароля приходит из main; само значение через IPC не ходит.
   const [saved, setSaved] = useState(!!device.hasScreenSecret)
   useEffect(() => setSaved(!!device.hasScreenSecret), [device.hasScreenSecret, device.id])
@@ -37,10 +41,27 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
     setPfLoading(false)
     setPf(r)
   }
+  const checkAgent = async (): Promise<void> => {
+    if (!api) return
+    setAgent(await api.agent.status(device.id))
+  }
   useEffect(() => {
     void probe()
+    void checkAgent()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.id])
+
+  const install = async (): Promise<void> => {
+    if (!api) return
+    setInstalling(true)
+    setErr(null)
+    setSelftest(null)
+    const r = await api.agent.provision(device.id)
+    setInstalling(false)
+    setSelftest(r.selftest ?? null)
+    if (!r.ok) setErr(r.error ?? `не удалось установить агент${r.step ? ` (шаг: ${r.step})` : ''}`)
+    await checkAgent()
+  }
 
   const open = async (): Promise<void> => {
     if (!api) return
@@ -94,6 +115,55 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           Его можно развернуть на весь монитор, свернуть в панель задач или кинуть на второй экран — и
           продолжать работать в Argus, пока смотришь на ПК.
         </p>
+      </div>
+
+      {/* Агент — основной путь: пароль учётной записи ОС не нужен вовсе, работает не только
+          на Windows. RDP ниже остаётся запасным вариантом. */}
+      <div className="rounded-lg border border-border bg-card/50 p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-wide text-slate-500">Агент трансляции</span>
+          <button
+            onClick={() => void checkAgent()}
+            className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300"
+          >
+            <RefreshCw className="h-3 w-3" /> проверить
+          </button>
+        </div>
+        {agent?.running ? (
+          <div className="flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-300/90">
+              <Cpu className="h-3.5 w-3.5" /> работает · версия {agent.version}
+              {agent.os ? ` · ${agent.os}` : ''}
+            </span>
+            <button
+              onClick={() => void install()}
+              disabled={installing}
+              className="text-[11px] text-slate-500 hover:text-slate-300 disabled:opacity-50"
+            >
+              переустановить
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[11px] leading-relaxed text-slate-500">
+              Ставится по SSH за один клик. После установки пароль от учётной записи не нужен — доверие
+              уже получено через SSH.
+            </p>
+            <button
+              onClick={() => void install()}
+              disabled={installing}
+              className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent ring-1 ring-accent/30 hover:bg-accent/10 disabled:opacity-60"
+            >
+              {installing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {installing ? 'Ставлю агент…' : 'Установить агент'}
+            </button>
+          </div>
+        )}
+        {selftest && (
+          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-bg/50 p-2 text-[10px] leading-relaxed text-slate-500">
+            {selftest}
+          </pre>
+        )}
       </div>
 
       <div className="flex items-center gap-2">

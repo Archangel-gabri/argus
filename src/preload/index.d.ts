@@ -22,6 +22,7 @@ import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
 import type { ForwardInfo } from '../main/forward'
 import type { ListeningPort } from '../main/ports'
+import type { AgentStatus, ProvisionResult } from '../main/agent'
 
 export type VaultResult = { ok: boolean; error?: string; state: VaultState }
 export type DeviceResult = { ok: boolean; error?: string; device?: DeviceDTO }
@@ -162,9 +163,19 @@ export interface ArgusApi {
       opts: { password: string; remember?: boolean }
     ) => Promise<{ ok: boolean; error?: string }>
     forgetPassword: (deviceId: string) => Promise<{ ok: boolean }>
-    claim: (
-      handle: string
-    ) => Promise<{ ok: boolean; wsPort?: number; token?: string; error?: string }>
+    claim: (handle: string) => Promise<{
+      ok: boolean
+      mode?: 'agent' | 'rdp'
+      wsPort?: number
+      token?: string
+      url?: string
+      error?: string
+    }>
+  }
+  agent: {
+    status: (deviceId: string) => Promise<AgentStatus>
+    provision: (deviceId: string) => Promise<ProvisionResult>
+    forget: (deviceId: string) => Promise<{ ok: boolean }>
   }
   win: {
     setFullScreen: (on: boolean) => Promise<boolean>

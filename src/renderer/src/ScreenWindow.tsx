@@ -7,6 +7,7 @@ import { Loader2, Maximize2, Minimize2, Minus, X, KeyRound, RefreshCw, AlertTria
 import Guacamole from 'guacamole-common-js'
 import { cn } from '@/lib/cn'
 import { guacErr, isAuthFailure, type GuacStatus } from '@/lib/guac'
+import { AgentClient } from '@/lib/agentClient'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -57,7 +58,9 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const kbRef = useRef<any>(null)
   const scaleRef = useRef(1)
-  const sessionRef = useRef<{ wsPort: number; token: string } | null>(null)
+  const sessionRef = useRef<{ mode: 'agent' | 'rdp'; wsPort: number; token: string; url?: string } | null>(null)
+  const agentRef = useRef<AgentClient | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
   const attemptRef = useRef(0)
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Поколение соединения. teardown его увеличивает — и все обработчики прошлого клиента
@@ -73,6 +76,8 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
 
   const teardown = useCallback((): void => {
     genRef.current += 1
+    agentRef.current?.close()
+    agentRef.current = null
     if (retryRef.current) {
       clearTimeout(retryRef.current)
       retryRef.current = null
@@ -106,10 +111,71 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     }
   }, [])
 
+  /** Путь через собственный агент: H.264 напрямую в WebCodecs, без пароля учётной записи ОС. */
+  const connectAgent = useCallback((): void => {
+    const s = sessionRef.current
+    const mount = mountRef.current
+    if (!s || !s.url || !mount) return
+    teardown()
+    const gen = genRef.current
+    setPhase((p) => (p === 'reconnecting' ? p : 'connecting'))
+
+    const canvas = document.createElement('canvas')
+    canvas.className = 'h-full w-full object-contain'
+    canvas.tabIndex = 0
+    mount.replaceChildren(canvas)
+
+    const client = new AgentClient(s.url, s.token, canvas, {
+      onHello: (h) => {
+        if (genRef.current !== gen) return
+        attemptRef.current = 0
+        setErr(null)
+        setPhase('connected')
+        setInfo(`агент ${h.version} · ${h.source}/${h.encoder} · ${h.fps} к/с`)
+        canvas.focus()
+      },
+      onError: (m) => {
+        if (genRef.current !== gen) return
+        teardown()
+        setErr(m)
+        setPhase('error')
+      },
+      onClose: () => {
+        if (genRef.current !== gen) return
+        dropRetry('соединение с агентом разорвано', () => connectAgent())
+      }
+    })
+    agentRef.current = client
+    client.connect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teardown])
+
+  /** Общая политика повторов: обрыв — переподключаемся, отказ авторизации — нет. */
+  const dropRetry = useCallback(
+    (msg: string, again: () => void): void => {
+      teardown()
+      if (attemptRef.current >= MAX_RETRIES) {
+        setErr(msg)
+        setPhase('error')
+        return
+      }
+      attemptRef.current += 1
+      const delay = Math.min(8000, 1000 * 2 ** (attemptRef.current - 1))
+      setErr(`${msg} Переподключаюсь (попытка ${attemptRef.current} из ${MAX_RETRIES})…`)
+      setPhase('reconnecting')
+      retryRef.current = setTimeout(again, delay)
+    },
+    [teardown]
+  )
+
   const connect = useCallback((): void => {
     const s = sessionRef.current
     const mount = mountRef.current
     if (!s || !mount) return
+    if (s.mode === 'agent') {
+      connectAgent()
+      return
+    }
     teardown()
     const gen = genRef.current // всё ниже принадлежит ЭТОМУ поколению соединения
     setErr(null)
@@ -178,6 +244,7 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     }
 
     client.connect(`token=${encodeURIComponent(s.token)}`)
+    void gen
 
     // Мышь по элементу дисплея; координаты в CSS-пикселях, про scale() библиотека не знает.
     const mouse = new Guacamole.Mouse(disp.getElement())
@@ -213,12 +280,17 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
       }
       const r = await api.screen.claim(handle)
       if (cancelled) return
-      if (!r.ok || !r.wsPort || !r.token) {
+      if (!r.ok || !r.token) {
         setErr(r.error ?? 'не удалось получить сеанс')
         setPhase('error')
         return
       }
-      sessionRef.current = { wsPort: r.wsPort, token: r.token }
+      sessionRef.current = {
+        mode: r.mode ?? 'rdp',
+        wsPort: r.wsPort ?? 0,
+        token: r.token,
+        url: r.url
+      }
       connect()
     })()
     return () => {
@@ -275,6 +347,10 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
   }
 
   const sendCtrlAltDel = (): void => {
+    if (agentRef.current) {
+      agentRef.current.sendCtrlAltDel()
+      return
+    }
     const client = clientRef.current
     if (!client) return
     for (const k of [KEY_CTRL_L, KEY_ALT_L, KEY_DELETE]) client.sendKeyEvent(1, k)
@@ -301,6 +377,11 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
           toolbarShown ? 'opacity-100' : 'pointer-events-none -translate-y-16 opacity-0'
         )}
       >
+        {info && (
+          <span className="mr-1 max-w-[280px] truncate pl-1 text-[11px] text-slate-500" title={info}>
+            {info}
+          </span>
+        )}
         <ToolbarButton onClick={() => void toggleFullScreen()} title={fs ? 'Из полноэкранного' : 'Во весь экран'}>
           {fs ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </ToolbarButton>

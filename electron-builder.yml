@@ -9,6 +9,12 @@ npmRebuild: false
 files:
   - out/**
   - package.json
+# Бинари агента трансляции: Argus заливает их на устройство по SSH при провижининге.
+# Лежат распакованными рядом с приложением — иначе их не отдать в SFTP из asar.
+extraResources:
+  - from: resources/agent
+    to: agent
+    filter: ['**/*']
 # SQLCipher-биндинг должен лежать распакованным (не в asar), иначе .node не загрузится.
 asarUnpack:
   - '**/*.node'

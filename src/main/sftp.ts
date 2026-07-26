@@ -145,6 +145,21 @@ export async function sftpUpload(
   })
 }
 
+/** Программная заливка файла (без диалога выбора) — нужна провижинингу агента. */
+export function sftpPutFile(
+  sessionId: string,
+  localPath: string,
+  remotePath: string
+): Promise<{ ok: boolean; error?: string }> {
+  const s = sessions.get(sessionId)
+  if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  return new Promise((resolve) => {
+    s.sftp.fastPut(localPath, remotePath, (err) =>
+      resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true })
+    )
+  })
+}
+
 export function sftpDelete(sessionId: string, path: string, isDir: boolean): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })

@@ -123,6 +123,12 @@ function migrate(d: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  // Токен собственного агента трансляции (выдаётся при провижининге по SSH).
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN agent_token TEXT')
+  } catch {
+    /* column already exists */
+  }
   // C: MAC for Wake-on-LAN.
   try {
     d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
@@ -521,6 +527,21 @@ export function getScreenPassword(id: string): string | null {
     | { screen_password: string | null }
     | undefined
   return r?.screen_password || null
+}
+
+// Токен агента: живёт там же, под мастер-паролем. В renderer уходит только вместе с адресом
+// подключения и только когда окно экрана реально открывают.
+export function setAgentToken(id: string, token: string | null): void {
+  requireDb()
+    .prepare('UPDATE devices SET agent_token = ?, updated_at = ? WHERE id = ?')
+    .run(token && token.length ? token : null, Date.now(), id)
+}
+
+export function getAgentToken(id: string): string | null {
+  const r = requireDb().prepare('SELECT agent_token FROM devices WHERE id = ?').get(id) as
+    | { agent_token: string | null }
+    | undefined
+  return r?.agent_token || null
 }
 
 /** Последний снапшот по каждому устройству — одним запросом (для мгновенной отрисовки). */

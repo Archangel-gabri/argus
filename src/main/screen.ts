@@ -14,6 +14,7 @@ import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
 import { createScreenWindow } from './windows'
 import { listDevices, getScreenPassword, setScreenPassword } from './vault'
+import { agentEndpoint, agentStatus } from './agent'
 import type { ScreenPreflight } from './types'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
@@ -244,8 +245,12 @@ export async function screenStart(
 // Токен переиспользуемый (guacamole-lite не хранит состояния) — на этом держится автореконнект.
 interface LiveSession {
   deviceId: string
+  /** agent — свой агент (пароль ОС не нужен); rdp — запасной путь через guacd. */
+  mode: 'agent' | 'rdp'
   wsPort: number
   token: string
+  /** Полный ws://-адрес агента (только для mode=agent). */
+  url?: string
   winId: number
 }
 const sessions = new Map<string, LiveSession>()
@@ -272,38 +277,53 @@ export async function screenOpen(
     sessions.delete(existing[0])
   }
 
+  const area = electronScreen.getPrimaryDisplay().workAreaSize
+  const openWindow = (sess: Omit<LiveSession, 'winId'>): { ok: boolean } => {
+    const h = crypto.randomUUID()
+    const w = createScreenWindow(h, `Экран — ${deviceName(deviceId)}`, {
+      width: Math.min(1600, Math.round(area.width * 0.8)),
+      height: Math.min(1000, Math.round(area.height * 0.8))
+    })
+    sessions.set(h, { ...sess, winId: w.id })
+    w.on('closed', () => sessions.delete(h))
+    return { ok: true }
+  }
+
+  // Свой агент — предпочтительный путь: он не требует пароля учётной записи ОС вообще
+  // (доверие получено по SSH при установке) и работает не только на Windows.
+  const ag = await agentEndpoint(deviceId)
+  if (ag.ok && ag.url && ag.token) {
+    const st = await agentStatus(deviceId)
+    if (st.running) return openWindow({ deviceId, mode: 'agent', url: ag.url, token: ag.token, wsPort: 0 })
+  }
+
+  // Запасной путь — RDP через guacd. Он и только он требует пароль Windows.
   // Пустой ввод = берём сохранённый в хранилище (SQLCipher под мастер-паролем).
   const password = opts.password || getScreenPassword(deviceId) || ''
-  if (!password) return { ok: false, error: 'Нужен пароль Windows-аккаунта' }
+  if (!password)
+    return {
+      ok: false,
+      error: 'Агент не установлен, а для запасного пути (RDP) нужен пароль Windows-аккаунта'
+    }
 
   // Стартовое разрешение — по рабочей области монитора; точный размер окно допросит через
   // sendSize сразу после коннекта (resize-method=display-update), так что картинка будет 1:1.
-  const area = electronScreen.getPrimaryDisplay().workAreaSize
   const r = await screenStart(deviceId, { password, width: area.width, height: area.height })
   if (!r.ok || !r.wsPort || !r.token) return { ok: false, error: r.error ?? 'не удалось запустить сеанс' }
   // Сохраняем только явно введённый пароль и только по галочке. Верность пароля тут ещё не
   // известна (RDP проверит его позже) — поэтому в интерфейсе есть «забыть» одним кликом.
   if (opts.remember && opts.password) setScreenPassword(deviceId, opts.password)
 
-  const handle = crypto.randomUUID()
-  const win = createScreenWindow(handle, `Экран — ${deviceName(deviceId)}`, {
-
-    width: Math.min(1600, Math.round(area.width * 0.8)),
-    height: Math.min(1000, Math.round(area.height * 0.8))
-  })
-  // winId ставим синхронно: окно уже создано, а грузиться (и звать claim) начнёт позже.
-  sessions.set(handle, { deviceId, wsPort: r.wsPort, token: r.token, winId: win.id })
-  win.on('closed', () => sessions.delete(handle))
-  return { ok: true }
+  return openWindow({ deviceId, mode: 'rdp', wsPort: r.wsPort, token: r.token })
 }
 
 /** Окно забирает параметры своего сеанса. Повторно — можно (реконнект), из чужого окна — нельзя. */
 export function screenClaim(
   handle: string,
   senderWinId: number | null
-): { ok: boolean; wsPort?: number; token?: string; error?: string } {
+): { ok: boolean; mode?: 'agent' | 'rdp'; wsPort?: number; token?: string; url?: string; error?: string } {
   const s = sessions.get(handle)
   if (!s) return { ok: false, error: 'сеанс не найден или уже закрыт' }
   if (s.winId !== senderWinId) return { ok: false, error: 'сеанс принадлежит другому окну' }
-  return { ok: true, wsPort: s.wsPort, token: s.token }
+  return { ok: true, mode: s.mode, wsPort: s.wsPort, token: s.token, url: s.url }
 }
