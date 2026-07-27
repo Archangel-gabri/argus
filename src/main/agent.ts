@@ -6,13 +6,13 @@
 //
 // Здесь только установка/проверка. Сам поток идёт напрямую из окна экрана к агенту.
 import crypto from 'node:crypto'
-import http from 'node:http'
+import https from 'node:https'
 import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
 import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
-import { getAgentToken, setAgentToken } from './vault'
+import { getAgentToken, setAgentToken, getAgentCert, setAgentCert } from './vault'
 
 export const AGENT_PORT = 47990
 const AGENT_VERSION = '0.1.0'
@@ -57,17 +57,54 @@ function targetPaths(family: string): { dir: string; bin: string; token: string 
   return { dir: '$HOME/.argus', bin: '$HOME/.argus/argus-agent', token: '$HOME/.argus/agent.token' }
 }
 
-/** HTTP-запрос к агенту напрямую (через Tailscale). Короткий таймаут: это проверка, а не работа. */
-function agentHTTP(host: string, token: string, timeoutMs = 4000): Promise<AgentStatus> {
+/** Отпечаток SHA-256 от DER сертификата — единый формат для всех сторон (нижний hex). */
+export function fingerprintFromPem(pem: string): string {
+  const b64 = pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')
+  return crypto.createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex')
+}
+
+// Закреплённые сертификаты по хостам — читает проверка сертификатов Electron (см. index.ts).
+// Отдельная карта, потому что проверка вызывается синхронно и ходить в БД оттуда нельзя.
+const pinnedByHost = new Map<string, string>()
+
+export function pinHost(host: string, pem: string): void {
+  pinnedByHost.set(host, fingerprintFromPem(pem))
+}
+
+/** Совпадает ли предъявленный сертификат с закреплённым для этого хоста. */
+export function certPinMatches(host: string, pem: string): boolean {
+  const want = pinnedByHost.get(host)
+  if (!want) return false
+  return fingerprintFromPem(pem) === want
+}
+
+/**
+ * HTTPS-запрос к агенту.
+ *
+ * Проверка TLS ОСТАЁТСЯ ВКЛЮЧЁННОЙ. Публичного центра сертификации у машины нет, поэтому
+ * доверенным корнем выступает сам закреплённый сертификат агента — тот, что мы прочитали
+ * по SSH при установке. Это настоящий пиннинг: подменённый сертификат не пройдёт проверку,
+ * и токен уйти чужому серверу не успеет.
+ * Проверку ИМЕНИ хоста отключаем осознанно: обращаемся по IP, а он у машины меняется —
+ * личность подтверждает сам сертификат, а не адрес.
+ */
+function agentHTTP(host: string, token: string, pinnedPem: string | null, timeoutMs = 4000): Promise<AgentStatus> {
   return new Promise((resolve) => {
+    if (!pinnedPem) {
+      resolve({ installed: false, running: false, error: 'сертификат агента не закреплён — переустанови агент' })
+      return
+    }
     // Токен — заголовком, не в URL: строка запроса попадает в логи по всему пути.
-    const req = http.get(
+    const req = https.get(
       {
         host,
         port: AGENT_PORT,
         path: '/health',
         timeout: timeoutMs,
-        headers: { 'X-Argus-Token': token }
+        headers: { 'X-Argus-Token': token },
+        ca: [pinnedPem],
+        rejectUnauthorized: true,
+        checkServerIdentity: () => undefined
       },
       (res) => {
         let body = ''
@@ -94,9 +131,11 @@ function agentHTTP(host: string, token: string, timeoutMs = 4000): Promise<Agent
 export async function agentStatus(deviceId: string): Promise<AgentStatus> {
   const token = getAgentToken(deviceId)
   if (!token) return { installed: false, running: false, error: 'агент ещё не устанавливался' }
+  const cert = getAgentCert(deviceId)
   const conn = await resolveConn(deviceId)
   if (!conn) return { installed: false, running: false, error: 'устройство не в сети' }
-  return agentHTTP(conn.host, token)
+  if (cert) pinHost(conn.host, cert)
+  return agentHTTP(conn.host, token, cert)
 }
 
 const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
@@ -173,7 +212,26 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
         )
   if (!tokWrite.ok) return { ok: false, step: 'токен', error: tokWrite.error || tokWrite.output }
 
-  // 4. Автозапуск
+  // 4. Сертификат: агент создаёт его сам при первом обращении, а мы забираем ПО SSH —
+  //    то есть по уже доверенному каналу. Это и есть момент закрепления (TOFU).
+  const certRead =
+    os.family === 'windows'
+      ? await execOnce(
+          deviceId,
+          psCmd(
+            `& "$env:LOCALAPPDATA\\Argus\\argus-agent.exe" --fingerprint | Out-Null; ` +
+              `Get-Content -Raw "$env:LOCALAPPDATA\\Argus\\agent.crt"`
+          )
+        )
+      : await execOnce(
+          deviceId,
+          `"$HOME/.argus/argus-agent" --fingerprint >/dev/null 2>&1; cat "$HOME/.argus/agent.crt"`
+        )
+  const pem = (certRead.output || '').trim()
+  if (!/BEGIN CERTIFICATE/.test(pem))
+    return { ok: false, step: 'сертификат', error: 'агент не отдал сертификат: ' + (certRead.error || pem).slice(0, 200) }
+
+  // 5. Автозапуск
   const svc = await installService(deviceId, os.family, p)
   if (!svc.ok) return { ok: false, step: 'автозапуск', error: svc.error }
 
@@ -184,7 +242,9 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
       : await execOnce(deviceId, `"$HOME/.argus/argus-agent" --selftest 2>&1`)
 
   setAgentToken(deviceId, token)
-  const status = await agentHTTP(conn.host, token, 6000)
+  setAgentCert(deviceId, pem)
+  pinHost(conn.host, pem)
+  const status = await agentHTTP(conn.host, token, pem, 6000)
   const selftest = (st.output || '').trim()
   const captureOK = /захват: РАБОТАЕТ/.test(selftest)
 
@@ -303,9 +363,14 @@ export async function agentEndpoint(
 ): Promise<{ ok: boolean; url?: string; token?: string; error?: string }> {
   const token = getAgentToken(deviceId)
   if (!token) return { ok: false, error: 'агент не установлен' }
+  const cert = getAgentCert(deviceId)
+  if (!cert) return { ok: false, error: 'сертификат агента не закреплён — переустанови агент' }
   const conn = await resolveConn(deviceId)
   if (!conn) return { ok: false, error: 'устройство не в сети' }
-  return { ok: true, url: `ws://${conn.host}:${AGENT_PORT}/stream`, token }
+  // Закрепляем ДО открытия окна: проверка сертификата в Electron сработает раньше,
+  // чем renderer успеет что-либо отправить.
+  pinHost(conn.host, cert)
+  return { ok: true, url: `wss://${conn.host}:${AGENT_PORT}/stream`, token }
 }
 
 export { AGENT_VERSION }

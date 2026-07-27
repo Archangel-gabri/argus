@@ -2,6 +2,7 @@ import { app, BrowserWindow, session } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpc } from './ipc'
 import { createAppWindow } from './windows'
+import { certPinMatches } from './agent'
 import { lock as lockVault } from './vault'
 import { closeAll as closeSsh } from './ssh'
 import { sftpCloseAll } from './sftp'
@@ -12,17 +13,34 @@ app.whenReady().then(() => {
 
   // Strict CSP in production only (dev stays relaxed so Vite HMR works).
   if (!is.dev) {
+    const BASE =
+      "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; " +
+      "font-src 'self' data:; script-src 'self'; connect-src 'self' https: ws://127.0.0.1:* wss://127.0.0.1:*"
+    // Окно экрана ходит к агенту НА АДРЕС УСТРОЙСТВА (wss://100.x…), а не на loopback, поэтому
+    // ему нужен более широкий connect-src. Расширяем ТОЛЬКО эту страницу: у основного окна
+    // политика остаётся прежней. Подмену сертификата это не открывает — его проверяет пиннинг.
+    const SCREEN = `${BASE} wss:`
     session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
+      const forScreen = details.url.includes('screen.html')
       cb({
         responseHeaders: {
           ...details.responseHeaders,
-          'Content-Security-Policy': [
-            "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' https: ws://127.0.0.1:* wss://127.0.0.1:*; script-src 'self'"
-          ]
+          'Content-Security-Policy': [forScreen ? SCREEN : BASE]
         }
       })
     })
   }
+
+  // Сертификат агента самоподписанный, публичного центра сертификации у машины нет — поэтому
+  // Chromium его отвергнет. Разрешаем РОВНО закреплённый сертификат конкретного хоста (TOFU,
+  // как host-key у SSH) и ничего больше: всё остальное проходит обычную проверку Chromium.
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    if (certPinMatches(request.hostname, request.certificate.data)) {
+      callback(0) // доверяем: это тот самый сертификат, что мы прочитали по SSH при установке
+      return
+    }
+    callback(-3) // -3 = решение остаётся за Chromium (штатная проверка цепочки)
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

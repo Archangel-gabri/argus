@@ -129,6 +129,12 @@ function migrate(d: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  // Закреплённый отпечаток TLS-сертификата агента (TOFU, как host-key у SSH).
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN agent_cert TEXT')
+  } catch {
+    /* column already exists */
+  }
   // C: MAC for Wake-on-LAN.
   try {
     d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
@@ -542,6 +548,20 @@ export function getAgentToken(id: string): string | null {
     | { agent_token: string | null }
     | undefined
   return r?.agent_token || null
+}
+
+/** Отпечаток TLS-сертификата агента: закрепляется при установке и потом только сверяется. */
+export function setAgentCert(id: string, fp: string | null): void {
+  requireDb()
+    .prepare('UPDATE devices SET agent_cert = ?, updated_at = ? WHERE id = ?')
+    .run(fp && fp.length ? fp : null, Date.now(), id)
+}
+
+export function getAgentCert(id: string): string | null {
+  const r = requireDb().prepare('SELECT agent_cert FROM devices WHERE id = ?').get(id) as
+    | { agent_cert: string | null }
+    | undefined
+  return r?.agent_cert || null
 }
 
 /** Последний снапшот по каждому устройству — одним запросом (для мгновенной отрисовки). */

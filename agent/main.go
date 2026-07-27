@@ -40,6 +40,9 @@ func main() {
 		test     = flag.Bool("test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
 		showVer  = flag.Bool("version", false, "показать версию и выйти")
 		selftest = flag.Bool("selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
+		certDir  = flag.String("cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
+		showFP   = flag.Bool("fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
+		plain    = flag.Bool("no-tls", false, "без TLS — только для отладки на localhost")
 	)
 	flag.Parse()
 
@@ -49,6 +52,26 @@ func main() {
 	}
 	testSource = *test
 	bitrate = *br
+
+	dir := *certDir
+	if dir == "" {
+		dir = filepath.Dir(*tokenF)
+	}
+
+	// Отпечаток печатается ДО всего остального: провижининг Argus читает его по SSH сразу
+	// после установки и запоминает (TOFU), чтобы потом принимать только этот сертификат.
+	if *showFP {
+		cp, _, err := ensureCert(dir)
+		if err != nil {
+			log.Fatalf("сертификат: %v", err)
+		}
+		fp, err := certFingerprint(cp)
+		if err != nil {
+			log.Fatalf("отпечаток: %v", err)
+		}
+		fmt.Printf("sha256:%s\n", fp)
+		return
+	}
 
 	if *selftest {
 		runSelfTest(*fps, *width, *height)
@@ -78,8 +101,22 @@ func main() {
 	if err != nil {
 		log.Fatalf("не удалось занять %s: %v", *addr, err)
 	}
-	log.Printf("argus-agent %s слушает %s (%s/%s, fps=%d)", Version, *addr, runtime.GOOS, runtime.GOARCH, *fps)
-	log.Fatal(httpSrv.Serve(ln))
+
+	if *plain {
+		// Открытый транспорт оставлен только для отладки: по локальной сети токен и картинка
+		// пошли бы без шифрования. В обычной работе этот флаг не используется.
+		log.Printf("argus-agent %s слушает %s БЕЗ TLS (%s/%s, fps=%d)", Version, *addr, runtime.GOOS, runtime.GOARCH, *fps)
+		log.Fatal(httpSrv.Serve(ln))
+	}
+
+	cp, kp, err := ensureCert(dir)
+	if err != nil {
+		log.Fatalf("сертификат: %v", err)
+	}
+	fp, _ := certFingerprint(cp)
+	log.Printf("argus-agent %s слушает %s по TLS (%s/%s, fps=%d, отпечаток sha256:%s)",
+		Version, *addr, runtime.GOOS, runtime.GOARCH, *fps, fp)
+	log.Fatal(httpSrv.ServeTLS(ln, cp, kp))
 }
 
 func defaultTokenFile() string {
@@ -122,7 +159,10 @@ func runSelfTest(fps, w, h int) {
 
 	fmt.Println("проверяю захват (первый рабочий вариант):")
 	st := NewStreamer(fps, w, h)
-	ctx, cancel := contextWithTimeout(25 * time.Second)
+	// Бюджет считаем от ЧИСЛА вариантов: при жёстких 25с перебор не успевал дойти до конца,
+	// и самотест сообщал «<nil>» вместо настоящей причины.
+	budget := time.Duration(len(st.opts)+1) * (firstFrameTimeout + time.Second)
+	ctx, cancel := contextWithTimeout(budget)
 	defer cancel()
 	frames := 0
 	done := make(chan error, 1)
@@ -140,6 +180,15 @@ func runSelfTest(fps, w, h int) {
 		fmt.Printf("захват: РАБОТАЕТ — source=%s encoder=%s (кадров получено: %d)\n", ch.source, ch.encoder, frames)
 		return
 	}
-	fmt.Printf("захват: НЕ РАБОТАЕТ — %v\n", err)
+	reason := "ни один вариант не отдал кадров"
+	if err != nil {
+		reason = err.Error()
+	} else if last := st.LastError(); last != "" {
+		reason = last
+	}
+	if ctx.Err() != nil {
+		reason = "перебор не уложился в отведённое время; последняя ошибка: " + reason
+	}
+	fmt.Printf("захват: НЕ РАБОТАЕТ — %s\n", reason)
 	os.Exit(1)
 }
