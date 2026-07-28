@@ -668,8 +668,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             <Fact label="Где" value={d.country} />
           </div>
           <div className="rounded-lg border border-border bg-card/50 px-3 py-2.5 text-xs text-slate-500">
-            Живые данные (батарея, сигнал, экран) — этап C: KDE Connect для телефона/наушников,
-            WoL/OS-switch для ПК. Пока это карточка-паспорт (модель, доступы, заметки).
+            Для этого типа устройств живых данных пока нет.
           </div>
         </>
       )}

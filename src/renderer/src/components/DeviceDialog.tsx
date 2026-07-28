@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { X, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { ILLUSTRATIONS, defaultIllustrationKey } from '@/lib/illustrations'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
@@ -59,20 +60,118 @@ interface FormFields {
   // (иначе grub-reboot сваливается в нечёткий поиск по ключевому слову → не та ОС).
   altOs: Array<{ os: string; ip: string; user: string; bootEntry?: string }>
   mac: string
+  role: string
+  notes: string
+  /** Загрузочная запись основной ОС — ею переключение выбирает цель. */
+  bootEntry: string
+  /** Портрет: ключ встроенного изображения, data-URL своей картинки или '' = авто. */
+  icon: string
 }
 
 const EMPTY: FormFields = {
   name: '', provider: '', kind: 'server', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
   status: 'online', amount: '', currency: 'USD', consoleUrl: '',
-  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: [], mac: ''
+  authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: [], mac: '',
+  role: '', notes: '', bootEntry: '', icon: ''
 }
 
-function Field({ label, full, children }: { label: string; full?: boolean; children: ReactNode }): React.JSX.Element {
+/**
+ * Поле формы. hint — короткое объяснение: кружок «?» в правом углу подписи, подсказка по
+ * наведению. Без него половину полей приходилось угадывать (что такое jump-host, зачем MAC,
+ * чем «роль» отличается от имени).
+ */
+function Field({
+  label,
+  hint,
+  full,
+  children
+}: {
+  label: string
+  hint?: string
+  full?: boolean
+  children: ReactNode
+}): React.JSX.Element {
   return (
     <label className={cn('block', full && 'col-span-2')}>
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+        {hint && (
+          <span
+            title={hint}
+            aria-label={hint}
+            className="flex h-4 w-4 cursor-help items-center justify-center rounded-full text-[10px] font-bold text-slate-500 ring-1 ring-border hover:text-slate-300 hover:ring-slate-500"
+          >
+            ?
+          </span>
+        )}
+      </span>
       {children}
     </label>
+  )
+}
+
+/** Ряд портретов: встроенные + своя картинка + «авто». */
+function IconPicker({
+  value,
+  kind,
+  role,
+  onPick
+}: {
+  value: string
+  kind: DeviceKind
+  role: string
+  onPick: (v: string) => void
+}): React.JSX.Element {
+  const autoKey = defaultIllustrationKey(kind, role || null)
+  const custom = value.startsWith('data:') ? value : null
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onPick('')}
+        title="Авто — по типу и роли устройства"
+        className={cn(
+          'h-11 w-11 overflow-hidden rounded-lg ring-1 transition-colors',
+          value === '' ? 'ring-2 ring-accent' : 'ring-border hover:ring-slate-500'
+        )}
+      >
+        <img src={ILLUSTRATIONS.find((i) => i.key === autoKey)?.src} alt="авто" className="h-full w-full object-contain opacity-70" />
+      </button>
+      {ILLUSTRATIONS.map((ill) => (
+        <button
+          key={ill.key}
+          type="button"
+          onClick={() => onPick(ill.key)}
+          title={ill.label}
+          className={cn(
+            'h-11 w-11 overflow-hidden rounded-lg ring-1 transition-colors',
+            value === ill.key ? 'ring-2 ring-accent' : 'ring-border hover:ring-slate-500'
+          )}
+        >
+          <img src={ill.src} alt={ill.label} className="h-full w-full object-contain" />
+        </button>
+      ))}
+      {custom && (
+        <button
+          type="button"
+          title="Своя картинка"
+          className="h-11 w-11 overflow-hidden rounded-lg ring-2 ring-accent"
+          onClick={() => onPick(custom)}
+        >
+          <img src={custom} alt="своя" className="h-full w-full object-cover" />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={async () => {
+          const r = await api?.devices.pickIcon()
+          if (r?.ok && r.dataUrl) onPick(r.dataUrl)
+        }}
+        className="h-11 rounded-lg px-3 text-[11px] font-medium text-slate-300 ring-1 ring-border hover:bg-white/5"
+      >
+        Своя картинка…
+      </button>
+    </div>
   )
 }
 
@@ -105,9 +204,12 @@ export function DeviceDialog(): React.JSX.Element | null {
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
-        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry })), mac: d.mac ?? ''
+        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry })), mac: d.mac ?? '',
+        role: d.role ?? '', notes: d.notes ?? '', bootEntry: d.bootEntry ?? '', icon: d.icon ?? ''
       })
-    } else if (dialog.mode === 'new') {
+    } else {
+      // Закрыли диалог — стираем поля. Раньше набранные пароль/ключ оставались в состоянии
+      // React до конца сессии.
       setF(EMPTY)
     }
   }, [dialog])
@@ -205,7 +307,7 @@ export function DeviceDialog(): React.JSX.Element | null {
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
     if (!f.name.trim()) {
-      setError('Name is required')
+      setError('Укажи имя устройства')
       return
     }
     setBusy(true)
@@ -239,7 +341,11 @@ export function DeviceDialog(): React.JSX.Element | null {
           user: a.user.trim() || 'root',
           ...(a.bootEntry ? { bootEntry: a.bootEntry } : {})
         })),
-      mac: f.mac.trim() || null
+      mac: f.mac.trim() || null,
+      role: f.role.trim() || null,
+      notes: f.notes.trim() || null,
+      bootEntry: f.bootEntry.trim() || null,
+      icon: f.icon || null
     }
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
     setBusy(false)
@@ -254,7 +360,7 @@ export function DeviceDialog(): React.JSX.Element | null {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold text-white">{editing ? 'Edit device' : 'Add device'}</h2>
+          <h2 className="text-base font-semibold text-white">{editing ? 'Правка устройства' : 'Новое устройство'}</h2>
           <button
             onClick={close}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
@@ -273,7 +379,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               <textarea
                 value={assistText}
                 onChange={(e) => setAssistText(e.target.value)}
-                placeholder="Вставь что угодно: ssh-строку, конфиг, письмо хостера, заметку — Ollama разберёт в поля"
+                placeholder="ssh user@host -p 2222, конфиг, письмо хостера — разберётся в поля"
                 className={cn(inputCls, 'h-16 resize-y text-xs')}
                 spellCheck={false}
               />
@@ -290,18 +396,18 @@ export function DeviceDialog(): React.JSX.Element | null {
                 {assistMsg && <span className="text-xs text-slate-500">{assistMsg}</span>}
               </div>
               <p className="mt-1.5 text-[11px] text-slate-600">
-                Приватно: текст уходит только в локальную Ollama, не в облако. Поля можно поправить перед сохранением.
+                Разбор идёт локально, текст никуда не отправляется.
               </p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Name" full>
+            <Field label="Имя" full hint="Как устройство будет называться в списке. Только для тебя — на подключение не влияет.">
               <input className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" autoFocus />
             </Field>
-            <Field label="Provider">
+            <Field label="Хостер / владелец" hint="Кто предоставляет машину: Hetzner, OVH, «Дома». Используется для логотипа и группировки расходов.">
               <input className={inputCls} value={f.provider} onChange={set('provider')} placeholder="Hetzner" />
             </Field>
-            <Field label="Тип">
+            <Field label="Тип" hint="Сервер и компьютер получают полный набор: терминал, файлы, порты, метрики, экран. Роутер — только терминал.">
               <select
                 className={inputCls}
                 value={f.kind}
@@ -312,14 +418,28 @@ export function DeviceDialog(): React.JSX.Element | null {
                 ))}
               </select>
             </Field>
-            <Field label="Status">
+            <Field label="Статус" hint="Начальное значение. Дальше приложение определяет состояние само при каждой проверке.">
               <select className={inputCls} value={f.status} onChange={set('status')}>
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Host / IP">
+            <Field label="Портрет" full hint="Картинка на карточке. «Авто» — по типу и роли; можно выбрать из готовых или загрузить свою.">
+              <IconPicker
+                value={f.icon}
+                kind={f.kind}
+                role={f.role}
+                onPick={(v) => setF((p) => ({ ...p, icon: v }))}
+              />
+            </Field>
+            <Field label="Роль" hint="Назначение машины: master, cascade, exit, app, db. Показывается на карточке и подбирает картинку в режиме «авто».">
+              <input className={inputCls} value={f.role} onChange={set('role')} placeholder="app · cockpit" />
+            </Field>
+            <Field label="Загрузочная запись" hint="Нужна только машинам с несколькими ОС, чтобы переключение выбирало нужную. Linux: номер EFI-записи (efibootmgr) либо пункт меню GRUB. Windows: идентификатор вида {xxxxxxxx-…} из bcdedit /enum firmware.">
+              <input className={inputCls} value={f.bootEntry} onChange={set('bootEntry')} placeholder="0002" />
+            </Field>
+            <Field label="Адрес" hint="IP или имя хоста для SSH. Можно адрес в Tailscale (100.x) — так надёжнее, чем публичный IP.">
               <input
                 className={inputCls}
                 value={f.ip}
@@ -330,13 +450,13 @@ export function DeviceDialog(): React.JSX.Element | null {
                 placeholder="203.0.113.10"
               />
             </Field>
-            <Field label="Port">
+            <Field label="Порт" hint="Порт SSH. По умолчанию 22.">
               <input className={inputCls} value={f.port} onChange={set('port')} inputMode="numeric" />
             </Field>
-            <Field label="SSH user">
+            <Field label="Пользователь SSH" hint="Под какой учётной записью подключаться: root, ubuntu, admin.">
               <input className={inputCls} value={f.user} onChange={set('user')} placeholder="root" />
             </Field>
-            <Field label="OS">
+            <Field label="Операционная система" hint="Влияет на то, какие команды шлются: у Windows и Linux они разные. Можно определить кнопкой «Определить по SSH».">
               <input className={inputCls} value={f.os} onChange={set('os')} placeholder="Ubuntu" list="os-list" />
               <datalist id="os-list">
                 {OS_LIST.map((o) => (
@@ -344,26 +464,26 @@ export function DeviceDialog(): React.JSX.Element | null {
                 ))}
               </datalist>
             </Field>
-            <Field label="Country">
+            <Field label="Страна" hint="Заполняется автоматически по IP кнопкой «Гео по IP».">
               <input className={inputCls} value={f.country} onChange={set('country')} placeholder="Japan" />
             </Field>
-            <Field label="Flag">
+            <Field label="Флаг" hint="Эмодзи-флаг для карточки. Подставляется вместе со страной.">
               <input className={inputCls} value={f.flag} onChange={set('flag')} placeholder="🇯🇵" />
             </Field>
-            <Field label="Cost / mo">
+            <Field label="Стоимость в месяц" hint="Идёт в общий счёт расходов на разделе «Финансы». Ноль — если платить не нужно.">
               <input className={inputCls} value={f.amount} onChange={set('amount')} inputMode="decimal" placeholder="5" />
             </Field>
-            <Field label="Currency">
+            <Field label="Валюта" hint="Для общего счёта суммы приводятся к долларам по приблизительному курсу.">
               <select className={inputCls} value={f.currency} onChange={set('currency')}>
                 {CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Hoster console URL" full>
+            <Field label="Панель управления хостера" full hint="Ссылка на панель, где машину можно включить или пересоздать. Открывается кнопкой на карточке — пригодится, когда SSH недоступен.">
               <input className={inputCls} value={f.consoleUrl} onChange={set('consoleUrl')} placeholder="https://…" />
             </Field>
-            <Field label="Jump-host (бастион)" full>
+            <Field label="Промежуточный хост (бастион)" full hint="Если машина доступна только через другой сервер — выбери его здесь. Подключение пойдёт туннелем через него.">
               <select className={inputCls} value={f.jumpId} onChange={set('jumpId')}>
                 <option value="">— нет —</option>
                 {devices
@@ -376,12 +496,12 @@ export function DeviceDialog(): React.JSX.Element | null {
               </select>
             </Field>
             {f.kind === 'pc' && (
-              <Field label="MAC (Wake-on-LAN «Включить»)" full>
+              <Field label="MAC-адрес" full hint="Нужен, чтобы будить машину по сети (Wake-on-LAN). Работает только внутри своей локальной сети — до VPS не доедет.">
                 <input className={inputCls} value={f.mac} onChange={set('mac')} placeholder="18:C0:4D:89:ED:6F" />
               </Field>
             )}
             {(f.kind === 'pc' || f.kind === 'server') && (
-              <Field label="Другие ОС (multi-boot) — тот же ключ" full>
+              <Field label="Другие системы на этой машине" full hint="Для машин с несколькими ОС. Ключ и порт берутся те же, что у основной. Приложение само определит, какая система сейчас запущена.">
                 <div className="space-y-2">
                   {f.altOs.map((a, i) => (
                     <div key={i} className="flex items-center gap-2">
@@ -433,7 +553,15 @@ export function DeviceDialog(): React.JSX.Element | null {
                 </div>
               </Field>
             )}
-            <Field label="Авторизация" full>
+            <Field label="Заметки" full hint="Свободный текст: что на машине крутится, к чему подключена, что не забыть. Виден на карточке.">
+              <textarea
+                className={cn(inputCls, 'h-16 resize-y')}
+                value={f.notes}
+                onChange={set('notes')}
+                placeholder="Что здесь работает, особенности, чего не трогать"
+              />
+            </Field>
+            <Field label="Способ входа" full hint="Пароль или приватный ключ. Всё хранится в зашифрованном виде и наружу не уходит.">
               <div className="flex gap-1 rounded-lg border border-border bg-bg/60 p-1">
                 {(['password', 'key'] as const).map((m) => (
                   <button
@@ -452,13 +580,17 @@ export function DeviceDialog(): React.JSX.Element | null {
             </Field>
 
             {f.authMethod === 'password' ? (
-              <Field label={editing ? 'SSH password (blank = keep current)' : 'SSH password (optional)'} full>
+              <Field
+                label={editing ? 'Пароль SSH (пусто = оставить текущий)' : 'Пароль SSH'}
+                full
+                hint="Хранится в зашифрованном виде и в интерфейс обратно не возвращается. При правке пустое поле означает «не менять»."
+              >
                 <input
                   className={inputCls}
                   type="password"
                   value={f.password}
                   onChange={set('password')}
-                  placeholder="stored encrypted in the vault"
+                  placeholder="хранится в зашифрованном виде"
                 />
               </Field>
             ) : (
@@ -533,7 +665,7 @@ export function DeviceDialog(): React.JSX.Element | null {
           {error && <div className="mt-3 text-xs text-rose-400">{error}</div>}
 
           <div className="mt-5 flex items-center justify-between">
-            <span className="text-[11px] text-slate-600">Secrets are encrypted at rest (SQLCipher).</span>
+            <span className="text-[11px] text-slate-600">Пароли и ключи хранятся в зашифрованном виде.</span>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -548,7 +680,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                 className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
               >
                 {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {editing ? 'Save' : 'Add device'}
+                {editing ? 'Сохранить' : 'Добавить'}
               </button>
             </div>
           </div>

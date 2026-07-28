@@ -250,7 +250,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           <span className="mr-2 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
             {KIND_LABEL[s.kind]}
           </span>
-          {s.notes || 'Паспорт устройства — открой карточку для деталей.'}
+          {s.notes || 'Заметок нет'}
         </div>
       )}
 

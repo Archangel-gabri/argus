@@ -248,9 +248,8 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
       </div>
 
       <p className="text-[11px] leading-relaxed text-slate-600">
-        Просмотр + управление мышью и клавиатурой (Windows), синхронизация буфера обмена. Argus сам включает
-        удалённый доступ по SSH — только в твоей Tailscale-сети. Единый агент для Linux/Wayland и чужих ПК без
-        admin — следующий инкремент.
+        Просмотр и управление мышью и клавиатурой. Удалённый доступ включается по SSH — только внутри
+        твоей Tailscale-сети.
       </p>
     </div>
   )

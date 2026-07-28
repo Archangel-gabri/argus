@@ -25,7 +25,7 @@ export function InsightsPanel(): React.JSX.Element {
         onClick={openCreate}
         className="flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-3 text-sm font-bold text-bg transition-colors hover:bg-accent-hover"
       >
-        <Plus className="h-[18px] w-[18px]" /> Add New Device
+        <Plus className="h-[18px] w-[18px]" /> Добавить устройство
       </button>
 
       <section>
