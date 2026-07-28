@@ -212,6 +212,11 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
         )
   if (!tokWrite.ok) return { ok: false, step: 'токен', error: tokWrite.error || tokWrite.output }
 
+  // 3.5 Проба запуска. Отдельным шагом — чтобы упереться здесь с внятной причиной, а не
+  //     позже с загадочным «exit 1» от следующей команды.
+  const canRun = await checkCanRun(deviceId, os.family)
+  if (!canRun.ok) return { ok: false, step: 'запуск агента', error: canRun.error }
+
   // 4. Сертификат: агент создаёт его сам при первом обращении, а мы забираем ПО SSH —
   //    то есть по уже доверенному каналу. Это и есть момент закрепления (TOFU).
   const certRead =
@@ -258,6 +263,52 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
         : 'агент установлен и отвечает, но захват экрана на этой машине не заработал (см. самотест)'
       : status.error || 'агент установлен, но не отвечает по сети'
   }
+}
+
+/**
+ * Проверка, что залитый бинарь вообще МОЖЕТ быть запущен.
+ *
+ * На Windows 11 со включённым Smart App Control неподписанные программы блокируются политикой
+ * ещё до выполнения кода — и любая следующая команда падает с бессмысленным «exit 1».
+ * Поэтому пробуем `--version` и, если не вышло, спрашиваем систему о причине, чтобы вернуть
+ * пользователю не код возврата, а то, что реально произошло, и что с этим делать.
+ */
+async function checkCanRun(deviceId: string, family: string): Promise<{ ok: boolean; error?: string }> {
+  const probe =
+    family === 'windows'
+      ? await execOnce(deviceId, psCmd(`& "$env:LOCALAPPDATA\\Argus\\argus-agent.exe" --version 2>&1 | Out-String`))
+      : await execOnce(deviceId, `"$HOME/.argus/argus-agent" --version 2>&1`)
+
+  if (probe.ok && /argus-agent/i.test(probe.output)) return { ok: true }
+
+  if (family === 'windows') {
+    const sac = await execOnce(
+      deviceId,
+      psCmd(
+        `(Get-ItemProperty "HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy" -EA 0).VerifiedAndReputablePolicyState`
+      )
+    )
+    // 1 = включён и применяется, 2 = режим оценки (тоже может блокировать).
+    // Ищем построчно: PowerShell подмешивает в вывод служебный CLIXML, и строгое
+    // совпадение по всему тексту не срабатывало — проверено на живой машине.
+    const sacOn = (sac.output || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .some((l) => l === '1' || l === '2')
+    if (sacOn) {
+      return {
+        ok: false,
+        error:
+          'Windows Smart App Control заблокировал агент: он пропускает только подписанные и уже известные ему программы, ' +
+          'а наш бинарь неподписанный. Локального исключения для файла эта политика не предусматривает. ' +
+          'Варианты: отключить Smart App Control (Безопасность Windows → Управление приложениями и браузером) — ' +
+          'ВНИМАНИЕ, обратно он включается только переустановкой Windows; либо оставить запасной путь через RDP, ' +
+          'он работает и агента не требует.'
+      }
+    }
+  }
+  const detail = (probe.output || probe.error || '').trim().slice(0, 300)
+  return { ok: false, error: `агент не запускается на машине: ${detail || 'причина неизвестна'}` }
 }
 
 /** Автозапуск: systemd --user на Linux, launchd на macOS, планировщик задач на Windows. */
