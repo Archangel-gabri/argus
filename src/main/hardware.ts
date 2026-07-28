@@ -7,7 +7,10 @@ import { whichOs } from './pc'
 import { getDeviceHardware, setDeviceHardware } from './vault'
 import type { HardwareInfo, DiskInfo } from './types'
 
-const LINUX_HW_CMD = [
+// LC_ALL=C обязателен: разбор ищет английские подписи («Model name», «Core(s) per socket»),
+// а на локализованном хосте lscpu печатает «Имя модели:» — и весь инвентарь выходил пустым
+// на совершенно обычных Arch и Ubuntu с русской локалью.
+const LINUX_HW_CMD = ['export LC_ALL=C',
   `echo @@OS; { . /etc/os-release 2>/dev/null; echo "$PRETTY_NAME"; }; uname -r; uname -m; hostname 2>/dev/null; (systemd-detect-virt 2>/dev/null || echo none)`,
   `echo @@CPU; lscpu 2>/dev/null`,
   `echo @@RAM; grep MemTotal /proc/meminfo`,

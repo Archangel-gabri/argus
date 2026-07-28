@@ -6,17 +6,23 @@ import type { LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
 
 const SAMPLE_SEC = 0.7
 
-export const LINUX_PROBE_V2 = [
+// LC_ALL=C по той же причине, что и в инвентаре: локализованные заголовки df/ps ломают разбор.
+export const LINUX_PROBE_V2 = ['export LC_ALL=C',
   `echo @@S1; grep '^cpu' /proc/stat; echo @@N1; cat /proc/net/dev; echo @@D1; cat /proc/diskstats`,
   `sleep ${SAMPLE_SEC}`,
   `echo @@S2; grep '^cpu' /proc/stat; echo @@N2; cat /proc/net/dev; echo @@D2; cat /proc/diskstats`,
   `echo @@LOAD; cat /proc/loadavg`,
   `echo @@MEM; grep -E '^(MemTotal|MemAvailable|Buffers|Cached|SReclaimable|SwapTotal|SwapFree):' /proc/meminfo`,
-  `echo @@MOUNTS; df -P -x tmpfs -x devtmpfs -x overlay -x squashfs 2>/dev/null`,
+  // ВАЖНО про df: `-P` на BSD и macOS означает блоки по 512 БАЙТ, а не по 1024 — без явного
+  // `-k` цифры там выходят вдвое меньше настоящих, причём молча. Флага `-x` на BSD/macOS нет
+  // вовсе, поэтому исключаем служебные ФС уже при разборе, а не флагом.
+  `echo @@MOUNTS; df -k -P 2>/dev/null`,
   `echo @@UP; cat /proc/uptime`,
   `echo @@TEMP; { for z in /sys/class/thermal/thermal_zone*/temp; do [ -r "$z" ] && cat "$z"; done; command -v sensors >/dev/null 2>&1 && sensors -u 2>/dev/null | awk -F: '/temp[0-9]+_input/{print $2}'; } 2>/dev/null`,
   `echo @@GPU; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits 2>/dev/null`,
-  `echo @@TOP; ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -9`,
+  // `--sort` есть только у GNU ps; на BSD и macOS сортировка по CPU это `-r`, а `-e` там
+  // значит другое. Пробуем GNU-форму, при неудаче — переносимую.
+  `echo @@TOP; ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -9 || ps -axco pcpu,pmem,comm -r 2>/dev/null | head -9`,
   `echo @@END`
 ].join('; ')
 
@@ -123,7 +129,10 @@ function parseMounts(lines: string[]): { mounts: MountInfo[]; root?: number } {
   for (const l of lines) {
     const t = l.trim().split(/\s+/)
     if (t.length < 6 || t[0] === 'Filesystem') continue
-    const blocks = num(t[1]) // KiB (df -P)
+    // Служебные ФС отсеиваем здесь, а не флагом `-x`: его нет на BSD и macOS.
+    if (/^(tmpfs|devtmpfs|overlay|squashfs|devfs|procfs|linprocfs|linsysfs|fdescfs|none|udev|map\b)/i.test(t[0]))
+      continue
+    const blocks = num(t[1]) // килобайты: команда идёт с явным -k (см. комментарий у зонда)
     const usedKb = num(t[2])
     const usedPct = num(t[4].replace('%', ''))
     const mount = t.slice(5).join(' ')

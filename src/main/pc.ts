@@ -313,11 +313,24 @@ const WIN_SUSPEND_CMD = `powershell.exe -NoProfile -NonInteractive -EncodedComma
 // графической сессии (Steam-стрим, KDE Connect, запись экрана и т.п.). Финальное плечо —
 // прямой sudo poweroff/reboot на случай отсутствия systemctl. Windows: /f = force (не давать
 // приложениям заблокировать); shutdown.exe без $-переменных — устойчив под PowerShell-DefaultShell.
+// Команды питания для юникс-семейства. systemctl есть ТОЛЬКО в Linux — на macOS и FreeBSD
+// его нет вовсе, и прежняя версия слала туда заведомо несуществующую команду.
+// Порядок в цепочке: systemd → BSD/macOS shutdown → голый reboot/poweroff.
+// Тонкости, из-за которых цепочка именно такая:
+//   FreeBSD: выключение это `shutdown -p now` (-h только останавливает, питание остаётся);
+//   macOS:   сон это `shutdown -s now` (root) либо `pmset sleepnow` — последний работает без sudo;
+//   FreeBSD: сон — `zzz`, обёртка над ACPI/APM, либо напрямую `acpiconf -s3` (нужен root).
 const CMD = {
   linux: {
-    reboot: 'sudo -n systemctl reboot -i 2>/dev/null || systemctl reboot -i 2>/dev/null || sudo -n reboot',
-    poweroff: 'sudo -n systemctl poweroff -i 2>/dev/null || systemctl poweroff -i 2>/dev/null || sudo -n poweroff',
-    suspend: 'sudo -n systemctl suspend -i 2>/dev/null || systemctl suspend -i'
+    reboot:
+      'sudo -n systemctl reboot -i 2>/dev/null || systemctl reboot -i 2>/dev/null || ' +
+      'sudo -n shutdown -r now 2>/dev/null || sudo -n reboot',
+    poweroff:
+      'sudo -n systemctl poweroff -i 2>/dev/null || systemctl poweroff -i 2>/dev/null || ' +
+      'sudo -n shutdown -p now 2>/dev/null || sudo -n shutdown -h now 2>/dev/null || sudo -n poweroff',
+    suspend:
+      'sudo -n systemctl suspend -i 2>/dev/null || systemctl suspend -i 2>/dev/null || ' +
+      'pmset sleepnow 2>/dev/null || sudo -n zzz 2>/dev/null || sudo -n acpiconf -s3'
   },
   windows: {
     reboot: 'shutdown.exe /r /t 0 /f',

@@ -167,36 +167,49 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
   const conn = await resolveConn(deviceId)
   if (!conn) return { ok: false, step: 'связь', error: 'не удалось определить адрес' }
 
-  // Архитектуру спрашиваем у самой машины — гадать нельзя.
+  // Архитектуру И семейство спрашиваем у самой машины.
+  //
+  // Так надо, потому что whichOs различает всего две семьи: всё, что не Windows, считается Linux.
+  // Из-за этого сюда НИКОГДА не приезжал 'darwin' — заливался linux-бинарь, а ветка установки
+  // через launchd была недостижимым кодом. То есть заявленная поддержка macOS не работала бы,
+  // и выяснилось бы это только у пользователя.
   const archProbe =
     os.family === 'windows'
       ? await execOnce(deviceId, psCmd('$env:PROCESSOR_ARCHITECTURE'))
-      : await execOnce(deviceId, 'uname -m')
-  const rawArch = (archProbe.output || '').trim().toLowerCase()
-  const arch = /arm64|aarch64/.test(rawArch) ? 'arm64' : 'amd64'
+      : await execOnce(deviceId, 'uname -s; uname -m')
+  const raw = (archProbe.output || '').trim().toLowerCase()
+  const arch = /arm64|aarch64/.test(raw) ? 'arm64' : 'amd64'
+  const family =
+    os.family === 'windows' ? 'windows' : /darwin/.test(raw) ? 'darwin' : /bsd/.test(raw) ? 'freebsd' : 'linux'
 
-  const bin = binaryFor(os.family, arch)
-  if (!bin)
-    return { ok: false, step: 'бинарь', error: `нет собранного агента под ${os.family}/${arch}` }
+  if (family === 'freebsd')
+    return {
+      ok: false,
+      step: 'платформа',
+      error: 'для FreeBSD агент пока не собирается — доступен запасной путь через терминал'
+    }
 
-  const p = targetPaths(os.family)
+  const bin = binaryFor(family, arch)
+  if (!bin) return { ok: false, step: 'бинарь', error: `нет собранного агента под ${family}/${arch}` }
+
+  const p = targetPaths(family)
   const token = getAgentToken(deviceId) || crypto.randomBytes(32).toString('hex')
 
   // 1. Каталог
   const mk =
-    os.family === 'windows'
+    family === 'windows'
       ? await execOnce(deviceId, psCmd(`New-Item -ItemType Directory -Force -Path "$env:LOCALAPPDATA\\Argus" | Out-Null; 'ok'`))
       : await execOnce(deviceId, `mkdir -p "$HOME/.argus" && chmod 700 "$HOME/.argus" && echo ok`)
   if (!mk.ok) return { ok: false, step: 'каталог', error: mk.error || mk.output }
 
   // 2. Бинарь (SFTP)
-  const up = await uploadFile(deviceId, bin, os.family === 'windows' ? 'argus-agent.exe' : 'argus-agent', os.family)
+  const up = await uploadFile(deviceId, bin, family === 'windows' ? 'argus-agent.exe' : 'argus-agent', family)
   if (!up.ok) return { ok: false, step: 'загрузка агента', error: up.error }
 
   // 3. Токен — файлом с правами только для владельца, не через командную строку
   //    (аргументы процесса видны всей системе в списке процессов).
   const tokWrite =
-    os.family === 'windows'
+    family === 'windows'
       ? await execOnce(
           deviceId,
           psCmd(
@@ -214,13 +227,13 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
 
   // 3.5 Проба запуска. Отдельным шагом — чтобы упереться здесь с внятной причиной, а не
   //     позже с загадочным «exit 1» от следующей команды.
-  const canRun = await checkCanRun(deviceId, os.family)
+  const canRun = await checkCanRun(deviceId, family)
   if (!canRun.ok) return { ok: false, step: 'запуск агента', error: canRun.error }
 
   // 4. Сертификат: агент создаёт его сам при первом обращении, а мы забираем ПО SSH —
   //    то есть по уже доверенному каналу. Это и есть момент закрепления (TOFU).
   const certRead =
-    os.family === 'windows'
+    family === 'windows'
       ? await execOnce(
           deviceId,
           psCmd(
@@ -237,12 +250,12 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
     return { ok: false, step: 'сертификат', error: 'агент не отдал сертификат: ' + (certRead.error || pem).slice(0, 200) }
 
   // 5. Автозапуск
-  const svc = await installService(deviceId, os.family, p)
+  const svc = await installService(deviceId, family, p)
   if (!svc.ok) return { ok: false, step: 'автозапуск', error: svc.error }
 
   // 5. Самотест — единственный честный критерий «работает»
   const st =
-    os.family === 'windows'
+    family === 'windows'
       ? await execOnce(deviceId, psCmd(`& "$env:LOCALAPPDATA\\Argus\\argus-agent.exe" --selftest 2>&1 | Out-String`))
       : await execOnce(deviceId, `"$HOME/.argus/argus-agent" --selftest 2>&1`)
 

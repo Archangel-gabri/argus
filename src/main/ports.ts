@@ -12,7 +12,11 @@ export interface ListeningPort {
   bind: 'loopback' | 'wildcard' | 'other'
 }
 
-const LIST_CMD = `sudo -n ss -H -lntup 2>/dev/null || ss -H -lntup 2>/dev/null || echo ARGUS_NO_SS`
+// `ss` есть только в Linux. На FreeBSD слушающие сокеты показывает sockstat (обычно без root),
+// на macOS — lsof (без root видно только свои сокеты, чужие процессы требуют прав).
+const LIST_CMD =
+  `sudo -n ss -H -lntup 2>/dev/null || ss -H -lntup 2>/dev/null || ` +
+  `sockstat -46l 2>/dev/null || lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null || echo ARGUS_NO_SS`
 
 function classifyBind(addr: string): ListeningPort['bind'] {
   if (/^(0\.0\.0\.0|\*|::|\[::\])$/.test(addr)) return 'wildcard'
@@ -113,6 +117,16 @@ export async function listListening(
   }
   const r = await execOnce(deviceId, LIST_CMD)
   if (!r.ok) return { ok: false, ports: [], error: r.error }
-  if (r.output.includes('ARGUS_NO_SS')) return { ok: false, ports: [], error: 'ss/netstat недоступны на хосте' }
-  return { ok: true, ports: parseSs(r.output) }
+  if (r.output.includes('ARGUS_NO_SS'))
+    return { ok: false, ports: [], error: 'на хосте нет ни ss, ни sockstat, ни lsof' }
+  const parsed = parseSs(r.output)
+  // Формат sockstat/lsof другой — разбор ss ничего не найдёт. Честно говорим об этом,
+  // а не показываем пустой список как «портов нет».
+  if (!parsed.length)
+    return {
+      ok: false,
+      ports: [],
+      error: 'список получен, но в формате этой ОС (sockstat/lsof) — разбор пока только для ss и Windows'
+    }
+  return { ok: true, ports: parsed }
 }
