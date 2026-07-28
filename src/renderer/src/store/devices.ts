@@ -170,7 +170,12 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     if (metricsInFlight) return
     metricsInFlight = true
     try {
-      const eligible = get().devices.filter((d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0)
+      // Windows-машина идёт по своей ветке, даже если вторая ОС не заведена: Linux-зонд на ней
+      // возвращал мусор, который разбирался в нули и выглядел как настоящие метрики.
+      const isWin = (d: { os: string }): boolean => /win/i.test(d.os)
+      const eligible = get().devices.filter(
+        (d) => d.hasSecret && !d.ip.includes('x.x') && d.altOs.length === 0 && !isWin(d)
+      )
       await Promise.all(
         eligible.map(async (d) => {
           // Хост, который быстрая проверка уже уверенно признала мёртвым, полным опросом не
@@ -190,7 +195,10 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   // Dual-boot: живая ОС + метрики этой ОS (OS-aware) → статус + runningOs + cpu/ram/disk/uptime.
   refreshOsStatus: async () => {
     if (!api) return
-    const pcs = get().devices.filter((d) => d.altOs.length > 0)
+    // Сюда же попадают одиночные Windows-хосты — у них OS-aware путь единственно верный.
+    const pcs = get().devices.filter(
+      (d) => d.altOs.length > 0 || (/win/i.test(d.os) && d.hasSecret && !d.ip.includes('x.x'))
+    )
     await Promise.all(
       pcs.map(async (d) => {
         const r = await api.pc.metrics(d.id)

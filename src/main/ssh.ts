@@ -384,8 +384,26 @@ export function probe(deviceId: string): Promise<ProbeResult> {
           return
         }
         let out = ''
+        let code: number | null = null
         stream.on('data', (d: Buffer) => (out += d.toString()))
-        stream.on('close', () => done(liveToProbe(parseProbeV2(out))))
+        stream.on('exit', (c: number) => (code = c))
+        stream.on('close', () => {
+          // Раньше код возврата игнорировался, и ответ ЛЮБОГО шелла считался успехом. На
+          // Windows-машине без второй ОС этот Linux-зонд возвращал мусор, который разбирался
+          // в нули — и карточка бодро показывала «online · CPU 0% · 0/0 ГБ». Это хуже ошибки:
+          // выглядит как настоящие данные и засоряет историю ровными нулями.
+          const m = parseProbeV2(out)
+          const parsed = m.ramTotal > 0 || m.cpu > 0 || (m.uptime ?? 0) > 0
+          if ((code !== null && code !== 0) || !parsed) {
+            done({
+              ok: false,
+              status: 'offline',
+              error: 'зонд не дал данных — возможно, на хосте другая ОС (Windows определяется отдельной веткой)'
+            })
+            return
+          }
+          done(liveToProbe(m))
+        })
       })
     })
     client.on('error', (e) => done({ ok: false, status: 'offline', error: e.message }))

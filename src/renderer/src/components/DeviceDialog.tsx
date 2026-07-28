@@ -202,7 +202,7 @@ export function DeviceDialog(): React.JSX.Element | null {
         name: d.name, provider: d.provider, kind: d.kind, ip: d.ip, port: String(d.port), user: d.user, os: d.os,
         country: d.country, flag: d.flag, status: d.status,
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
-        consoleUrl: d.consoleUrl, authMethod: d.authType === 'key' ? 'key' : 'password',
+        consoleUrl: d.consoleUrl, authMethod: d.authType,
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
         altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry })), mac: d.mac ?? '',
         role: d.role ?? '', notes: d.notes ?? '', bootEntry: d.bootEntry ?? '', icon: d.icon ?? ''
@@ -325,6 +325,8 @@ export function DeviceDialog(): React.JSX.Element | null {
       status: f.status,
       cost: { amount: parseFloat(f.amount) || 0, currency: f.currency, usd: 0 },
       consoleUrl: f.consoleUrl.trim(),
+      // 'none' сохраняем как есть: раньше открыть и сохранить устройство без учётки было
+      // достаточно, чтобы оно объявило себя парольным — с пустым паролем.
       authType: f.authMethod,
       // Blank on edit = keep the stored secret; only send what belongs to the chosen method.
       password: f.authMethod === 'password' ? (f.password ? f.password : null) : undefined,
@@ -638,7 +640,9 @@ export function DeviceDialog(): React.JSX.Element | null {
                 disabled={
                   probing ||
                   !f.ip.trim() ||
-                  (f.authMethod === 'password' ? !f.password : !f.privateKey)
+                  // При правке секрет уже лежит в хранилище, поля пустые намеренно — раньше из-за
+                  // этого кнопка была мертва ровно там, где она нужнее всего.
+                  (!editing && (f.authMethod === 'password' ? !f.password : !f.privateKey))
                 }
                 className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover disabled:opacity-50"
               >

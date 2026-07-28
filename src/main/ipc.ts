@@ -181,7 +181,8 @@ export function registerIpc(): void {
   ipcMain.handle('metrics:live', async (_e, deviceId: unknown) => {
     const id = asString(deviceId)
     const dev = vault.isUnlocked() ? vault.listDevices().find((d) => d.id === id) : undefined
-    if (dev && dev.altOs.length > 0) {
+    // Windows без второй ОС тоже обслуживается OS-aware веткой (см. store/devices.ts).
+    if (dev && (dev.altOs.length > 0 || /win/i.test(dev.os))) {
       const r = await pc.metrics(id)
       return { ok: r.family !== 'off', family: r.family, os: r.current, metrics: r.metrics ?? null }
     }
