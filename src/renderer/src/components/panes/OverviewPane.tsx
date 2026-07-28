@@ -575,7 +575,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
           className="pointer-events-none absolute inset-x-12 bottom-3 h-20"
           style={{ background: 'radial-gradient(ellipse at center, var(--color-glow) 0%, transparent 70%)' }}
         />
-        <img src={deviceIllustration(d.kind, d.role)} alt="" className="mx-auto h-full object-contain py-3" draggable={false} />
+        <img src={deviceIllustration(d.kind, d.role, d.icon)} alt="" className="mx-auto h-full object-contain py-3" draggable={false} />
         <div className="absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/40 px-2 py-1 backdrop-blur-sm">
           <span className={cn('h-1.5 w-1.5 rounded-full', st.dot, d.status === 'reboot' && 'animate-pulse')} />
           <span className={cn('text-[11px] font-medium leading-none', st.text)}>{st.label}</span>

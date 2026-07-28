@@ -5,7 +5,6 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
-import { SEED_DEVICES } from './seed'
 import type {
   AuthType,
   AltBoot,
@@ -42,7 +41,7 @@ const toUsd = (amount: number, currency: string): number =>
 const COLUMNS = [
   'id', 'name', 'provider', 'role', 'kind', 'ip', 'port', 'user', 'country', 'flag', 'os', 'status',
   'cpu', 'ram_used', 'ram_total', 'cost_amount', 'cost_currency', 'cost_usd', 'console_url',
-  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'alt', 'mac', 'sort', 'created_at', 'updated_at'
+  'auth_type', 'secret_password', 'secret_key', 'secret_passphrase', 'notes', 'jump_id', 'alt', 'mac', 'icon', 'boot_entry', 'sort', 'created_at', 'updated_at'
 ] as const
 const INSERT_SQL = `INSERT INTO devices (${COLUMNS.join(',')}) VALUES (${COLUMNS.map((c) => '@' + c).join(',')})`
 
@@ -132,6 +131,20 @@ function migrate(d: Database.Database): void {
   // Закреплённый отпечаток TLS-сертификата агента (TOFU, как host-key у SSH).
   try {
     d.exec('ALTER TABLE devices ADD COLUMN agent_cert TEXT')
+  } catch {
+    /* column already exists */
+  }
+  // Загрузочная запись ОСНОВНОЙ ОС (EFI-идентификатор или пункт меню загрузчика).
+  // Без неё переключение ОС из Windows не могло указать цель.
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN boot_entry TEXT')
+  } catch {
+    /* column already exists */
+  }
+  // Портрет устройства: ключ встроенного изображения либо data-URL своей картинки.
+  // До этого картинка выводилась из типа и роли, и пользователь не мог её сменить.
+  try {
+    d.exec('ALTER TABLE devices ADD COLUMN icon TEXT')
   } catch {
     /* column already exists */
   }
@@ -308,6 +321,8 @@ function loadLocalFleet(): DeviceRow[] | null {
         return clean.length ? JSON.stringify(clean) : null
       })(),
       mac: d.mac || null,
+      icon: null,
+      boot_entry: null,
       sort: i,
       created_at: now,
       updated_at: now
@@ -315,33 +330,25 @@ function loadLocalFleet(): DeviceRow[] | null {
   })
 }
 
+/**
+ * Первичное наполнение базы.
+ *
+ * ДЕМО-ФЛОТ УБРАН НАМЕРЕННО. Раньше сюда писался список из seed.ts — реальная инфраструктура
+ * автора (имена, хостеры, роли, цены, ссылки на панели управления). Для приложения, которое
+ * выкладывается в open source, это и утечка чужих данных, и негодное первое впечатление:
+ * новый пользователь видел шесть чужих серверов вместо пустого экрана со своими действиями.
+ *
+ * Осталась только загрузка СВОЕГО fleet.local.json — это осознанный локальный файл владельца,
+ * его в поставке нет.
+ */
 function seedInto(d: Database.Database): void {
-  const now = Date.now()
+  const local = loadLocalFleet()
+  if (!local || local.length === 0) return
   const stmt = d.prepare(INSERT_SQL)
   const insertAll = d.transaction((rows: DeviceRow[]) => {
     for (const r of rows) stmt.run(r)
   })
-  const local = loadLocalFleet()
-  const rows =
-    local ??
-    SEED_DEVICES.map(
-      (s, i): DeviceRow => ({
-        ...s,
-        kind: 'server',
-        auth_type: 'none',
-        secret_password: null,
-        secret_key: null,
-        secret_passphrase: null,
-        notes: null,
-        jump_id: null,
-        alt: null,
-        mac: null,
-        sort: i,
-        created_at: now,
-        updated_at: now
-      })
-    )
-  insertAll(rows)
+  insertAll(local)
 }
 
 export async function initialize(password: string): Promise<void> {
@@ -500,6 +507,8 @@ function toDTO(r: DeviceRow): DeviceDTO {
     jumpId: r.jump_id,
     altOs: parseAltOs(r.alt),
     mac: r.mac,
+    icon: r.icon ?? null,
+    bootEntry: r.boot_entry ?? null,
     hasScreenSecret: Boolean(r.screen_password)
   }
 }
@@ -633,6 +642,8 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     jump_id: input.jumpId ?? null,
     alt: input.altOs && input.altOs.length ? JSON.stringify(input.altOs) : null,
     mac: input.mac || null,
+    icon: input.icon || null,
+    boot_entry: input.bootEntry || null,
     sort: nextSort,
     created_at: now,
     updated_at: now
@@ -695,6 +706,8 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     jump_id: input.jumpId !== undefined ? input.jumpId : cur.jump_id,
     alt: input.altOs !== undefined ? (input.altOs.length ? JSON.stringify(input.altOs) : null) : cur.alt,
     mac: input.mac !== undefined ? input.mac || null : cur.mac,
+    icon: input.icon !== undefined ? input.icon || null : (cur.icon ?? null),
+    boot_entry: input.bootEntry !== undefined ? input.bootEntry || null : (cur.boot_entry ?? null),
     updated_at: Date.now()
   }
   d.prepare(
@@ -716,6 +729,8 @@ export function deleteDevice(id: string): boolean {
   const d = requireDb()
   const tx = d.transaction((deviceId: string): boolean => {
     d.prepare('DELETE FROM metric_snapshots WHERE device_id = ?').run(deviceId)
+    // Кэш комплектующих тоже принадлежит устройству — иначе оставались висячие строки.
+    d.prepare('DELETE FROM device_hardware WHERE device_id = ?').run(deviceId)
     d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(deviceId, deviceId)
     // Устройства, для которых удаляемый был бастионом, теряют jump — иначе висячий jump_id
     // ломает им подключение.
@@ -805,9 +820,17 @@ export interface OsEndpoint {
  *  (тот же ключ). Primary = device.ip/os; далее — каждый altOs. Для whichOs/metrics/boot. */
 export function getOsEndpoints(id: string): OsEndpoint[] {
   const r = requireDb()
-    .prepare('SELECT ip, port, user, os, auth_type, secret_password, secret_key, secret_passphrase, alt FROM devices WHERE id = ?')
-    .get(id) as (ConnRow & { os: string; alt: string | null }) | undefined
+    .prepare(
+      'SELECT ip, port, user, os, boot_entry, auth_type, secret_password, secret_key, secret_passphrase, alt, jump_id FROM devices WHERE id = ?'
+    )
+    .get(id) as
+    | (ConnRow & { os: string; boot_entry: string | null; alt: string | null; jump_id: string | null })
+    | undefined
   if (!r) return []
+  // Jump-host обязателен и здесь. Без него устройство за бастионом было НАВСЕГДА «офлайн»:
+  // быстрая проверка живости ходит именно через getOsEndpoints, ломилась напрямую и промахивалась,
+  // а полный опрос такие хосты потом пропускал как заведомо мёртвые.
+  const jump = getDeviceConn(id)?.jump
   const mkConn = (host: string, user: string): DeviceConn => {
     const c: DeviceConn = {
       host,
@@ -820,10 +843,14 @@ export function getOsEndpoints(id: string): OsEndpoint[] {
       c.privateKey = r.secret_key
       c.passphrase = r.secret_passphrase
     }
+    if (jump) c.jump = jump
     return c
   }
   const out: OsEndpoint[] = []
-  if (r.ip && !r.ip.includes('x.x')) out.push({ os: r.os || '', conn: mkConn(r.ip, r.user) })
+  // У ОСНОВНОЙ ОС тоже есть своя загрузочная запись: без неё переключение «из Windows в Linux»
+  // не могло указать цель — Linux у двухзагрузочной машины обычно как раз основная система.
+  if (r.ip && !r.ip.includes('x.x'))
+    out.push({ os: r.os || '', bootEntry: r.boot_entry ?? undefined, conn: mkConn(r.ip, r.user) })
   const alts = parseAltOs(r.alt)
   for (const a of alts) out.push({ os: a.os, bootEntry: a.bootEntry, conn: mkConn(a.ip, a.user) })
   return out

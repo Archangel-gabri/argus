@@ -15,6 +15,7 @@ const api = {
   devices: {
     list: () => ipcRenderer.invoke('devices:list'),
     liveness: () => ipcRenderer.invoke('devices:liveness'),
+    pickIcon: () => ipcRenderer.invoke('devices:pickIcon'),
     create: (input: unknown) => ipcRenderer.invoke('devices:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('devices:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('devices:delete', id),

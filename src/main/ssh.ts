@@ -269,6 +269,15 @@ export function closeAll(): void {
 }
 
 function cleanup(id: string): void {
+  // Раньше сессия просто выбрасывалась из карты, а само SSH-соединение оставалось жить с
+  // keep-alive до конца работы приложения. Каждый `exit` в терминале утекал одним соединением,
+  // и закрыть его было уже нечем: по id сессии в карте больше нет.
+  const s = sessions.get(id)
+  try {
+    s?.client.end()
+  } catch {
+    /* уже закрыт */
+  }
   sessions.delete(id)
 }
 

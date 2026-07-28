@@ -45,6 +45,10 @@ export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<R
   const eps = getOsEndpoints(deviceId)
   const conns = eps.length ? eps.map((e) => e.conn) : [getDeviceConn(deviceId)].filter((c) => c !== null)
   if (!conns.length) return { up: false, ms: 0 }
+  // Хост за бастионом напрямую недостижим по определению: прямая TCP-проба всегда промахнётся
+  // и пометила бы устройство мёртвым. Такие проверяем только полным опросом, который умеет
+  // ходить туннелем, — а здесь честно говорим «не знаю», не роняя статус.
+  if (conns.some((c) => c.jump)) return { up: true, ms: 0 }
   const results = await Promise.all(conns.map((c) => tcpAlive(c.host, c.port, timeoutMs)))
   const alive = results.filter((r) => r.up)
   return alive.length

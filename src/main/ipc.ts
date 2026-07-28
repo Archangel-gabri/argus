@@ -1,4 +1,5 @@
-import { ipcMain, safeStorage, BrowserWindow, clipboard } from 'electron'
+import { ipcMain, safeStorage, BrowserWindow, clipboard, dialog } from 'electron'
+import { promises as fsp } from 'node:fs'
 import * as vault from './vault'
 import * as ssh from './ssh'
 import * as sftp from './sftp'
@@ -79,6 +80,32 @@ export function registerIpc(): void {
   // Быстрая живость по всему парку: TCP-коннект вместо полного SSH-опроса (мс вместо секунд).
   // Зовётся сразу после входа, чтобы точки «онлайн» загорались мгновенно, а не через минуту.
   ipcMain.handle('devices:liveness', async () => (vault.isUnlocked() ? fleetReach() : {}))
+
+  // Своя картинка устройства. Храним data-URL прямо в записи: файлов на диске не плодим,
+  // портрет уезжает вместе с устройством при экспорте, а CSP уже разрешает data:.
+  ipcMain.handle('devices:pickIcon', async (e) => {
+    const opts: Electron.OpenDialogOptions = {
+      title: 'Картинка устройства',
+      properties: ['openFile'],
+      filters: [{ name: 'Изображения', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] }]
+    }
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths.length) return { ok: false, error: 'отменено' }
+    const file = res.filePaths[0]
+    try {
+      const buf = await fsp.readFile(file)
+      // 3 МБ — предел здравого смысла для портрета: больше в базе держать незачем.
+      if (buf.byteLength > 3 * 1024 * 1024)
+        return { ok: false, error: 'файл больше 3 МБ — возьми картинку полегче' }
+      const ext = (file.split('.').pop() || 'png').toLowerCase()
+      const mime =
+        ext === 'svg' ? 'image/svg+xml' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`
+      return { ok: true, dataUrl: `data:${mime};base64,${buf.toString('base64')}` }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  })
 
   ipcMain.handle('devices:list', (e) => {
     if (!vault.isUnlocked()) return []
@@ -242,8 +269,15 @@ export function registerIpc(): void {
   ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
     const r = await pc.metrics(asString(id))
     // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).
-    if (vault.isUnlocked() && r.family !== 'off') {
-      vault.recordSnapshot(asString(id), { cpu: r.cpu, ramUsed: r.ramUsed, ramTotal: r.ramTotal, status: r.family })
+    // Выключенный ПК записываем ТОЖЕ, только статусом: иначе кэш последнего состояния воскрешал
+    // его как «online» после перезапуска приложения, а в истории не оставалось провала.
+    if (vault.isUnlocked()) {
+      vault.recordSnapshot(
+        asString(id),
+        r.family === 'off'
+          ? { status: 'off' }
+          : { cpu: r.cpu, ramUsed: r.ramUsed, ramTotal: r.ramTotal, status: r.family }
+      )
     }
     return r
   })

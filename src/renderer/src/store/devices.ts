@@ -76,7 +76,30 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     const r = await api.devices.update(id, input)
     if (r.ok && r.device) {
       const updated = r.device
-      set({ devices: get().devices.map((d) => (d.id === id ? updated : d)) })
+      // Сливаем, а не подменяем: в ответе из базы нет эфемерных данных (какая ОС запущена,
+      // аптайм, диск, температура, сеть), и полная замена стирала бы их с карточки после
+      // любого сохранения — вплоть до следующего полного опроса.
+      set({
+        devices: get().devices.map((d) =>
+          d.id === id
+            ? {
+                ...d,
+                ...updated,
+                status: d.status,
+                runningOs: d.runningOs,
+                disk: d.disk,
+                uptime: d.uptime,
+                load1: d.load1,
+                netRx: d.netRx,
+                netTx: d.netTx,
+                swapUsed: d.swapUsed,
+                swapTotal: d.swapTotal,
+                tempCpu: d.tempCpu,
+                lastSeen: d.lastSeen
+              }
+            : d
+        )
+      })
     }
     return { ok: r.ok, error: r.error }
   },

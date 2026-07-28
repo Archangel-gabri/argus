@@ -56,6 +56,8 @@ export interface ArgusApi {
     list: () => Promise<DeviceDTO[]>
     /** Быстрая TCP-живость по всему парку: id → { up, ms }. Мс вместо секунд. */
     liveness: () => Promise<Record<string, { up: boolean; ms: number }>>
+    /** Диалог выбора своей картинки устройства → data-URL. */
+    pickIcon: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
     create: (input: DeviceInput) => Promise<DeviceResult>
     update: (id: string, input: DeviceInput) => Promise<DeviceResult>
     remove: (id: string) => Promise<{ ok: boolean; error?: string }>

@@ -24,10 +24,47 @@ const BY_KIND: Partial<Record<DeviceKind, string>> = {
   router
 }
 
-export function deviceIllustration(kind: DeviceKind, role: string | null): string {
+/** Каталог встроенных портретов — из него строится выбор в форме устройства. */
+export const ILLUSTRATIONS: Array<{ key: string; label: string; src: string }> = [
+  { key: 'server-generic', label: 'Сервер', src: generic },
+  { key: 'server-master', label: 'Сервер · главный', src: master },
+  { key: 'server-cascade', label: 'Сервер · каскад', src: cascade },
+  { key: 'server-exit', label: 'Сервер · выходной узел', src: exitNode },
+  { key: 'device-pc', label: 'Компьютер', src: pc },
+  { key: 'device-router', label: 'Роутер', src: router },
+  { key: 'device-phone', label: 'Телефон', src: phone },
+  { key: 'device-watch', label: 'Часы', src: watch },
+  { key: 'device-buds', label: 'Наушники', src: buds }
+]
+
+const BY_KEY = new Map(ILLUSTRATIONS.map((i) => [i.key, i.src]))
+
+/**
+ * Портрет устройства. Приоритет: ВЫБОР ПОЛЬЗОВАТЕЛЯ → эвристика по типу и роли.
+ *
+ * icon хранит либо ключ встроенного портрета, либо data-URL своей картинки. Раньше выбора не
+ * было вовсе: картинка определялась типом и регуляркой по роли, и поменять её было нельзя.
+ */
+export function deviceIllustration(kind: DeviceKind, role: string | null, icon?: string | null): string {
+  if (icon) {
+    if (icon.startsWith('data:')) return icon
+    const built = BY_KEY.get(icon)
+    if (built) return built
+  }
   if (kind !== 'server') return BY_KIND[kind] ?? generic
   if (role) {
     for (const [re, img] of BY_ROLE) if (re.test(role)) return img
   }
   return generic
+}
+
+/** Что показывается по умолчанию — нужно, чтобы подсветить текущий выбор в форме. */
+export function defaultIllustrationKey(kind: DeviceKind, role: string | null): string {
+  if (kind !== 'server') return kind === 'pc' ? 'device-pc' : `device-${kind}`
+  if (role) {
+    if (/master/i.test(role)) return 'server-master'
+    if (/cascade|relay/i.test(role)) return 'server-cascade'
+    if (/exit/i.test(role)) return 'server-exit'
+  }
+  return 'server-generic'
 }

@@ -65,8 +65,10 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
 
   const open = async (): Promise<void> => {
     if (!api) return
-    if (!password && !saved) {
-      setErr('Введи пароль Windows-аккаунта')
+    // Пароль нужен ТОЛЬКО запасному пути через RDP. Если агент работает, требовать его —
+    // прямое противоречие тому, что написано двумя строками выше в этой же вкладке.
+    if (!password && !saved && !agent?.running) {
+      setErr('Нужен пароль Windows-аккаунта — либо поставь агент, ему пароль не требуется')
       return
     }
     setOpening(true)

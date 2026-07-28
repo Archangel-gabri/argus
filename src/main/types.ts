@@ -49,6 +49,10 @@ export interface DeviceRow {
   /** JSON AltBoot[] | null — доп. эндпоинты ОС (multi-boot ПК). */
   alt: string | null
   mac: string | null
+  /** Портрет: ключ встроенного изображения либо data-URL своей картинки. */
+  icon: string | null
+  /** Загрузочная запись основной ОС (EFI-идентификатор или пункт меню загрузчика). */
+  boot_entry: string | null
   /** Пароль учётки ОС для трансляции экрана (RDP/NLA) — отдельно от SSH-секрета.
    *  Опционально: старые строки колонки не имеют, INSERT его не заполняет. */
   screen_password?: string | null
@@ -83,6 +87,10 @@ export interface DeviceDTO {
   altOs: AltBoot[]
   /** MAC для Wake-on-LAN («Включить» из выключенного). */
   mac: string | null
+  /** Портрет: ключ встроенного изображения или data-URL своей картинки (выбор пользователя). */
+  icon?: string | null
+  /** Загрузочная запись основной ОС. */
+  bootEntry?: string | null
   /** Когда состояние было снято в последний раз (мс). Есть = данные из кэша, можно показать «N мин назад». */
   lastSeen?: number | null
   /** Сохранён ли пароль для трансляции экрана. Само значение через IPC НЕ ходит. */
@@ -128,6 +136,10 @@ export interface DeviceInput {
   jumpId?: string | null
   altOs?: AltBoot[]
   mac?: string | null
+  /** Портрет устройства: ключ встроенного изображения или data-URL своей картинки. */
+  icon?: string | null
+  /** Загрузочная запись основной ОС — чем выбрать её при переключении систем. */
+  bootEntry?: string | null
 }
 
 export interface Snippet {

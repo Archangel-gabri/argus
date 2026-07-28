@@ -435,7 +435,11 @@ export async function boot(
   const targetFamily = family(targetOs)
   let cmd: string
   if (ep.family === 'linux') {
-    if (target?.bootEntry) {
+    // Номер EFI-записи (4 hex-цифры) — самый общий путь: работает с любым загрузчиком,
+    // а не только с GRUB. На этой машине, например, стоит rEFInd, и grub-reboot там бесполезен.
+    if (target?.bootEntry && /^[0-9A-Fa-f]{4}$/.test(target.bootEntry.trim())) {
+      cmd = `sudo -n efibootmgr --bootnext ${target.bootEntry.trim()} && sudo -n systemctl reboot`
+    } else if (target?.bootEntry) {
       // bootEntry — строка из устройства: валидируем (без переносов/абсурдной длины) и
       // экранируем одинарными кавычками, чтобы исключить command injection.
       if (!/^[^\n\r]{1,200}$/.test(target.bootEntry)) {
@@ -450,9 +454,24 @@ export async function boot(
         `if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "grub entry not found"; fi`
     }
   } else {
-    // Из Windows: в Linux — простой reboot (grub-дефолт = Linux). В другую Windows — н/д.
-    if (targetFamily === 'linux') cmd = 'shutdown.exe /r /t 0'
-    else return { ok: false, os: ep.os, error: 'из Windows можно только в Linux (reboot)' }
+    // Из Windows. Раньше здесь был просто `shutdown /r` в расчёте на то, что загрузчик по
+    // умолчанию выберет Linux. Это НЕ переключение, а надежда: проверено на живой машине с
+    // rEFInd — она честно перезагрузилась и вернулась в Windows, а приложение отрапортовало
+    // успех. Настоящий механизм — одноразовый выбор EFI-записи через {fwbootmgr}.
+    if (targetFamily !== 'linux') return { ok: false, os: ep.os, error: 'из Windows можно только в Linux' }
+    const efiId = (target?.bootEntry || '').trim()
+    if (!/^\{[0-9a-fA-F-]{36}\}$/.test(efiId)) {
+      return {
+        ok: false,
+        os: ep.os,
+        error:
+          'не задана EFI-запись целевой ОС. Простая перезагрузка НЕ выбирает систему — она отдаёт ' +
+          'выбор загрузчику, и машина вернётся в текущую ОС. Укажи в карточке устройства, в поле ' +
+          '«EFI-запись» у этой ОС, идентификатор вида {xxxxxxxx-…} — посмотреть список: ' +
+          'bcdedit /enum firmware'
+      }
+    }
+    cmd = `bcdedit /set {fwbootmgr} bootsequence ${efiId} && shutdown.exe /r /t 0`
   }
   const r = await execOnConn(ep.conn, cmd, 10000)
   return { ok: r.ok || /closed|disconnect|ECONNRESET/i.test(r.error ?? ''), os: ep.os, output: r.output, error: r.error }

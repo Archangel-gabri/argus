@@ -151,20 +151,27 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
     }
     const loop = async (): Promise<void> => {
       const t0 = Date.now()
-      const r = await api.metrics.live(device.id)
-      if (!alive) return
-      setLiveOk(r.ok)
-      if (r.ok && r.metrics) {
-        const m = r.metrics
-        setLive(m)
-        cpuBuf.current = [...cpuBuf.current, m.cpu].slice(-40)
-        rxBuf.current = [...rxBuf.current, m.netRx].slice(-40)
-        txBuf.current = [...txBuf.current, m.netTx].slice(-40)
-        force((n) => n + 1)
+      try {
+        const r = await api.metrics.live(device.id)
+        if (!alive) return
+        setLiveOk(r.ok)
+        if (r.ok && r.metrics) {
+          const m = r.metrics
+          setLive(m)
+          cpuBuf.current = [...cpuBuf.current, m.cpu].slice(-40)
+          rxBuf.current = [...rxBuf.current, m.netRx].slice(-40)
+          txBuf.current = [...txBuf.current, m.netTx].slice(-40)
+          force((n) => n + 1)
+        }
+      } catch {
+        // Отказ IPC (например, хранилище успело закрыться по авто-локу) НЕ должен убивать цикл:
+        // без finally следующий тик не планировался и вкладка навсегда застывала на «собираю…».
+        if (alive) setLiveOk(false)
+      } finally {
+        // Между опросами всегда есть пауза: быстрый хост опрашивается раз в 3с, медленный — реже,
+        // но не чаще чем раз в секунду после ответа.
+        if (alive) timer = setTimeout(() => void loop(), Math.max(1000, 3000 - (Date.now() - t0)))
       }
-      // Между опросами всегда есть пауза: быстрый хост опрашивается раз в 3с, медленный — реже,
-      // но не чаще чем раз в секунду после ответа.
-      timer = setTimeout(() => void loop(), Math.max(1000, 3000 - (Date.now() - t0)))
     }
     void loop()
     return () => {
