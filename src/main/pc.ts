@@ -5,7 +5,7 @@ import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn } from './ssh'
 import { tcpAlive } from './liveness'
-import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
+import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
@@ -231,9 +231,9 @@ export async function metrics(deviceId: string): Promise<PcMetrics> {
     const f = await execOnConn(ep.conn, WIN_METRICS, 12000)
     return { current: label, family: 'windows', ...(f.ok ? parseWinMetrics(f.output) : {}) }
   }
-  const r = await execOnConn(ep.conn, LINUX_PROBE_V2, 12000)
+  const r = await execOnConn(ep.conn, UNIVERSAL_PROBE, 15000)
   if (!r.ok) return { current: label, family: 'linux' }
-  const m = parseProbeV2(r.output)
+  const m = parseAnyProbe(r.output)
   return {
     current: label,
     family: 'linux',

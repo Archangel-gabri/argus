@@ -2,7 +2,7 @@ import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
 import { getDeviceConn, getOsEndpoints, checkHostKey, type DeviceConn } from './vault'
-import { LINUX_PROBE_V2, parseProbeV2 } from './metrics'
+import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import { tcpAlive } from './liveness'
 import type { LiveMetrics } from './types'
 
@@ -378,7 +378,8 @@ export function probe(deviceId: string): Promise<ProbeResult> {
       }
     }
     client.on('ready', () => {
-      client.exec(LINUX_PROBE_V2, (err, stream) => {
+      // Универсальный зонд: сам выбирает ветку по ОС (Linux / macOS / FreeBSD) одной командой.
+      client.exec(UNIVERSAL_PROBE, (err, stream) => {
         if (err) {
           done({ ok: false, status: 'offline', error: err.message })
           return
@@ -392,13 +393,13 @@ export function probe(deviceId: string): Promise<ProbeResult> {
           // Windows-машине без второй ОС этот Linux-зонд возвращал мусор, который разбирался
           // в нули — и карточка бодро показывала «online · CPU 0% · 0/0 ГБ». Это хуже ошибки:
           // выглядит как настоящие данные и засоряет историю ровными нулями.
-          const m = parseProbeV2(out)
+          const m = parseAnyProbe(out)
           const parsed = m.ramTotal > 0 || m.cpu > 0 || (m.uptime ?? 0) > 0
           if ((code !== null && code !== 0) || !parsed) {
             done({
               ok: false,
               status: 'offline',
-              error: 'зонд не дал данных — возможно, на хосте другая ОС (Windows определяется отдельной веткой)'
+              error: 'зонд не дал данных — вероятно, на хосте Windows (у него отдельная ветка) или урезанный busybox'
             })
             return
           }

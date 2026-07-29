@@ -207,3 +207,16 @@ export function parseProbeV2(out: string): LiveMetrics {
     top: parseTop(s.TOP ?? [])
   }
 }
+
+// ── Единая точка разбора ───────────────────────────────────────────────────────────────────────
+// Универсальный зонд сам выбирает ветку по ОС, поэтому и разбор выбирается по его ответу.
+import { probedFamily, parseFreeBsd, parseDarwin, universalProbe } from './metrics-bsd'
+
+export const UNIVERSAL_PROBE = universalProbe(LINUX_PROBE_V2)
+
+export function parseAnyProbe(out: string): LiveMetrics {
+  const fam = probedFamily(out)
+  if (fam === 'darwin') return parseDarwin(out)
+  if (fam === 'freebsd') return parseFreeBsd(out)
+  return parseProbeV2(out)
+}
