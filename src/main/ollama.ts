@@ -6,7 +6,7 @@ import { CURRENCY_CODES } from './types'
 
 const BASE = (process.env.ARGUS_OLLAMA_URL || 'http://127.0.0.1:11434').replace(/\/$/, '')
 
-const KINDS: DeviceKind[] = ['server', 'pc', 'phone', 'watch', 'buds', 'router', 'other']
+const KINDS: DeviceKind[] = ['server', 'pc', 'router', 'other']
 const CURRENCIES: readonly string[] = CURRENCY_CODES
 
 export interface AssistResult {

@@ -8,7 +8,10 @@ export const CURRENCY_CODES = [
 export type Currency = (typeof CURRENCY_CODES)[number]
 export type AuthType = 'password' | 'key' | 'none'
 /** Класс сущности во Fleet: servers = server; network = router; остальное = personal. */
-export type DeviceKind = 'server' | 'pc' | 'phone' | 'watch' | 'buds' | 'router' | 'other'
+// Только то, чем Argus реально УМЕЕТ управлять по SSH, плюс «другое» для всего остального.
+// Телефон, часы и наушники были в списке, но приложение с ними ничего не делает — карточка
+// такого устройства открывалась пустой. Существующие записи переезжают в «другое» (см. migrate).
+export type DeviceKind = 'server' | 'pc' | 'router' | 'other'
 
 /** Доп. эндпоинт ОС для multi-boot ПК (одна железка, несколько ОС). Тот же ключ, что у основного.
  *  bootEntry — подсказка grub-menuentry для переключения (иначе матчим по имени ОС). */

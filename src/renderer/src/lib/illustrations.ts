@@ -16,11 +16,10 @@ const BY_ROLE: Array<[RegExp, string]> = [
   [/exit/i, exitNode]
 ]
 
+// Автоподбор портрета по типу. Картинки телефона/часов/наушников остались в каталоге —
+// их по-прежнему можно выбрать руками для устройства типа «другое», просто типов таких больше нет.
 const BY_KIND: Partial<Record<DeviceKind, string>> = {
   pc,
-  phone,
-  watch,
-  buds,
   router
 }
 

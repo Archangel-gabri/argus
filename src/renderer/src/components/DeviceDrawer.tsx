@@ -107,8 +107,11 @@ export function DeviceDrawer(): React.JSX.Element | null {
   if (!detail || !live) return null
 
   const sshCapable = isSshCapable(live.kind)
-  // Вкладка «Экран» — только для ПК (у серверов обычно нет графической сессии).
-  const tabs = sshCapable ? TABS.filter((t) => t.id !== 'screen' || live.kind === 'pc') : TABS.filter((t) => t.id === 'overview')
+  // Экран доступен всем, к кому мы вообще ходим по SSH, а не только ПК. Есть ли что показывать,
+  // решает проба готовности на самой машине: у сервера без графической сессии она так и скажет —
+  // «захватывать нечего». Это честнее, чем прятать вкладку по типу устройства: рабочая станция,
+  // заведённая как «сервер», ничем не отличается от ПК, а её экран прятали.
+  const tabs = sshCapable ? TABS : TABS.filter((t) => t.id === 'overview')
   // Синхронно: не-SSH устройство никогда не отрисовывает SSH-грань, даже если стор просит
   // (например openTerminal попал на паспорт). Никакой панели-гонки — чистое выражение.
   const activeTab: DrawerTab = sshCapable ? (detail.tab ?? 'overview') : 'overview'

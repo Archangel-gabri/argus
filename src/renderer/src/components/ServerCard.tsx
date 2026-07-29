@@ -20,11 +20,8 @@ import { useDevices } from '@/store/devices'
 export const KIND_LABEL: Record<DeviceKind, string> = {
   server: 'Сервер',
   pc: 'ПК',
-  phone: 'Телефон',
-  watch: 'Часы',
-  buds: 'Наушники',
   router: 'Роутер',
-  other: 'Девайс'
+  other: 'Другое'
 }
 
 /** SSH-грани (терминал/файлы/порты/метрики) уместны только этим классам. */

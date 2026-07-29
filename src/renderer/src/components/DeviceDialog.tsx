@@ -11,9 +11,6 @@ const CURRENCIES: readonly Currency[] = CURRENCY_CODES
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
   { id: 'server', label: 'Сервер' },
   { id: 'pc', label: 'ПК' },
-  { id: 'phone', label: 'Телефон' },
-  { id: 'watch', label: 'Часы' },
-  { id: 'buds', label: 'Наушники' },
   { id: 'router', label: 'Роутер' },
   { id: 'other', label: 'Другое' }
 ]

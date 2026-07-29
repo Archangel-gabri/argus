@@ -13,11 +13,12 @@ type FleetGroup = 'all' | 'servers' | 'personal' | 'network'
 const groupOf = (k: DeviceKind): Exclude<FleetGroup, 'all'> =>
   k === 'server' ? 'servers' : k === 'router' ? 'network' : 'personal'
 
+// Подписи по-русски, как и весь остальной интерфейс.
 const GROUPS: Array<{ id: FleetGroup; label: string }> = [
   { id: 'all', label: 'Все' },
-  { id: 'servers', label: 'Servers' },
-  { id: 'personal', label: 'Personal' },
-  { id: 'network', label: 'Network' }
+  { id: 'servers', label: 'Серверы' },
+  { id: 'personal', label: 'Свои машины' },
+  { id: 'network', label: 'Сеть' }
 ]
 
 export function DevicesView(): React.JSX.Element {

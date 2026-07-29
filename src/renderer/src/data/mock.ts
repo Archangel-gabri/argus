@@ -198,7 +198,7 @@ const PERSONAL_DEVICES: DeviceDTO[] = [
     name: 'Galaxy S8',
     provider: 'Samsung',
     role: null,
-    kind: 'phone',
+    kind: 'other',
     ip: '',
     port: 22,
     user: '',

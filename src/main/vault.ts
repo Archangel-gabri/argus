@@ -148,6 +148,10 @@ function migrate(d: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  // Типы «телефон/часы/наушники» убраны: приложение с ними ничего не делало, и карточка
+  // такого устройства открывалась пустой. Уже заведённые записи переезжают в «другое» —
+  // само устройство, его адрес и заметки остаются на месте, меняется только ярлык типа.
+  d.exec(`UPDATE devices SET kind = 'other' WHERE kind IN ('phone', 'watch', 'buds')`)
   // C: MAC for Wake-on-LAN.
   try {
     d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
