@@ -71,17 +71,29 @@ function parseDimms(lines: string[]): string[] {
   return sizes.map((s, i) => (speeds[i] ? `${s} ${speeds[i]}` : s))
 }
 
-function parseDisks(lines: string[]): DiskInfo[] {
+/**
+ * `lsblk -dbno NAME,SIZE,MODEL,ROTA,TYPE` — колонки NAME SIZE MODEL ROTA TYPE.
+ *
+ * MODEL сплошь и рядом пуст: у виртуальных дисков (vda в облаке, zram) модели просто нет.
+ * Тогда в строке остаётся четыре поля вместо пяти — и требование «не меньше пяти» выбрасывало
+ * такой диск целиком. У арендованного сервера это означало, что дисков не видно вообще.
+ * Крайние поля стоят на местах всегда, поэтому читаем с краёв, а модель — то, что осталось
+ * посередине, хоть бы и пусто.
+ */
+export function parseDisks(lines: string[]): DiskInfo[] {
   const out: DiskInfo[] = []
   for (const l of lines) {
     const t = l.trim().split(/\s+/)
-    if (t.length < 5) continue
-    const [name, sizeB, ...rest] = t
-    const type = rest[rest.length - 1]
-    const rota = rest[rest.length - 2]
-    const model = rest.slice(0, -2).join(' ')
+    if (t.length < 4) continue
+    const name = t[0]
+    const sizeB = t[1]
+    const type = t[t.length - 1]
+    const rota = t[t.length - 2]
+    const model = t.slice(2, -2).join(' ')
     if (type !== 'disk' || /^(loop|sr|zram|ram)/.test(name)) continue
-    out.push({ name, model: model || undefined, sizeGb: Math.round(parseFloat(sizeB) / 1e9), ssd: rota === '0' })
+    const sizeGb = Math.round(parseFloat(sizeB) / 1e9)
+    if (!Number.isFinite(sizeGb)) continue
+    out.push({ name, model: model || undefined, sizeGb, ssd: rota === '0' })
   }
   return out
 }

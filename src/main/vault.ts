@@ -250,7 +250,7 @@ interface LocalDevice {
   keyPath?: string
   mac?: string
   alt?: { ip: string; user?: string; os?: string; bootEntry?: string }
-  altOs?: Array<{ ip: string; user?: string; os?: string; bootEntry?: string }>
+  altOs?: Array<{ ip: string; user?: string; os?: string; bootEntry?: string; port?: number }>
 }
 
 function expandHome(p: string): string {
@@ -545,9 +545,15 @@ function parseAltOs(raw: string | null): AltBoot[] {
     const v = JSON.parse(raw) as unknown
     const arr = Array.isArray(v) ? v : [v]
     return arr
-      .map((o) => o as { ip?: string; user?: string; os?: string; bootEntry?: string })
+      .map((o) => o as { ip?: string; user?: string; os?: string; bootEntry?: string; port?: number })
       .filter((o) => o && o.ip)
-      .map((o) => ({ ip: o.ip as string, user: o.user || 'root', os: o.os || '', bootEntry: o.bootEntry }))
+      .map((o) => ({
+        ip: o.ip as string,
+        user: o.user || 'root',
+        os: o.os || '',
+        bootEntry: o.bootEntry,
+        port: Number(o.port) || undefined
+      }))
   } catch {
     return []
   }
@@ -856,10 +862,11 @@ export function getOsEndpoints(id: string): OsEndpoint[] {
   // быстрая проверка живости ходит именно через getOsEndpoints, ломилась напрямую и промахивалась,
   // а полный опрос такие хосты потом пропускал как заведомо мёртвые.
   const jump = getDeviceConn(id)?.jump
-  const mkConn = (host: string, user: string): DeviceConn => {
+  const mkConn = (host: string, user: string, port?: number): DeviceConn => {
     const c: DeviceConn = {
       host,
-      port: r.port || 22,
+      // Свой порт второй ОС, иначе порт основной записи.
+      port: port || r.port || 22,
       user: user || 'root',
       authType: r.auth_type,
       password: r.secret_password
@@ -877,7 +884,7 @@ export function getOsEndpoints(id: string): OsEndpoint[] {
   if (r.ip && !r.ip.includes('x.x'))
     out.push({ os: r.os || '', bootEntry: r.boot_entry ?? undefined, conn: mkConn(r.ip, r.user) })
   const alts = parseAltOs(r.alt)
-  for (const a of alts) out.push({ os: a.os, bootEntry: a.bootEntry, conn: mkConn(a.ip, a.user) })
+  for (const a of alts) out.push({ os: a.os, bootEntry: a.bootEntry, conn: mkConn(a.ip, a.user, a.port) })
   return out
 }
 

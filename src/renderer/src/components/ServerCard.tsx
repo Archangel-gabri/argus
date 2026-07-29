@@ -80,6 +80,13 @@ export function ProviderBadge({
   const bundled = providerLogo(provider)
   const [bundledFailed, setBundledFailed] = useState(false)
   const [remoteFailed, setRemoteFailed] = useState(false)
+  // Пометки «логотип не загрузился» относятся к КОНКРЕТНОМУ хостеру. Сменили хостера в карточке —
+  // компонент тот же, состояние остаётся, и новый логотип даже не пробовали показать: сразу
+  // рисовалась монограмма. Сбрасываем при смене.
+  useEffect(() => {
+    setBundledFailed(false)
+    setRemoteFailed(false)
+  }, [provider])
   const box = size === 'sm' ? 'h-8 w-8 rounded-md' : 'h-10 w-10 rounded-lg'
   const img = size === 'sm' ? 'h-5 w-5' : 'h-7 w-7'
   // Тир 1: bundled-логотип; тир 2: Clearbit по домену хостера; тир 3: цветная монограмма.

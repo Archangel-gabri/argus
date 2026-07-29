@@ -82,6 +82,19 @@ export function DeviceDrawer(): React.JSX.Element | null {
     [devices, deviceId, detail?.device]
   )
 
+  // Устройство удалили, пока карточка открыта — карточку надо закрыть.
+  //
+  // Запасной вариант ниже (снимок на момент открытия) существует для первой отрисовки, пока
+  // список ещё грузится. Но для УДАЛЁННОГО устройства он превращался в призрак: карточка
+  // оставалась на экране, терминал и файлы продолжали ходить к записи, которой в хранилище
+  // больше нет, и отвечали невнятными ошибками. Поэтому закрываем — но только когда список
+  // точно загружен, иначе закрывали бы карточку на каждом старте.
+  const loaded = useDevices((s) => s.loaded)
+  useEffect(() => {
+    if (!detail || !loaded || !deviceId) return
+    if (!devices.some((d) => d.id === deviceId)) close()
+  }, [loaded, devices, deviceId, detail, close])
+
   useEffect(() => {
     if (!detail) return
     const onKey = (e: KeyboardEvent): void => {

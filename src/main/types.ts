@@ -17,6 +17,10 @@ export interface AltBoot {
   user: string
   os: string
   bootEntry?: string
+  /** Свой порт SSH. Не задан — берётся порт основной записи.
+   *  Две ОС на одной железке нередко слушают на разных портах: на Windows это отдельная
+   *  служба OpenSSH со своей настройкой, и совпадать с Linux она не обязана. */
+  port?: number
 }
 
 /** Full row as stored in the encrypted DB (includes secrets — main process only). */

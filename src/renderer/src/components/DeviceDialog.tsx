@@ -57,7 +57,7 @@ interface FormFields {
   jumpId: string
   // bootEntry — точная запись GRUB для boot-switch; в UI не показываем, но СОХРАНЯЕМ при правке
   // (иначе grub-reboot сваливается в нечёткий поиск по ключевому слову → не та ОС).
-  altOs: Array<{ os: string; ip: string; user: string; bootEntry?: string }>
+  altOs: Array<{ os: string; ip: string; user: string; bootEntry?: string; port?: number }>
   mac: string
   role: string
   notes: string
@@ -203,7 +203,7 @@ export function DeviceDialog(): React.JSX.Element | null {
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
         consoleUrl: d.consoleUrl, authMethod: d.authType,
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
-        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry })), mac: d.mac ?? '',
+        altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry, port: a.port })), mac: d.mac ?? '',
         role: d.role ?? '', notes: d.notes ?? '', bootEntry: d.bootEntry ?? '', icon: d.icon ?? ''
       })
     } else {
@@ -340,7 +340,8 @@ export function DeviceDialog(): React.JSX.Element | null {
           os: a.os.trim(),
           ip: a.ip.trim(),
           user: a.user.trim() || 'root',
-          ...(a.bootEntry ? { bootEntry: a.bootEntry } : {})
+          ...(a.bootEntry ? { bootEntry: a.bootEntry } : {}),
+          ...(a.port ? { port: a.port } : {})
         })),
       mac: f.mac.trim() || null,
       role: f.role.trim() || null,
@@ -495,7 +496,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               </Field>
             )}
             {(f.kind === 'pc' || f.kind === 'server') && (
-              <Field label="Другие системы на этой машине" full hint="Для машин с несколькими ОС. Ключ и порт берутся те же, что у основной. Приложение само определит, какая система сейчас запущена.">
+              <Field label="Другие системы на этой машине" full hint="Для машин с несколькими ОС. Ключ берётся тот же, что у основной; порт — тоже, если не указать свой. Приложение само определит, какая система сейчас запущена.">
                 <div className="space-y-2">
                   {f.altOs.map((a, i) => (
                     <div key={i} className="flex items-center gap-2">
@@ -522,6 +523,23 @@ export function DeviceDialog(): React.JSX.Element | null {
                         placeholder="user"
                         onChange={(e) =>
                           setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)) }))
+                        }
+                      />
+                      {/* Своя служба SSH на Windows настраивается отдельно от Linux и совпадать
+                          по порту не обязана. Пусто — берётся порт основной записи. */}
+                      <input
+                        className={cn(inputCls, 'w-16')}
+                        value={a.port ?? ''}
+                        inputMode="numeric"
+                        placeholder="порт"
+                        title="Порт SSH этой системы. Пусто — как у основной."
+                        onChange={(e) =>
+                          setF((p) => ({
+                            ...p,
+                            altOs: p.altOs.map((x, j) =>
+                              j === i ? { ...x, port: Number(e.target.value.replace(/\D/g, '')) || undefined } : x
+                            )
+                          }))
                         }
                       />
                       <button
