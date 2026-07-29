@@ -15,6 +15,7 @@ import { whichOs } from './pc'
 import { createScreenWindow } from './windows'
 import { listDevices, getScreenPassword, setScreenPassword } from './vault'
 import { agentEndpoint, agentStatus } from './agent'
+import { ensureScreenUnlocked } from './session'
 import type { ScreenPreflight } from './types'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
@@ -303,7 +304,28 @@ export async function screenOpen(
   const ag = await agentEndpoint(deviceId)
   if (ag.ok && ag.url && ag.token) {
     const st = await agentStatus(deviceId)
-    if (st.running) return openWindow({ deviceId, mode: 'agent', url: ag.url, token: ag.token, wsPort: 0 })
+    if (st.running) {
+      // Замок снимаем ДО открытия окна. Именно из-за него удалённый экран считался
+      // неработающим: сеанс поднимался автовходом, но экран был заперт хранителем, и
+      // транслировать было нечего. Отдельного вопроса пользователю нет — нажатие «Экран»
+      // и есть решение хозяина машины (на самой машине агент показывает уведомление).
+      const access = await ensureScreenUnlocked(deviceId)
+      if (access.state === 'no-session') {
+        return {
+          ok: false,
+          error:
+            'В систему никто не вошёл — показывать нечего. Экран приветствия удалённо не транслируется; включи автовход на машине.'
+        }
+      }
+      if (access.state === 'refused') {
+        // Не отказ: картинка может пойти и с замком на экране, просто пользоваться ей нельзя.
+        // Врать «всё хорошо» нельзя, но и запрещать смотреть — тоже.
+        console.warn(
+          `[screen] замок не снялся (${access.detail ?? 'без подробностей'}) — среда могла не услышать logind`
+        )
+      }
+      return openWindow({ deviceId, mode: 'agent', url: ag.url, token: ag.token, wsPort: 0 })
+    }
   }
 
   // Запасной путь — RDP через guacd. Он и только он требует пароль Windows.
