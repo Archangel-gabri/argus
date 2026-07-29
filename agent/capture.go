@@ -22,10 +22,22 @@ type captureOption struct {
 	// bin — чем запускать. Пусто = ffmpeg. На Wayland захват идёт через GStreamer, потому что
 	// ffmpeg просто не умеет читать поток PipeWire, который отдаёт композитор.
 	bin string
-	// prepare — подготовка перед запуском: вернуть окончательные аргументы и уборку за собой.
-	// Нужна там, где аргументы известны только после переговоров (номер узла PipeWire выдаёт
-	// портал, и узнать его заранее нельзя).
-	prepare func() ([]string, func(), error)
+	// prepare — подготовка перед запуском: вернуть окончательные аргументы, уборку за собой и,
+	// если стали известны, реальные размеры картинки. Нужна там, где аргументы известны только
+	// после переговоров: номер узла PipeWire выдаёт портал, и узнать его заранее нельзя.
+	prepare func() ([]string, func(), *captureDims, error)
+	// fps — сколько кадров даёт ИМЕННО этот вариант. Аппаратный кодировщик тянет 60, программный
+	// честно ограничен 30. Ноль = как задано флагом.
+	fps int
+}
+
+// captureDims — что реально поехало в поток. Раньше клиенту сообщались размеры из флагов
+// (1920×1080), а конвейер к ним же и приводил картинку — на мониторе 3440×1440 это молча
+// ломало пропорции 21:9 до 16:9. Теперь источник размеров один: сам поток.
+type captureDims struct {
+	width  int
+	height int
+	fps    int
 }
 
 // AU — законченный access unit (кадр) H.264 в формате Annex-B.
@@ -44,16 +56,31 @@ type Streamer struct {
 	chosen  captureOption
 	cmd     *exec.Cmd
 	lastErr string
+	dims    captureDims
 }
 
 func NewStreamer(fps, width, height int) *Streamer {
-	return &Streamer{opts: captureOptions(width, height, fps), fps: fps, width: width, height: height}
+	return &Streamer{
+		opts:   captureOptions(width, height, fps),
+		fps:    fps,
+		width:  width,
+		height: height,
+		dims:   captureDims{width: width, height: height, fps: fps},
+	}
 }
 
 func (s *Streamer) Chosen() captureOption {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.chosen
+}
+
+// Dims — размеры и частота ТОГО, что реально едет клиенту. До первого кадра это значения по
+// умолчанию; после — то, что сообщил сам источник.
+func (s *Streamer) Dims() captureDims {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.dims
 }
 
 func (s *Streamer) LastError() string {
@@ -78,6 +105,10 @@ func (s *Streamer) Run(ctx context.Context, onAU func(AU)) error {
 		if err == nil {
 			return nil
 		}
+		// Причину неудачи КАЖДОГО варианта пишем в журнал сразу. Без этого каскад молчал:
+		// в логе было видно только «пробую», и разобраться, почему аппаратный кодировщик не
+		// поехал, можно было лишь по итоговой ошибке — а её видно только если не завёлся НИ ОДИН.
+		log.Printf("вариант не подошёл: source=%s encoder=%s — %v", opt.source, opt.encoder, err)
 		problems = append(problems, fmt.Sprintf("%s/%s: %v", opt.source, opt.encoder, err))
 		s.mu.Lock()
 		s.lastErr = err.Error()
@@ -86,10 +117,19 @@ func (s *Streamer) Run(ctx context.Context, onAU func(AU)) error {
 	return fmt.Errorf("ни один вариант захвата не заработал: %s", strings.Join(problems, "; "))
 }
 
-// firstFrameTimeout — сколько ждём первый кадр, прежде чем признать вариант нерабочим.
+// firstFrameTimeout — сколько ждём первый кадр, прежде чем засомневаться в варианте.
 // Кодировщик может «завестись» и молчать (классика KRdp+NVIDIA — чёрный экран), поэтому
 // критерий успеха именно КАДРЫ, а не код возврата процесса.
 const firstFrameTimeout = 6 * time.Second
+
+// patienceTimeout — сколько ещё ждём, если конвейер ЖИВ и молчит без единой жалобы.
+//
+// На Wayland источник отдаёт кадры только при изменениях картинки, поэтому «кадров нет» на
+// спокойном рабочем столе — это не поломка. Экран мы перед проверкой шевелим уведомлением
+// (nudge_linux.go), но уведомления может не быть в системе, поэтому запас терпения нужен:
+// иначе исправный аппаратный путь отвергается, и владелец без причины получает картинку с
+// процессора. Ждём молча живущий конвейер, а вот умерший или пожаловавшийся отбраковываем сразу.
+const patienceTimeout = 20 * time.Second
 
 func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU)) error {
 	cctx, cancel := context.WithCancel(ctx)
@@ -100,8 +140,12 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 		bin = ffmpegPath()
 	}
 	args := opt.args
+	dims := captureDims{width: s.width, height: s.height, fps: s.fps}
+	if opt.fps > 0 {
+		dims.fps = opt.fps
+	}
 	if opt.prepare != nil {
-		prepared, cleanup, err := opt.prepare()
+		prepared, cleanup, prepDims, err := opt.prepare()
 		if err != nil {
 			return err
 		}
@@ -109,6 +153,14 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 			defer cleanup()
 		}
 		args = prepared
+		if prepDims != nil {
+			if prepDims.width > 0 && prepDims.height > 0 {
+				dims.width, dims.height = prepDims.width, prepDims.height
+			}
+			if prepDims.fps > 0 {
+				dims.fps = prepDims.fps
+			}
+		}
 	}
 	cmd := exec.CommandContext(cctx, bin, args...)
 	configureProc(cmd)
@@ -141,6 +193,11 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 	first := make(chan struct{})
 	var once sync.Once
 	done := make(chan error, 1)
+	// Шевелим экран, чтобы источнику было что отдать: без изменения картинки исправный
+	// конвейер на Wayland молчит и выглядит сломанным.
+	stopNudge := make(chan struct{})
+	defer close(stopNudge)
+	nudgeSoon(stopNudge)
 	go func() {
 		done <- splitAnnexB(stdout, func(au AU) {
 			// Запоминаем выбранный вариант ДО отдачи первого кадра: получатель формирует по нему
@@ -148,6 +205,7 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 			once.Do(func() {
 				s.mu.Lock()
 				s.chosen = opt
+				s.dims = dims
 				s.mu.Unlock()
 				close(first)
 			})
@@ -157,17 +215,64 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 
 	select {
 	case <-first:
-		log.Printf("захват пошёл: source=%s encoder=%s", opt.source, opt.encoder)
+		log.Printf("захват пошёл: source=%s encoder=%s (%dx%d, %d к/с)",
+			opt.source, opt.encoder, dims.width, dims.height, dims.fps)
 		err := <-done
 		_ = cmd.Wait()
 		if cctx.Err() != nil {
 			return nil
 		}
 		return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
-	case <-time.After(firstFrameTimeout):
-		cancel()
+	// Вариант может умереть мгновенно — например, в системе нет такого элемента GStreamer.
+	// Без этой ветки каждый такой вариант отнимал полные 6 секунд ожидания кадра, и перебор
+	// каскада из трёх кодировщиков стоил 18 секунд до первой картинки.
+	case err := <-done:
 		_ = cmd.Wait()
-		return fmt.Errorf("нет кадров за %s (%s)", firstFrameTimeout, tail(errBuf.String()))
+		if cctx.Err() != nil {
+			return nil
+		}
+		// Кадры всё-таки были? Тогда это обрыв уже РАБОТАВШЕГО потока, а не неудачный вариант, —
+		// причина у них разная, и путать их в сообщении нельзя.
+		select {
+		case <-first:
+			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
+		default:
+			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errBuf.String()))
+		}
+	case <-time.After(firstFrameTimeout):
+		// Кадров нет. Если конвейер при этом жив и ни на что не жалуется — на Wayland это
+		// скорее неподвижный экран, чем поломка. Даём ему второй, больший срок.
+		if errText := strings.TrimSpace(errBuf.String()); errText != "" {
+			cancel()
+			_ = cmd.Wait()
+			return fmt.Errorf("нет кадров за %s (%s)", firstFrameTimeout, tail(errText))
+		}
+		log.Printf("кадров пока нет, но конвейер жив и молчит — жду ещё %s (source=%s encoder=%s)",
+			patienceTimeout-firstFrameTimeout, opt.source, opt.encoder)
+		select {
+		case <-first:
+			log.Printf("захват пошёл: source=%s encoder=%s (%dx%d, %d к/с)",
+				opt.source, opt.encoder, dims.width, dims.height, dims.fps)
+			err := <-done
+			_ = cmd.Wait()
+			if cctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
+		case err := <-done:
+			_ = cmd.Wait()
+			if cctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errBuf.String()))
+		case <-time.After(patienceTimeout - firstFrameTimeout):
+			cancel()
+			_ = cmd.Wait()
+			return fmt.Errorf("нет кадров за %s (%s)", patienceTimeout, tail(errBuf.String()))
+		case <-cctx.Done():
+			_ = cmd.Wait()
+			return nil
+		}
 	case <-cctx.Done():
 		_ = cmd.Wait()
 		return nil

@@ -40,6 +40,8 @@ func main() {
 		test     = flag.Bool("test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
 		showVer  = flag.Bool("version", false, "показать версию и выйти")
 		selftest = flag.Bool("selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
+		bench    = flag.Int("bench", 0, "замер: сколько секунд гнать захват и посчитать кадры/битрейт, потом выйти")
+		only     = flag.String("only", "", "замер только вариантов, чей кодировщик содержит эту подстроку (nvenc, x264…)")
 		certDir  = flag.String("cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
 		showFP   = flag.Bool("fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
 		plain    = flag.Bool("no-tls", false, "без TLS — только для отладки на localhost")
@@ -75,6 +77,11 @@ func main() {
 
 	if *selftest {
 		runSelfTest(*fps, *width, *height)
+		return
+	}
+
+	if *bench > 0 {
+		runBench(*bench, *fps, *width, *height, *only)
 		return
 	}
 
@@ -159,9 +166,10 @@ func runSelfTest(fps, w, h int) {
 
 	fmt.Println("проверяю захват (первый рабочий вариант):")
 	st := NewStreamer(fps, w, h)
-	// Бюджет считаем от ЧИСЛА вариантов: при жёстких 25с перебор не успевал дойти до конца,
-	// и самотест сообщал «<nil>» вместо настоящей причины.
-	budget := time.Duration(len(st.opts)+1) * (firstFrameTimeout + time.Second)
+	// Бюджет считаем от ЧИСЛА вариантов и от БОЛЬШЕГО из сроков ожидания: вариант, который жив
+	// и молчит, ждут patienceTimeout, и если считать по firstFrameTimeout, самотест обрывается
+	// на середине перебора и сообщает «<nil>» вместо настоящей причины.
+	budget := time.Duration(len(st.opts)+1) * (patienceTimeout + time.Second)
 	ctx, cancel := contextWithTimeout(budget)
 	defer cancel()
 	frames := 0
@@ -191,4 +199,70 @@ func runSelfTest(fps, w, h int) {
 	}
 	fmt.Printf("захват: НЕ РАБОТАЕТ — %s\n", reason)
 	os.Exit(1)
+}
+
+// runBench — замер пропускной способности выбранного пути захвата.
+//
+// Нужен потому, что самотест обрывается на пятнадцатом кадре: он отвечает на вопрос «работает
+// ли», а не «сколько выдаёт». Здесь считаются кадры и байты за отведённое время, и по ним видно
+// то, ради чего вообще делался аппаратный путь. Замер честен ровно настолько, насколько на
+// экране в этот момент что-то происходит: источник на Wayland отдаёт кадры только при
+// изменениях картинки, поэтому мерить надо под нагрузкой (например, анимацией во весь экран).
+func runBench(seconds, fps, w, h int, only string) {
+	st := NewStreamer(fps, w, h)
+	if only != "" {
+		var kept []captureOption
+		for _, o := range st.opts {
+			if strings.Contains(o.encoder, only) {
+				kept = append(kept, o)
+			}
+		}
+		if len(kept) == 0 {
+			fmt.Printf("замер: нет вариантов с кодировщиком «%s»\n", only)
+			os.Exit(1)
+		}
+		st.opts = kept
+	}
+
+	ctx, cancel := contextWithTimeout(time.Duration(seconds)*time.Second + patienceTimeout*time.Duration(len(st.opts)))
+	defer cancel()
+
+	var frames, bytes, keys int
+	var firstAt time.Time
+	done := make(chan error, 1)
+	go func() {
+		done <- st.Run(ctx, func(au AU) {
+			if frames == 0 {
+				firstAt = time.Now()
+				// Отсчёт времени идёт от ПЕРВОГО кадра, а не от запуска: в запуск входят
+				// переговоры с порталом и перебор вариантов, и они смазали бы результат.
+				go func() {
+					<-time.After(time.Duration(seconds) * time.Second)
+					cancel()
+				}()
+			}
+			frames++
+			bytes += len(au.Data)
+			if au.IsKey {
+				keys++
+			}
+		})
+	}()
+	<-done
+
+	ch := st.Chosen()
+	d := st.Dims()
+	if frames == 0 {
+		fmt.Printf("замер: кадров не было (source=%s encoder=%s) — на экране ничего не менялось или путь не работает\n",
+			ch.source, ch.encoder)
+		os.Exit(1)
+	}
+	elapsed := time.Since(firstAt).Seconds()
+	if elapsed <= 0 {
+		elapsed = float64(seconds)
+	}
+	fmt.Printf("замер: source=%s encoder=%s %dx%d заявлено %d к/с\n", ch.source, ch.encoder, d.width, d.height, d.fps)
+	fmt.Printf("  кадров: %d за %.1fс = %.1f к/с (ключевых %d)\n", frames, elapsed, float64(frames)/elapsed, keys)
+	fmt.Printf("  поток: %.1f Мбит/с, средний кадр %.0f КБ\n",
+		float64(bytes)*8/elapsed/1e6, float64(bytes)/float64(frames)/1024)
 }

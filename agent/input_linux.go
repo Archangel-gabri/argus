@@ -14,12 +14,12 @@ import (
 // Нужны права на /dev/uinput: группа input + udev-правило, это делает провижининг Argus.
 
 const (
-	uiSetEvBit  = 0x40045564 // UI_SET_EVBIT
-	uiSetKeyBit = 0x40045565 // UI_SET_KEYBIT
-	uiSetRelBit = 0x40045566 // UI_SET_RELBIT
-	uiSetAbsBit = 0x40045567 // UI_SET_ABSBIT
-	uiDevCreate = 0x5501     // UI_DEV_CREATE
-	uiDevDestroy = 0x5502    // UI_DEV_DESTROY
+	uiSetEvBit   = 0x40045564 // UI_SET_EVBIT
+	uiSetKeyBit  = 0x40045565 // UI_SET_KEYBIT
+	uiSetRelBit  = 0x40045566 // UI_SET_RELBIT
+	uiSetAbsBit  = 0x40045567 // UI_SET_ABSBIT
+	uiDevCreate  = 0x5501     // UI_DEV_CREATE
+	uiDevDestroy = 0x5502     // UI_DEV_DESTROY
 
 	evSyn = 0x00
 	evKey = 0x01
@@ -45,13 +45,13 @@ type inputEvent struct {
 }
 
 type uinputUserDev struct {
-	Name       [80]byte
-	ID         struct{ Bustype, Vendor, Product, Version uint16 }
-	FFEffects  uint32
-	Absmax     [64]int32
-	Absmin     [64]int32
-	Absfuzz    [64]int32
-	Absflat    [64]int32
+	Name      [80]byte
+	ID        struct{ Bustype, Vendor, Product, Version uint16 }
+	FFEffects uint32
+	Absmax    [64]int32
+	Absmin    [64]int32
+	Absfuzz   [64]int32
+	Absflat   [64]int32
 }
 
 type linuxInjector struct {

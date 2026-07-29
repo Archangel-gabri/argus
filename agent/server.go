@@ -19,9 +19,9 @@ type Server struct {
 	fps   int
 	w, h  int
 
-	mu     sync.Mutex
-	busy   bool // один зритель за раз: второй ffmpeg только грел бы машину
-	upgr   websocket.Upgrader
+	mu   sync.Mutex
+	busy bool // один зритель за раз: второй ffmpeg только грел бы машину
+	upgr websocket.Upgrader
 }
 
 func NewServer(token string, fps, w, h int) *Server {
@@ -213,10 +213,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		if !sentHello {
 			sentHello = true
 			ch := st.Chosen()
+			// Размеры и частоту берём У ПОТОКА, а не из флагов запуска: на мониторе 3440×1440
+			// флаги говорили «1920×1080», и клиент растягивал картинку в чужие пропорции.
+			d := st.Dims()
 			sendJSON(Hello{
 				Type: "hello", Version: Version, OS: goos(),
 				Encoder: ch.encoder, Source: ch.source,
-				Width: s.w, Height: s.h, FPS: s.fps,
+				Width: d.width, Height: d.height, FPS: d.fps,
 				// baseline/main-профиль, который отдают наши настройки кодировщиков
 				Codec: "avc1.42E01F",
 			})

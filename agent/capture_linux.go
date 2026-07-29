@@ -9,10 +9,12 @@ import (
 )
 
 // Linux. Честная картина на 2026:
-//   X11        — x11grab работает без плясок;
-//   Wayland    — ffmpeg сам захватывать НЕ УМЕЕТ, поэтому идём через портал ScreenCast и
-//                PipeWire (см. wayland_linux.go). Проверено на живой машине с KDE Plasma 6.
-//   kmsgrab    — требует прав DRM-мастера и на живом сеансе KDE обычно недоступен.
+//
+//	X11        — x11grab работает без плясок;
+//	Wayland    — ffmpeg сам захватывать НЕ УМЕЕТ, поэтому идём через портал ScreenCast и
+//	             PipeWire (см. wayland_linux.go). Проверено на живой машине с KDE Plasma 6.
+//	kmsgrab    — требует прав DRM-мастера и на живом сеансе KDE обычно недоступен.
+//
 // Ни один вариант не считается рабочим, пока не отдал КАДРЫ: кодировщик умеет «завестись»
 // и молчать, и тогда клиент получает внятную причину, а не чёрный экран.
 func captureOptions(width, height, fps int) []captureOption {
@@ -28,9 +30,7 @@ func captureOptions(width, height, fps int) []captureOption {
 	// Wayland — первым: под ним x11grab отдаёт пустоту, и перебирать его раньше значит
 	// впустую жечь по 6 секунд на вариант.
 	if waylandActive() {
-		if opt, ok := waylandOption(width, height, fps); ok {
-			out = append(out, opt)
-		}
+		out = append(out, waylandOptions(width, height, fps)...)
 	}
 
 	// В SSH-сессии DISPLAY пуст, хотя на машине может быть живой X-сервер — тогда вариант

@@ -53,16 +53,16 @@ func ensureCert(dir string) (string, string, error) {
 	}
 	host, _ := os.Hostname()
 	tpl := x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "argus-agent " + host},
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: "argus-agent " + host},
 		// Начало действия отодвинуто на двое суток назад — это не запас «на всякий случай».
 		// Часы двух машин не обязаны совпадать: у двухзагрузочного ПК Windows пишет в
 		// аппаратные часы МЕСТНОЕ время, Linux читает их как UTC, и система уезжает на целый
 		// часовой пояс. Сертификат, выписанный «с этой секунды», на второй машине оказывается
 		// выписанным в будущем, и TLS его отвергает — проверено на живом стенде: расхождение
 		// в три часа роняло подключение с «certificate is not yet valid».
-		NotBefore:             time.Now().Add(-48 * time.Hour),
-		NotAfter:              time.Now().AddDate(10, 0, 0),
+		NotBefore: time.Now().Add(-48 * time.Hour),
+		NotAfter:  time.Now().AddDate(10, 0, 0),
 		// Сертификат самоподписанный и выступает СОБСТВЕННЫМ корнем доверия: Argus передаёт
 		// его как доверенный CA и оставляет проверку TLS включённой. Без CA:TRUE и права
 		// подписи OpenSSL откажется считать его якорем — «unable to verify the first certificate».
