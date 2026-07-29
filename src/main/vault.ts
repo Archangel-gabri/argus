@@ -752,7 +752,8 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
        ram_used=@ram_used, ram_total=@ram_total, cost_amount=@cost_amount,
        cost_currency=@cost_currency, cost_usd=@cost_usd, console_url=@console_url,
        auth_type=@auth_type, secret_password=@secret_password, secret_key=@secret_key,
-       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, alt=@alt, mac=@mac, updated_at=@updated_at
+       secret_passphrase=@secret_passphrase, notes=@notes, jump_id=@jump_id, alt=@alt, mac=@mac,
+       icon=@icon, boot_entry=@boot_entry, updated_at=@updated_at
      WHERE id=@id`
   ).run(next)
   return toDTO(next)

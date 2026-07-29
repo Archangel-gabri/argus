@@ -620,8 +620,20 @@ export async function boot(
           'bcdedit /enum firmware'
       }
     }
-    cmd = `bcdedit /set {fwbootmgr} bootsequence ${efiId} && shutdown.exe /r /t 0`
+    // ВАЖНО: не через `&&`. Оболочка по умолчанию у OpenSSH на Windows — PowerShell 5.1,
+    // а там `&&` не разделитель команд, а синтаксическая ошибка (его добавили только в 7-й
+    // версии). Команда молча не выполнялась — то самое «переключение», которое не переключало.
+    // Плюс проверяем код возврата bcdedit: перезагружаться, не выставив запись, бессмысленно —
+    // это возврат к «перезагрузились и надеемся».
+    const ps =
+      `$ErrorActionPreference='Continue'; ` +
+      `& bcdedit /set '{fwbootmgr}' bootsequence '${efiId}'; ` +
+      `if ($LASTEXITCODE -ne 0) { Write-Output 'ARGUS_BCDEDIT_FAILED'; exit 1 }; ` +
+      `& shutdown.exe /r /t 0`
+    cmd = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`
   }
   const r = await execOnConn(ep.conn, cmd, 10000)
+  if (r.output.includes('ARGUS_BCDEDIT_FAILED'))
+    return { ok: false, os: ep.os, output: r.output, error: 'не удалось выставить загрузочную запись — перезагрузка отменена' }
   return { ok: r.ok || /closed|disconnect|ECONNRESET/i.test(r.error ?? ''), os: ep.os, output: r.output, error: r.error }
 }
