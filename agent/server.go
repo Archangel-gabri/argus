@@ -220,8 +220,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				Type: "hello", Version: Version, OS: goos(),
 				Encoder: ch.encoder, Source: ch.source,
 				Width: d.width, Height: d.height, FPS: d.fps,
-				// baseline/main-профиль, который отдают наши настройки кодировщиков
-				Codec: "avc1.42E01F",
+				// Строка кодека — из заголовка НАСТОЯЩЕГО потока, а не предположение. Зашито
+				// было «avc1.42E01F» (Baseline, уровень 3.1 — это примерно 1280×720), а живой
+				// поток на мониторе 3440×1440 оказался уровня 6.0. По этой строке клиент
+				// настраивает декодер, и аппаратный вправе отказаться от заниженного уровня.
+				Codec: st.Codec(),
 			})
 		}
 		flag := byte(0)

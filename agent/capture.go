@@ -57,6 +57,7 @@ type Streamer struct {
 	cmd     *exec.Cmd
 	lastErr string
 	dims    captureDims
+	codec   string
 }
 
 func NewStreamer(fps, width, height int) *Streamer {
@@ -66,6 +67,7 @@ func NewStreamer(fps, width, height int) *Streamer {
 		width:  width,
 		height: height,
 		dims:   captureDims{width: width, height: height, fps: fps},
+		codec:  defaultCodec,
 	}
 }
 
@@ -73,6 +75,13 @@ func (s *Streamer) Chosen() captureOption {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.chosen
+}
+
+// Codec — строка кодека, собранная из заголовка настоящего потока (см. codecFromSPS).
+func (s *Streamer) Codec() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.codec
 }
 
 // Dims — размеры и частота ТОГО, что реально едет клиенту. До первого кадра это значения по
@@ -203,9 +212,15 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 			// Запоминаем выбранный вариант ДО отдачи первого кадра: получатель формирует по нему
 			// приветствие, и если сделать это позже — в приветствие уедут пустые значения.
 			once.Do(func() {
+				// Строку кодека берём из ПЕРВОГО кадра: h264parse с config-interval=1 ставит
+				// SPS перед каждым ключевым, а первый кадр всегда ключевой.
+				codec := codecFromSPS(au.Data)
 				s.mu.Lock()
 				s.chosen = opt
 				s.dims = dims
+				if codec != "" {
+					s.codec = codec
+				}
 				s.mu.Unlock()
 				close(first)
 			})
@@ -277,6 +292,44 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 		_ = cmd.Wait()
 		return nil
 	}
+}
+
+// defaultCodec — чем отвечаем, если в кадре не нашлось SPS. Baseline 3.1 — самое безопасное
+// предположение: его понимает любой декодер. Но именно предположение, а не факт.
+const defaultCodec = "avc1.42E01F"
+
+// codecFromSPS собирает строку кодека для WebCodecs из НАСТОЯЩЕГО заголовка потока.
+//
+// Строка не косметика: по ней клиент настраивает VideoDecoder, и аппаратный декодер вправе
+// отказаться, если объявленный уровень ниже фактического. Раньше здесь стояло зашитое
+// «avc1.42E01F» — Baseline, уровень 3.1, то есть примерно 1280×720. Живой поток на мониторе
+// 3440×1440 оказался уровня 6.0 (level_idc=60): объявленное и фактическое расходились так,
+// что запрос на аппаратное декодирование мог быть отклонён.
+//
+// Формат по спецификации: avc1.PPCCLL, где PP — profile_idc, CC — байт ограничений,
+// LL — level_idc, все в шестнадцатеричном виде. Все три байта лежат сразу за заголовком
+// NAL типа 7 (SPS).
+func codecFromSPS(au []byte) string {
+	for i := 0; i+7 < len(au); i++ {
+		if au[i] != 0 || au[i+1] != 0 {
+			continue
+		}
+		// Стартовый код бывает трёх- и четырёхбайтовым — учитываем оба.
+		var nal int
+		switch {
+		case au[i+2] == 1:
+			nal = i + 3
+		case au[i+2] == 0 && au[i+3] == 1:
+			nal = i + 4
+		default:
+			continue
+		}
+		if nal+3 >= len(au) || au[nal]&0x1f != 7 {
+			continue
+		}
+		return fmt.Sprintf("avc1.%02X%02X%02X", au[nal+1], au[nal+2], au[nal+3])
+	}
+	return ""
 }
 
 func tail(s string) string {

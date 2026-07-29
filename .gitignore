@@ -17,3 +17,9 @@ dist-electron/
 fleet.local.json
 
 .DS_Store
+
+# Скомпилированный агент — артефакт сборки, а не исходник. Собирается agent/build-all.sh
+# в resources/agent/ (там он тоже игнорируется). Один такой бинарь уже уехал в историю
+# коммитом 942d9ce — 10 МБ; в рабочем дереве его больше не отслеживаем.
+agent/argus-agent
+agent/argus-agent.exe
