@@ -16,6 +16,10 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:agent": "cd agent && go test ./...",
+    "check": "npm run typecheck && npm run test && npm run test:agent && npm run build",
     "rebuild": "electron-rebuild"
   },
   "dependencies": {
@@ -61,6 +65,7 @@
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   }
 }

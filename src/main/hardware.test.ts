@@ -1,5 +1,6 @@
 // Разбор дисков на РЕАЛЬНОМ выводе lsblk: строки сняты с живой машины и дополнены
 // типовым облачным диском, у которого модели нет вовсе.
+import { describe, it, expect } from 'vitest'
 import { parseDisks } from './hardware'
 
 const rows = [
@@ -9,21 +10,40 @@ const rows = [
   'sda     500107862016 Samsung SSD 860 EVO 500GB 0 disk', // модель с пробелами
   'sr0       1073741824              1 rom'
 ]
-const r = parseDisks(rows)
-const checks: Array<[string, boolean]> = [
-  ['облачный диск без модели не потерян', r.some((d) => d.name === 'vda' && d.sizeGb === 43)],
-  ['у него нет выдуманной модели', r.find((d) => d.name === 'vda')?.model === undefined],
-  ['модель с пробелами собрана целиком', r.find((d) => d.name === 'sda')?.model === 'Samsung SSD 860 EVO 500GB'],
-  ['nvme распознан как SSD', r.find((d) => d.name === 'nvme0n1')?.ssd === true],
-  ['vda с ROTA=1 помечен как вращающийся', r.find((d) => d.name === 'vda')?.ssd === false],
-  ['zram отброшен', !r.some((d) => d.name === 'zram0')],
-  ['привод (rom) отброшен', !r.some((d) => d.name === 'sr0')],
-  ['всего 3 диска', r.length === 3]
-]
-let bad = 0
-for (const [n, c] of checks) {
-  console.log(`  ${c ? '✔' : '✖'} ${n}`)
-  if (!c) bad++
-}
-console.log(bad ? `\nПРОВАЛОВ: ${bad}` : '\nВСЁ СОШЛОСЬ')
-process.exit(bad ? 1 : 0)
+
+describe('parseDisks — вывод lsblk', () => {
+  const r = parseDisks(rows)
+  const byName = (n: string): (typeof r)[number] | undefined => r.find((d) => d.name === n)
+
+  it('облачный диск без модели не потерян', () => {
+    expect(r.some((d) => d.name === 'vda' && d.sizeGb === 43)).toBe(true)
+  })
+
+  it('у него нет выдуманной модели', () => {
+    expect(byName('vda')?.model).toBeUndefined()
+  })
+
+  it('модель с пробелами собрана целиком', () => {
+    expect(byName('sda')?.model).toBe('Samsung SSD 860 EVO 500GB')
+  })
+
+  it('nvme распознан как SSD', () => {
+    expect(byName('nvme0n1')?.ssd).toBe(true)
+  })
+
+  it('vda с ROTA=1 помечен как вращающийся', () => {
+    expect(byName('vda')?.ssd).toBe(false)
+  })
+
+  it('zram отброшен', () => {
+    expect(r.some((d) => d.name === 'zram0')).toBe(false)
+  })
+
+  it('привод (rom) отброшен', () => {
+    expect(r.some((d) => d.name === 'sr0')).toBe(false)
+  })
+
+  it('всего 3 диска', () => {
+    expect(r).toHaveLength(3)
+  })
+})

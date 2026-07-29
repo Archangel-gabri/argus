@@ -7,17 +7,8 @@
 //   • df -k -P отдаёт килобайты (без -k на BSD это блоки по 512 байт);
 //   • vm_stat объявляет размер страницы в заголовке — 16К на Apple Silicon, 4К на Intel;
 //   • у top на macOS первый замер всегда невалидный, брать надо второй.
+import { describe, it, expect } from 'vitest'
 import { parseFreeBsd, parseDarwin } from './metrics-bsd'
-
-let failed = 0
-function check(name: string, cond: boolean, extra?: unknown): void {
-  if (cond) {
-    console.log(`  ✔ ${name}`)
-  } else {
-    failed++
-    console.log(`  ✖ ${name}${extra !== undefined ? ` — получено: ${JSON.stringify(extra)}` : ''}`)
-  }
-}
 
 // ── FreeBSD ────────────────────────────────────────────────────────────────────────────────────
 // 4 ядра. Между замерами: idle вырос на 300 из 400 тиков ⇒ занятость 25%.
@@ -65,27 +56,63 @@ devfs                   1        1        0   100%    /dev
  4.0  1.1 sshd
 @@END`
 
-console.log('FreeBSD:')
-{
+describe('parseFreeBsd', () => {
   const m = parseFreeBsd(FREEBSD_OUT)
-  // idle 1000→1300 (+300), сумма 1150→1550 (+400) ⇒ занято (400-300)/400 = 25%
-  check('CPU считается из дельты накопительных счётчиков', m.cpu === 25, m.cpu)
-  check('видит все 4 ядра', m.cores.length === 4, m.cores)
-  check('загрузка системы', m.load[0] === 0.42 && m.load[2] === 0.3, m.load)
-  check('память: всего 8 ГБ', m.ramTotal === 8, m.ramTotal)
-  // свободно (524288+262144+0) страниц × 4096 = 3 ГБ ⇒ занято 5 ГБ
-  check('память: занято 5 ГБ', m.ramUsed === 5, m.ramUsed)
-  check('подкачка 2 ГБ, занято 0.5 ГБ', m.swapTotal === 2 && m.swapUsed === 0.5, [m.swapTotal, m.swapUsed])
-  // ТОЛЬКО Link-строки: (1070000-1000000 + 0) / 0.7 = 100000
-  check('сеть считается без задваивания по адресам', m.netRx === 100000, m.netRx)
-  check('сеть исходящая', m.netTx === 50000, m.netTx)
-  check('корень занят на 40%', m.disk === 40, m.disk)
-  check('служебные ФС отброшены', m.mounts.length === 1 && m.mounts[0].mount === '/', m.mounts)
-  check('размер корня 20 ГБ (килобайты, не блоки по 512)', m.mounts[0].totalGb === 20, m.mounts[0])
-  check('аптайм из kern.boottime', m.uptime === 86400, m.uptime)
-  check('температура', m.tempCpu === 45, m.tempCpu)
-  check('топ процессов', m.top.length === 2 && m.top[0].cmd === 'nginx', m.top)
-}
+
+  it('CPU считается из дельты накопительных счётчиков', () => {
+    // idle 1000→1300 (+300), сумма 1150→1550 (+400) ⇒ занято (400-300)/400 = 25%
+    expect(m.cpu).toBe(25)
+  })
+
+  it('видит все 4 ядра', () => {
+    expect(m.cores).toHaveLength(4)
+  })
+
+  it('загрузка системы', () => {
+    expect(m.load[0]).toBe(0.42)
+    expect(m.load[2]).toBe(0.3)
+  })
+
+  it('память: всего 8 ГБ, занято 5 ГБ', () => {
+    // свободно (524288+262144+0) страниц × 4096 = 3 ГБ ⇒ занято 5 ГБ
+    expect(m.ramTotal).toBe(8)
+    expect(m.ramUsed).toBe(5)
+  })
+
+  it('подкачка 2 ГБ, занято 0.5 ГБ', () => {
+    expect(m.swapTotal).toBe(2)
+    expect(m.swapUsed).toBe(0.5)
+  })
+
+  it('сеть считается без задваивания по адресам', () => {
+    // ТОЛЬКО Link-строки: (1070000-1000000 + 0) / 0.7 = 100000
+    expect(m.netRx).toBe(100000)
+    expect(m.netTx).toBe(50000)
+  })
+
+  it('корень занят на 40%, служебные ФС отброшены', () => {
+    expect(m.disk).toBe(40)
+    expect(m.mounts).toHaveLength(1)
+    expect(m.mounts[0].mount).toBe('/')
+  })
+
+  it('размер корня 20 ГБ (килобайты, не блоки по 512)', () => {
+    expect(m.mounts[0].totalGb).toBe(20)
+  })
+
+  it('аптайм из kern.boottime', () => {
+    expect(m.uptime).toBe(86400)
+  })
+
+  it('температура', () => {
+    expect(m.tempCpu).toBe(45)
+  })
+
+  it('топ процессов', () => {
+    expect(m.top).toHaveLength(2)
+    expect(m.top[0].cmd).toBe('nginx')
+  })
+})
 
 // ── macOS ──────────────────────────────────────────────────────────────────────────────────────
 // Apple Silicon: страница 16384 байт. Два замера top — валиден только второй.
@@ -127,24 +154,48 @@ devfs                197      197         0   100%    /dev
  3.5  2.0 Finder
 @@END`
 
-console.log('macOS:')
-{
+describe('parseDarwin', () => {
   const m = parseDarwin(DARWIN_OUT)
-  // Берём ВТОРУЮ строку: 100 - 80 = 20
-  check('CPU берётся из второго замера top, не из первого', m.cpu === 20, m.cpu)
-  check('загрузка системы', m.load[0] === 1.5, m.load)
-  check('память: всего 16 ГБ', m.ramTotal === 16, m.ramTotal)
-  // свободно (196608+65536+0) × 16384 = 4 ГБ ⇒ занято 12 ГБ. Размер страницы взят из заголовка.
-  check('размер страницы прочитан из заголовка (16К, Apple Silicon)', m.ramUsed === 12, m.ramUsed)
-  check('подкачка с запятой как разделителем', m.swapTotal === 2 && m.swapUsed === 0.5, [m.swapTotal, m.swapUsed])
-  check('сеть без задваивания', m.netRx === 200000, m.netRx)
-  check('сеть исходящая', m.netTx === 100000, m.netTx)
-  check('корень занят на 5%', m.disk === 5, m.disk)
-  check('map/devfs отброшены', m.mounts.length === 1, m.mounts)
-  check('аптайм', m.uptime === 3600, m.uptime)
-  check('ядра пусты — честно, а не выдуманы', m.cores.length === 0, m.cores)
-  check('топ процессов', m.top[0]?.cmd === 'WindowServer', m.top)
-}
 
-console.log(failed === 0 ? '\nВСЁ СОШЛОСЬ' : `\nПРОВАЛОВ: ${failed}`)
-process.exit(failed === 0 ? 0 : 1)
+  it('CPU берётся из второго замера top, не из первого', () => {
+    // Берём ВТОРУЮ строку: 100 - 80 = 20
+    expect(m.cpu).toBe(20)
+  })
+
+  it('загрузка системы', () => {
+    expect(m.load[0]).toBe(1.5)
+  })
+
+  it('размер страницы прочитан из заголовка (16К, Apple Silicon)', () => {
+    // свободно (196608+65536+0) × 16384 = 4 ГБ ⇒ занято 12 ГБ
+    expect(m.ramTotal).toBe(16)
+    expect(m.ramUsed).toBe(12)
+  })
+
+  it('подкачка с запятой как разделителем', () => {
+    expect(m.swapTotal).toBe(2)
+    expect(m.swapUsed).toBe(0.5)
+  })
+
+  it('сеть без задваивания', () => {
+    expect(m.netRx).toBe(200000)
+    expect(m.netTx).toBe(100000)
+  })
+
+  it('корень занят на 5%, map/devfs отброшены', () => {
+    expect(m.disk).toBe(5)
+    expect(m.mounts).toHaveLength(1)
+  })
+
+  it('аптайм', () => {
+    expect(m.uptime).toBe(3600)
+  })
+
+  it('ядра пусты — честно, а не выдуманы', () => {
+    expect(m.cores).toHaveLength(0)
+  })
+
+  it('топ процессов', () => {
+    expect(m.top[0]?.cmd).toBe('WindowServer')
+  })
+})
