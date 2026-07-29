@@ -274,6 +274,7 @@ export function registerIpc(): void {
 
   // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))
+  ipcMain.handle('pc:bootEntries', (_e, id: unknown) => pc.bootEntries(asString(id)))
   ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
     const r = await pc.metrics(asString(id))
     // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).

@@ -147,6 +147,7 @@ const api = {
   },
   pc: {
     whichOs: (deviceId: string) => ipcRenderer.invoke('pc:whichOs', deviceId),
+    bootEntries: (deviceId: string) => ipcRenderer.invoke('pc:bootEntries', deviceId),
     metrics: (deviceId: string) => ipcRenderer.invoke('pc:metrics', deviceId),
     boot: (deviceId: string, targetOs: string) => ipcRenderer.invoke('pc:boot', deviceId, targetOs),
     power: (deviceId: string, action: 'reboot' | 'poweroff' | 'suspend') =>

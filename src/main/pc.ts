@@ -486,6 +486,90 @@ export async function powerDiag(deviceId: string): Promise<PowerDiag> {
   return { ok: r.ok, os: ep.os, text: (r.output || r.error || 'нет вывода').slice(0, 1500) }
 }
 
+export interface BootEntry {
+  /** Что подставлять в поле «загрузочная запись»: 4 hex-цифры (Linux) или {GUID} (Windows). */
+  id: string
+  /** Человеческое имя записи, как его показывает сама машина. */
+  label: string
+}
+
+/**
+ * Список загрузочных записей прошивки — чтобы их не приходилось узнавать и вписывать руками.
+ *
+ * Это была главная причина, по которой переключение ОС не работало: без записи «перезагрузка»
+ * не выбирает систему, а лишь отдаёт выбор загрузчику, и машина возвращается туда же, откуда
+ * ушла. Узнать идентификатор можно было только вручную через bcdedit/efibootmgr — то есть
+ * функция существовала, но пользоваться ею было нечем.
+ */
+export async function bootEntries(
+  deviceId: string
+): Promise<{ ok: boolean; os: string; entries: BootEntry[]; error?: string }> {
+  const ep = await liveEndpoint(deviceId)
+  if (!ep) return { ok: false, os: '', entries: [], error: 'машина не в сети' }
+  if (ep.family === 'linux') {
+    const r = await execOnConn(ep.conn, 'efibootmgr 2>/dev/null || sudo -n efibootmgr 2>/dev/null', 10000)
+    if (!r.ok && !r.output.trim())
+      return { ok: false, os: ep.os, entries: [], error: r.error || 'efibootmgr недоступен (система загружена не через EFI?)' }
+    return { ok: true, os: ep.os, entries: parseEfibootmgr(r.output) }
+  }
+  const r = await execOnConn(ep.conn, BCDEDIT_FIRMWARE_CMD, 15000)
+  if (!r.ok && !r.output.trim())
+    return { ok: false, os: ep.os, entries: [], error: r.error || 'bcdedit недоступен (нужны права администратора)' }
+  return { ok: true, os: ep.os, entries: parseBcdedit(r.output) }
+}
+
+/** `Boot0001* Windows Boot Manager\tHD(1,GPT,…)` → { id: '0001', label: 'Windows Boot Manager' } */
+export function parseEfibootmgr(out: string): BootEntry[] {
+  const entries: BootEntry[] = []
+  for (const line of out.split('\n')) {
+    const m = line.match(/^Boot([0-9A-Fa-f]{4})\*?\s+(.+)$/)
+    if (!m) continue
+    // После имени идёт путь к загрузчику, отделённый табуляцией — он в подписи не нужен.
+    const label = m[2].split('\t')[0].trim()
+    if (label) entries.push({ id: m[1], label })
+  }
+  return entries
+}
+
+// Вывод bcdedit идёт в кодировке консоли, а на русской Windows это cp866 — подписи записей
+// приезжали кракозябрами. `chcp 65001` переводит саму консоль в UTF-8 ДО запуска bcdedit,
+// а OutputEncoding говорит PowerShell читать её ответ так же. Без первого второе бесполезно.
+const BCDEDIT_PS =
+  `chcp 65001 > $null; [Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ` +
+  `$ErrorActionPreference='SilentlyContinue'; & bcdedit /enum firmware`
+const BCDEDIT_FIRMWARE_CMD = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(BCDEDIT_PS, 'utf16le').toString('base64')}`
+
+/**
+ * `bcdedit /enum firmware` — блоки, разделённые пустой строкой.
+ *
+ * Разбираем ПО ФОРМЕ, а не по названиям полей: вывод bcdedit переведён, и на русской Windows
+ * там не «identifier», а «идентификатор». Зато форма одинакова везде — первая строка блока
+ * это имя записи, а первый в блоке идентификатор в фигурных скобках принадлежит именно ей
+ * (bcdedit всегда печатает его первым полем; дальше в displayorder идут ЧУЖИЕ идентификаторы).
+ */
+export function parseBcdedit(out: string): BootEntry[] {
+  const entries: BootEntry[] = []
+  const blocks = out.replace(/\r/g, '').split(/\n\s*\n/)
+  for (const b of blocks) {
+    const lines = b.split('\n').filter((l) => l.trim())
+    if (lines.length < 2) continue
+    const label = lines[0].trim()
+    if (/^-+$/.test(label)) continue
+    const idm = b.match(/\{[0-9a-fA-F-]{36}\}|\{[a-z]+\}/)
+    if (!idm) continue
+    const id = idm[0]
+    // Сам диспетчер прошивки — не цель загрузки, а список.
+    if (id === '{fwbootmgr}') continue
+    // Имена у записей прошивки сплошь одинаковые («Приложение микропрограммы»), выбрать по ним
+    // нельзя. Путь к загрузчику различает их сразу: \EFI\refind\refind_x64.efi против
+    // \EFI\Microsoft\Boot\bootmgfw.efi. Ищем по форме — названия полей переведены, значения нет.
+    const pathm = b.match(/\\EFI\\[^\s]+\.efi/i)
+    // Путь идёт ПЕРВЫМ: именно он различает записи, а имя у них у всех одинаковое.
+    entries.push({ id, label: pathm ? `${pathm[0]} · ${label}` : label })
+  }
+  return entries
+}
+
 /** Загрузить target-ОС (по метке) с той, что сейчас запущена. Linux → grub-reboot к записи
  *  (bootEntry или матч по ключевому слову из имени ОС); Windows → reboot (grub-дефолт = Linux). */
 export async function boot(

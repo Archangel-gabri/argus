@@ -210,6 +210,9 @@ export interface ArgusApi {
   }
   pc: {
     whichOs: (deviceId: string) => Promise<{ current: string; family: 'linux' | 'windows' | 'off' }>
+    bootEntries: (
+      deviceId: string
+    ) => Promise<{ ok: boolean; os: string; entries: Array<{ id: string; label: string }>; error?: string }>
     metrics: (deviceId: string) => Promise<{
       current: string
       family: 'linux' | 'windows' | 'off'

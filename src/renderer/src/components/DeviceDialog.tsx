@@ -183,6 +183,10 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
   const [probeMsg, setProbeMsg] = useState<string | null>(null)
+  // Загрузочные записи, прочитанные с самой машины. null — ещё не спрашивали.
+  const [bootList, setBootList] = useState<Array<{ id: string; label: string }> | null>(null)
+  const [bootMsg, setBootMsg] = useState<string | null>(null)
+  const [bootBusy, setBootBusy] = useState(false)
   const [assistText, setAssistText] = useState('')
   const [assisting, setAssisting] = useState(false)
   const [assistMsg, setAssistMsg] = useState<string | null>(null)
@@ -298,6 +302,25 @@ export function DeviceDialog(): React.JSX.Element | null {
     } else {
       setProbeMsg(`✖ ${r.error ?? 'не удалось'}`)
     }
+  }
+
+  // Спросить машину, какие у неё загрузочные записи. Это то, ради чего всё затевалось:
+  // без записи переключение ОС не выбирает систему, а узнать её можно было только руками
+  // через bcdedit/efibootmgr — и человек просто не знал, что вписывать.
+  const loadBootEntries = async (): Promise<void> => {
+    // Спрашивать можно только у уже заведённого устройства: у нового ещё нет записи в хранилище,
+    // а значит и адреса, по которому идти.
+    if (!api || dialog.mode !== 'edit') return
+    setBootBusy(true)
+    setBootMsg(null)
+    const r = await api.pc.bootEntries(dialog.device.id)
+    setBootBusy(false)
+    if (!r.ok) {
+      setBootMsg(`✖ ${r.error ?? 'не удалось прочитать'}`)
+      return
+    }
+    setBootList(r.entries)
+    setBootMsg(r.entries.length ? `найдено записей: ${r.entries.length} (прочитано в ${r.os})` : 'записей не найдено')
   }
 
   const submit = async (e: FormEvent): Promise<void> => {
@@ -428,8 +451,52 @@ export function DeviceDialog(): React.JSX.Element | null {
             <Field label="Роль" hint="Назначение машины: master, cascade, exit, app, db. Показывается на карточке и подбирает картинку в режиме «авто».">
               <input className={inputCls} value={f.role} onChange={set('role')} placeholder="app · cockpit" />
             </Field>
-            <Field label="Загрузочная запись" hint="Нужна только машинам с несколькими ОС, чтобы переключение выбирало нужную. Linux: номер EFI-записи (efibootmgr) либо пункт меню GRUB. Windows: идентификатор вида {xxxxxxxx-…} из bcdedit /enum firmware.">
-              <input className={inputCls} value={f.bootEntry} onChange={set('bootEntry')} placeholder="0002" />
+            <Field
+              label="Загрузочная запись"
+              full
+              hint="Нужна только машинам с несколькими ОС, чтобы переключение выбирало нужную. Нажми «Спросить машину» — Argus прочитает список сам; вручную это Linux: номер EFI-записи (efibootmgr), Windows: идентификатор вида {xxxxxxxx-…} из bcdedit /enum firmware."
+            >
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input className={cn(inputCls, 'flex-1')} value={f.bootEntry} onChange={set('bootEntry')} placeholder="0002" />
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={() => void loadBootEntries()}
+                      disabled={bootBusy}
+                      className="shrink-0 rounded-md bg-card px-2.5 py-1.5 text-[11px] font-medium text-slate-300 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
+                    >
+                      {bootBusy ? 'читаю…' : 'Спросить машину'}
+                    </button>
+                  )}
+                </div>
+                {bootMsg && <p className="text-[11px] text-slate-500">{bootMsg}</p>}
+                {bootList && bootList.length > 0 && (
+                  <div className="space-y-1 rounded-md border border-border bg-bg/40 p-1.5">
+                    {bootList.map((b) => (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setF((p) => ({ ...p, bootEntry: b.id }))}
+                        className={cn(
+                          'block w-full rounded px-2 py-1 text-left text-[11px] leading-snug hover:bg-white/5',
+                          f.bootEntry === b.id ? 'text-accent' : 'text-slate-300'
+                        )}
+                        title={`${b.id} — ${b.label}`}
+                      >
+                        {/* Без обрезки: обрезался ровно путь загрузчика, а он тут единственное,
+                            по чему записи вообще можно различить. */}
+                        <span className="block break-all">{b.label}</span>
+                        <span className="block break-all font-mono text-[10px] text-slate-600">{b.id}</span>
+                      </button>
+                    ))}
+                    <p className="px-2 pt-0.5 text-[11px] text-slate-600">
+                      Нажми на запись — она подставится в поле. Для другой ОС этой же машины запись указывается
+                      в её строке ниже.
+                    </p>
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="Адрес" hint="IP или имя хоста для SSH. Можно адрес в Tailscale (100.x) — так надёжнее, чем публичный IP.">
               <input
