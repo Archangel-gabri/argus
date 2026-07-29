@@ -363,10 +363,7 @@ export function registerIpc(): void {
   // Собственный агент трансляции: статус, установка, удаление.
   ipcMain.handle('agent:status', (_e, deviceId: unknown) => agent.agentStatus(asString(deviceId)))
   ipcMain.handle('agent:provision', (_e, deviceId: unknown) => agent.provisionAgent(asString(deviceId)))
-  ipcMain.handle('agent:forget', (_e, deviceId: unknown) => {
-    vault.setAgentToken(asString(deviceId), null)
-    return { ok: true }
-  })
+  ipcMain.handle('agent:forget', (_e, deviceId: unknown) => agent.forgetAgent(asString(deviceId)))
   ipcMain.handle('screen:claim', (e, handle: unknown) =>
     screen.screenClaim(asString(handle), BrowserWindow.fromWebContents(e.sender)?.id ?? null)
   )

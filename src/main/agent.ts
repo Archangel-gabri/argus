@@ -386,7 +386,13 @@ WantedBy=default.target
 `
   const cmd =
     `mkdir -p "$HOME/.config/systemd/user" && cat > "$HOME/.config/systemd/user/argus-agent.service" <<'UNIT'\n${unit}UNIT\n` +
-    `systemctl --user daemon-reload && systemctl --user enable --now argus-agent.service && ` +
+    // ВАЖНО: именно restart, а не только enable --now. При повторной установке служба уже
+    // запущена, и `enable --now` для неё ничего не делает — в памяти остаётся СТАРЫЙ агент
+    // со старым сертификатом, хотя файл на диске уже новый. Ровно на этом установка потом
+    // падала с «сертификат ещё не действителен»: часы починили, файл заменили, а отвечал
+    // по-прежнему старый процесс.
+    `systemctl --user daemon-reload && systemctl --user enable argus-agent.service && ` +
+    `systemctl --user restart argus-agent.service && ` +
     // uinput: группа input + правило udev. Без sudo просто пропускаем — агент скажет об этом сам.
     `{ sudo -n sh -c 'modprobe uinput; usermod -aG input '"$USER"'; printf %s "KERNEL==\\"uinput\\", GROUP=\\"input\\", MODE=\\"0660\\"\\n" > /etc/udev/rules.d/99-argus-uinput.rules; udevadm control --reload-rules; udevadm trigger' >/dev/null 2>&1 || true; }; ` +
     `echo ok`
@@ -412,15 +418,61 @@ async function uploadFile(
     )
     const base = (home.output || '').trim()
     if (!base) return { ok: false, error: 'не удалось определить домашний каталог' }
-    const remote =
-      family === 'windows' ? `${base}\\Argus\\${remoteName}` : `${base}/.argus/${remoteName}`
-    const r = await sftpPutFile(s.sessionId, localPath, remote)
+    // Пишем во ВРЕМЕННОЕ имя и переименовываем поверх.
+    //
+    // Прямая запись в файл работающего агента невозможна: ядро держит файл запущенной программы
+    // и отвечает «текстовый файл занят», а по SFTP это приходит невнятным «Failure». Именно на
+    // этом падала повторная установка — самый частый случай, обновление уже работающего агента.
+    // Переименование же атомарно и старому процессу не мешает: он продолжает жить со своей
+    // копией, а новое имя сразу указывает на свежий файл.
+    const dir = family === 'windows' ? `${base}\\Argus` : `${base}/.argus`
+    const sep = family === 'windows' ? '\\' : '/'
+    const remote = `${dir}${sep}${remoteName}`
+    const tmp = `${remote}.new`
+    const r = await sftpPutFile(s.sessionId, localPath, tmp)
     if (!r.ok) return { ok: false, error: r.error }
-    if (family !== 'windows') await execOnce(deviceId, `chmod 755 "$HOME/.argus/${remoteName}"`)
+    if (family === 'windows') {
+      // На Windows переименование поверх существующего файла не проходит, а запущенный
+      // исполняемый файл переименовать МОЖНО — поэтому сначала уводим старый в сторону.
+      const mv = await execOnce(
+        deviceId,
+        psCmd(
+          `$t='${remote}'; $n='${tmp}'; if (Test-Path $t) { Move-Item -Force $t "$t.old" -EA SilentlyContinue }; ` +
+            `Move-Item -Force $n $t; Remove-Item "$t.old" -Force -EA SilentlyContinue; 'ok'`
+        )
+      )
+      if (!mv.ok) return { ok: false, error: mv.error || 'не удалось заменить файл агента' }
+    } else {
+      const mv = await execOnce(deviceId, `mv -f "${remote}.new" "${remote}" && chmod 755 "${remote}"`)
+      if (!mv.ok) return { ok: false, error: mv.error || 'не удалось заменить файл агента' }
+    }
     return { ok: true }
   } finally {
     sftpClose(s.sessionId)
   }
+}
+
+/**
+ * Забыть агента ПОЛНОСТЬЮ — вместе с его учётными файлами на самой машине.
+ *
+ * Раньше «забыть» стирало только запись в хранилище. Агент на машине оставался вместе со своим
+ * сертификатом и токеном, и повторная установка их переиспользовала — то есть «переустановить»
+ * не чинило ровно тех поломок, ради которых его и нажимают. Живой пример: сертификат, выписанный
+ * при сбитых часах, оставался негодным после того, как часы починили.
+ *
+ * Сам двоичный файл не трогаем: он будет перезаписан установкой, а удалять работающую программу
+ * ради выдачи новых ключей незачем.
+ */
+export async function forgetAgent(deviceId: string): Promise<{ ok: boolean; error?: string }> {
+  setAgentToken(deviceId, null)
+  const os = await whichOs(deviceId)
+  if (os.family === 'off') return { ok: true } // машина не в сети — стёрли что могли
+  const cmd =
+    os.family === 'windows'
+      ? psCmd(`Remove-Item "$env:LOCALAPPDATA\\Argus\\agent.crt","$env:LOCALAPPDATA\\Argus\\agent.key","$env:LOCALAPPDATA\\Argus\\agent.token" -Force -EA SilentlyContinue; 'ok'`)
+      : 'rm -f "$HOME/.argus/agent.crt" "$HOME/.argus/agent.key" "$HOME/.argus/agent.token"'
+  const r = await execOnce(deviceId, cmd)
+  return r.ok ? { ok: true } : { ok: false, error: r.error }
 }
 
 /** Данные для подключения окна экрана к агенту. */

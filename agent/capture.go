@@ -19,6 +19,13 @@ type captureOption struct {
 	source  string
 	encoder string
 	args    []string
+	// bin — чем запускать. Пусто = ffmpeg. На Wayland захват идёт через GStreamer, потому что
+	// ffmpeg просто не умеет читать поток PipeWire, который отдаёт композитор.
+	bin string
+	// prepare — подготовка перед запуском: вернуть окончательные аргументы и уборку за собой.
+	// Нужна там, где аргументы известны только после переговоров (номер узла PipeWire выдаёт
+	// портал, и узнать его заранее нельзя).
+	prepare func() ([]string, func(), error)
 }
 
 // AU — законченный access unit (кадр) H.264 в формате Annex-B.
@@ -88,7 +95,22 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	cmd := exec.CommandContext(cctx, ffmpegPath(), opt.args...)
+	bin := opt.bin
+	if bin == "" {
+		bin = ffmpegPath()
+	}
+	args := opt.args
+	if opt.prepare != nil {
+		prepared, cleanup, err := opt.prepare()
+		if err != nil {
+			return err
+		}
+		if cleanup != nil {
+			defer cleanup()
+		}
+		args = prepared
+	}
+	cmd := exec.CommandContext(cctx, bin, args...)
 	configureProc(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -100,7 +122,7 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 		return err
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("не удалось запустить ffmpeg: %w", err)
+		return fmt.Errorf("не удалось запустить %s: %w", bin, err)
 	}
 	s.mu.Lock()
 	s.cmd = cmd
