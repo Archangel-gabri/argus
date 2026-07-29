@@ -42,6 +42,9 @@ function state(): VaultState {
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
+/** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
+const probeMisses = new Map<string, number>()
+
 export function registerIpc(): void {
   ipcMain.handle('vault:state', () => state())
 
@@ -170,8 +173,24 @@ export function registerIpc(): void {
     // получает честный пропуск (не ровные 0%), а кэш последнего состояния перестаёт врать.
     // Раньше провалы не писались вовсе, и выключенный сервер после перезагрузки списка
     // воскресал как «online» из устаревшего снимка.
-    if (vault.isUnlocked()) vault.recordSnapshot(id, r.ok ? r : { status: 'offline' })
-    return r
+    //
+    // Но ОДНА осечка — это ещё не «выключен». Замерено на живом парке: канал до нод флапает
+    // так, что на одном проходе падает одна нода, а через пять секунд она отвечает и падает
+    // другая. Отметить такую машину выключенной означает соврать. Первый промах = «не знаю»
+    // (снимок не трогаем, старый остаётся), выключенной считаем со второго подряд.
+    // Тот же принцип уже работает у быстрой проверки живости — здесь он просто был не доделан.
+    if (r.ok) {
+      probeMisses.delete(id)
+      if (vault.isUnlocked()) vault.recordSnapshot(id, r)
+      return r
+    }
+    const misses = (probeMisses.get(id) ?? 0) + 1
+    probeMisses.set(id, misses)
+    if (misses >= 2) {
+      if (vault.isUnlocked()) vault.recordSnapshot(id, { status: 'offline' })
+      return r
+    }
+    return { ...r, status: 'unknown' as const }
   })
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
     vault.isUnlocked() ? vault.getSnapshots(asString(deviceId), Number(limit) || 30) : []
