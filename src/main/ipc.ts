@@ -208,6 +208,13 @@ export function registerIpc(): void {
     if (vault.isUnlocked()) vault.forgetHostKey(asString(host), Number(port) || 22)
     return { ok: true }
   })
+  // То же самое, но адрес берётся у самого подключения — важно для многозагрузочных машин,
+  // где живая ОС может сидеть на другом адресе и порту.
+  ipcMain.handle('ssh:trustDeviceKey', (_e, deviceId: unknown) =>
+    vault.isUnlocked()
+      ? ssh.forgetDeviceHostKey(asString(deviceId))
+      : Promise.resolve({ ok: false, error: 'хранилище закрыто' })
+  )
 
   // Snippets (saved commands) — stored in the encrypted vault
   ipcMain.handle('snippets:list', () => (vault.isUnlocked() ? vault.listSnippets() : []))

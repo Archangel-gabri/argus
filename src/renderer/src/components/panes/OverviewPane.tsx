@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   ExternalLink,
   RotateCw,
@@ -39,6 +39,8 @@ function powerMsg(r: PowerResult): string {
       return r.output || '✓ команда отправлена'
     case 'rejected':
       return `✖ отклонено хостом: ${r.error}`
+    case 'unreachable':
+      return `✖ связь оборвалась до отправки команды — питание НЕ тронуто: ${r.error}`
     case 'still-up':
       return `⚠ ${r.error}`
     case 'no-endpoint':
@@ -48,7 +50,8 @@ function powerMsg(r: PowerResult): string {
   }
 }
 // После неуспеха показываем кнопку «Диагностика».
-const powerFailed = (r: PowerResult): boolean => r.phase === 'rejected' || r.phase === 'still-up'
+const powerFailed = (r: PowerResult): boolean =>
+  r.phase === 'rejected' || r.phase === 'still-up' || r.phase === 'unreachable'
 
 /** Есть ли чем разбудить устройство обратно. Wake-on-LAN работает только в своей L2-сети и
  *  только при заданном MAC — у VPS его нет, значит выключение необратимо средствами Argus. */
@@ -90,18 +93,26 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   const osList = [d.os || 'Linux', ...d.altOs.map((a) => a.os || 'OS')]
   const famOf = (os: string): 'windows' | 'linux' => (/win/i.test(os) ? 'windows' : 'linux')
 
+  // Флаг живости хранится в ref, а не в замыкании: интервал переживает перерисовки,
+  // и без него ответ на запрос, отправленный до закрытия карточки, приходил в уже снятый
+  // с экрана компонент — React ругается, а пользователь на секунду видит чужую ОС.
+  const aliveRef = useRef(true)
   const refresh = async (): Promise<void> => {
     if (!api) return
     setCurrent(null)
     const r = await api.pc.whichOs(d.id)
-    setCurrent(r.current)
+    if (aliveRef.current) setCurrent(r.current)
   }
   // Опрашиваем живую ОС на маунте И каждые 15с, пока карточка открыта — иначе после ребута/
   // boot-switch сегмент «Сейчас: …» навсегда показывал ОС на момент открытия drawer.
   useEffect(() => {
+    aliveRef.current = true
     refresh()
     const t = setInterval(refresh, 15000)
-    return () => clearInterval(t)
+    return () => {
+      aliveRef.current = false
+      clearInterval(t)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [d.id])
 

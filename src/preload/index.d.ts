@@ -89,6 +89,9 @@ export interface ArgusApi {
       error?: string
     }>
     forgetHostKey: (host: string, port: number) => Promise<{ ok: boolean }>
+    trustDeviceKey: (
+      deviceId: string
+    ) => Promise<{ ok: boolean; host?: string; port?: number; error?: string }>
     onData: (cb: (p: { sessionId: string; data: string }) => void) => () => void
     onExit: (cb: (p: { sessionId: string }) => void) => () => void
   }

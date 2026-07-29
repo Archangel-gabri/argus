@@ -46,6 +46,7 @@ const api = {
     exec: (deviceId: string, command: string) => ipcRenderer.invoke('ssh:exec', deviceId, command),
     forgetHostKey: (host: string, port: number) =>
       ipcRenderer.invoke('ssh:forgetHostKey', host, port),
+    trustDeviceKey: (deviceId: string) => ipcRenderer.invoke('ssh:trustDeviceKey', deviceId),
     onData: (cb: (p: { sessionId: string; data: string }) => void) => {
       const h = (_e: IpcRendererEvent, p: { sessionId: string; data: string }): void => cb(p)
       ipcRenderer.on('ssh:data', h)

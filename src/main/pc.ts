@@ -5,12 +5,39 @@ import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn } from './ssh'
 import { tcpAlive } from './liveness'
+import { singleFlight } from './single-flight'
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
 
 const family = (osLabel: string): 'linux' | 'windows' => (/win/i.test(osLabel) ? 'windows' : 'linux')
+
+// Семейство по ФАКТУ, если метка ОС не заполнена.
+//
+// Метка — это то, что пользователь написал руками, и она вполне может быть пустой. Пустую строку
+// `family()` относила к Linux, а значит на безымянный Windows-хост уходил `systemctl` — команда
+// питания просто не работала, и по сообщению было не понять почему. Спрашиваем систему.
+// Отдельным вызовом, а не заменой `echo argus-ok`: тот же `isAlive` проверяет, ПОГАСЛА ли машина
+// после poweroff, и команда, которой на Windows нет, соврала бы там «погасла».
+const famCache = new Map<string, 'linux' | 'windows'>()
+async function resolveFamily(ep: OsEndpoint): Promise<'linux' | 'windows'> {
+  if (ep.os.trim()) return family(ep.os)
+  const key = `${ep.conn.host}:${ep.conn.port}`
+  const hit = famCache.get(key)
+  if (hit) return hit
+  const r = await execOnConn(ep.conn, 'uname -s', 8000)
+  const text = `${r.output}\n${r.error ?? ''}`
+  // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
+  // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
+  const fam: 'linux' | 'windows' = /linux|darwin|bsd|sunos|aix/i.test(text)
+    ? 'linux'
+    : /not recognized|not found|CommandNotFound|не является|не найден/i.test(text)
+      ? 'windows'
+      : 'linux'
+  famCache.set(key, fam)
+  return fam
+}
 
 /** POSIX single-quote экранирование: любую строку безопасно вставить в shell без инъекции. */
 const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
@@ -32,8 +59,8 @@ function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
     if (!pending) return resolve(null)
     for (const ep of eps) {
       void isAlive(ep.conn)
-        .then((ok) => {
-          if (ok) resolve({ ...ep, family: family(ep.os) })
+        .then(async (ok) => {
+          if (ok) resolve({ ...ep, family: await resolveFamily(ep) })
           else if (--pending === 0) resolve(null)
         })
         .catch(() => {
@@ -57,13 +84,17 @@ async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
   const open = reach.filter((x) => x.r.up).map((x) => x.ep)
   // Ровно один эндпоинт отдал SSH-баннер — этого достаточно: одновременно две ОС на одной
   // железке не работают. Второе SSH-подключение ради `echo` стоило бы ещё ~2с на ровном месте.
-  if (open.length === 1) return { ...open[0], family: family(open[0].os) }
+  if (open.length === 1) return { ...open[0], family: await resolveFamily(open[0]) }
   // Никто не ответил (фаервол/нестандартный порт) или ответили несколько — проверяем по-честному.
   return firstAlive(open.length ? open : eps)
 }
 
 /** Текущая запущенная ОС: метка + семейство (или off). */
-export async function whichOs(deviceId: string): Promise<{ current: string; family: OsFamily }> {
+export function whichOs(deviceId: string): Promise<{ current: string; family: OsFamily }> {
+  return singleFlight(`whichOs:${deviceId}`, () => whichOsNow(deviceId))
+}
+
+async function whichOsNow(deviceId: string): Promise<{ current: string; family: OsFamily }> {
   const ep = await liveEndpoint(deviceId)
   return ep ? { current: ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux'), family: ep.family } : { current: '', family: 'off' }
 }
@@ -219,7 +250,11 @@ function parseWinMetrics(out: string): { cpu?: number; ramUsed?: number; ramTota
 }
 
 /** Метрики живой ОС (OS-aware). */
-export async function metrics(deviceId: string): Promise<PcMetrics> {
+export function metrics(deviceId: string): Promise<PcMetrics> {
+  return singleFlight(`pcMetrics:${deviceId}`, () => metricsNow(deviceId))
+}
+
+async function metricsNow(deviceId: string): Promise<PcMetrics> {
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { current: '', family: 'off' }
   const label = ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux')
@@ -265,31 +300,38 @@ export async function wake(deviceId: string): Promise<{ ok: boolean; error?: str
   for (let i = 0; i < 16; i++) macBuf.copy(packet, 6 + i * 6)
   return new Promise((resolve) => {
     const sock = dgram.createSocket('udp4')
-    sock.once('error', (e) => {
+    let settled = false
+    // Любой выход отсюда обязан закрыть сокет и ответить ровно один раз. Без этого запрос
+    // на пробуждение мог зависнуть НАВСЕГДА: `bind` без сети и обратный вызов `send`, который
+    // не приходит, не порождают события 'error' — промис просто оставался висеть, а с ним
+    // и кнопка в интерфейсе.
+    const finish = (res: { ok: boolean; error?: string }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
       try {
         sock.close()
       } catch {
-        /* ignore */
+        /* сокет мог уже закрыться сам */
       }
-      resolve({ ok: false, error: e.message })
-    })
+      resolve(res)
+    }
+    const timer = setTimeout(() => finish({ ok: false, error: 'не удалось отправить magic-пакет за 5с' }), 5000)
+
+    sock.once('error', (e) => finish({ ok: false, error: e.message }))
     sock.bind(() => {
       try {
         sock.setBroadcast(true)
-      } catch {
-        /* ignore */
+      } catch (e) {
+        return finish({ ok: false, error: `широковещание недоступно: ${(e as Error).message}` })
       }
-      // Шлём в общий broadcast и порт 9 (стандарт WoL); дублируем на 7.
+      // Шлём в общий broadcast на порт 9 (стандарт WoL); дублируем на 7.
+      // Ошибку отправки НЕ проглатываем: раньше отказ ядра всё равно давал «✓ отправлено».
       let pending = 2
-      const doneOne = (): void => {
-        if (--pending === 0) {
-          try {
-            sock.close()
-          } catch {
-            /* ignore */
-          }
-          resolve({ ok: true })
-        }
+      let sendErr: string | undefined
+      const doneOne = (err: Error | null): void => {
+        if (err && !sendErr) sendErr = err.message
+        if (--pending === 0) finish(sendErr ? { ok: false, error: sendErr } : { ok: true })
       }
       sock.send(packet, 0, packet.length, 9, '255.255.255.255', doneOne)
       sock.send(packet, 0, packet.length, 7, '255.255.255.255', doneOne)
@@ -343,8 +385,17 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 // Разрыв SSH-канала — ожидаемый исход poweroff/reboot: команда ушла, но exit-код прийти не успел.
 // Не считать это провалом (иначе кнопка врёт «✖», хотя машина гасится).
+//
+// НО: разрыв засчитывается только ПОСЛЕ того, как команда ушла. Ошибки фазы подключения
+// («Timed out while waiting for handshake», отказ в соединении, провал авторизации) означают
+// ровно обратное — команда не выполнялась вообще. Раньше они подходили под общий шаблон
+// «timed out» и превращались в бодрое «✓ ПК перезагружается», хотя не произошло ничего.
+const isConnectFailure = (err: string | undefined): boolean =>
+  /handshake|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|authentication|All configured authentication methods failed|connect ETIMEDOUT/i.test(
+    err ?? ''
+  )
 const isDropped = (err: string | undefined): boolean =>
-  /closed|disconnect|ECONNRESET|timed?\s?out|exit \?|signal /i.test(err ?? '')
+  !isConnectFailure(err) && /closed|disconnect|ECONNRESET|timed?\s?out|exit \?|signal /i.test(err ?? '')
 
 /** Питание на живой ОС. Двухфазно: отправляем команду, затем для poweroff/suspend проверяем,
  *  что машина реально погасла (иначе честно сообщаем «всё ещё отвечает» + причину из stderr). */
@@ -379,11 +430,12 @@ export async function power(
   const dropped = isDropped(r.error)
 
   // Явный отказ хоста (не разрыв): показать РЕАЛЬНУЮ причину (inhibitor/polkit/нет прав).
+  // Отдельно — случай «до хоста не доехали»: это НЕ отказ хоста, команда не выполнялась.
   if (!r.ok && !dropped) {
     return {
       ok: false,
       os: ep.os,
-      phase: 'rejected',
+      phase: isConnectFailure(r.error) ? 'unreachable' : 'rejected',
       output: r.output,
       error: (r.output?.trim() || r.error || 'команда отклонена хостом').slice(0, 400)
     }

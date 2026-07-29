@@ -8,7 +8,6 @@ import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/type
 import { CURRENCY_CODES } from '@/types'
 
 const CURRENCIES: readonly Currency[] = CURRENCY_CODES
-const STATUSES: Status[] = ['online', 'degraded', 'offline', 'reboot', 'unknown', 'maintenance']
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
   { id: 'server', label: 'Сервер' },
   { id: 'pc', label: 'ПК' },
@@ -70,7 +69,7 @@ interface FormFields {
 
 const EMPTY: FormFields = {
   name: '', provider: '', kind: 'server', ip: '', port: '22', user: 'root', os: '', country: '', flag: '',
-  status: 'online', amount: '', currency: 'USD', consoleUrl: '',
+  status: 'unknown', amount: '', currency: 'USD', consoleUrl: '',
   authMethod: 'password', password: '', privateKey: '', passphrase: '', jumpId: '', altOs: [], mac: '',
   role: '', notes: '', bootEntry: '', icon: ''
 }
@@ -417,13 +416,6 @@ export function DeviceDialog(): React.JSX.Element | null {
               >
                 {KINDS.map((k) => (
                   <option key={k.id} value={k.id}>{k.label}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Статус" hint="Начальное значение. Дальше приложение определяет состояние само при каждой проверке.">
-              <select className={inputCls} value={f.status} onChange={set('status')}>
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
                 ))}
               </select>
             </Field>

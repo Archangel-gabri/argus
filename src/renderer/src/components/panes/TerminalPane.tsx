@@ -33,6 +33,9 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
   const [status, setStatus] = useState<ConnStatus>('connecting')
   const [errMsg, setErrMsg] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
+  // Отдельно от errMsg: полоса про ключ хоста показывается по тексту errMsg, и запись
+  // туда ошибки самого доверия схлопнула бы полосу вместе с кнопкой.
+  const [trustErr, setTrustErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -120,9 +123,17 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
     }
   }, [device.id, retry])
 
+  // Снятие закрепления делает main по ТОМУ адресу, к которому реально пойдёт подключение.
+  // Здесь адрес брать нельзя: у многозагрузочной машины живая ОС может сидеть на другом
+  // адресе и порту, и мы бы забыли чужой ключ, а ошибка осталась бы на месте.
   const trustNewKey = async (): Promise<void> => {
     if (!api) return
-    await api.ssh.forgetHostKey(device.ip, device.port)
+    setTrustErr(null)
+    const r = await api.ssh.trustDeviceKey(device.id)
+    if (!r.ok) {
+      setTrustErr(r.error ?? 'не удалось снять закрепление ключа')
+      return
+    }
     setErrMsg(null)
     setStatus('connecting')
     setRetry((n) => n + 1)
@@ -151,6 +162,7 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
           <ShieldAlert className="h-4 w-4 shrink-0 text-rose-400" />
           <span className="min-w-0 flex-1 text-xs text-rose-200">
             Ключ хоста изменился — возможен MITM. Доверяйте только если сервер переустанавливали/меняли ключ.
+            {trustErr && <span className="mt-0.5 block text-rose-300/80">Не вышло: {trustErr}</span>}
           </span>
           <button
             onClick={() => void trustNewKey()}

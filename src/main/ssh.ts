@@ -1,9 +1,10 @@
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import type { WebContents } from 'electron'
-import { getDeviceConn, getOsEndpoints, checkHostKey, type DeviceConn } from './vault'
+import { getDeviceConn, getOsEndpoints, checkHostKey, forgetHostKey, type DeviceConn } from './vault'
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import { tcpAlive } from './liveness'
+import { singleFlight } from './single-flight'
 import type { LiveMetrics } from './types'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
@@ -234,6 +235,28 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
   })
 }
 
+/**
+ * «Доверять и переподключиться» — снять закрепление с ТОГО эндпоинта, к которому реально
+ * пойдёт следующее подключение.
+ *
+ * Раньше интерфейс снимал закрепление с основного адреса устройства. У двухзагрузочного ПК
+ * терминал идёт к той половине, что сейчас живая, — и это может быть альтернативная ОС со своим
+ * адресом и своим ключом. Забывали не тот ключ, переподключение падало с той же ошибкой,
+ * и кнопка не делала ничего, сколько по ней ни жми. Спрашиваем адрес там же, где его берёт
+ * само подключение, — у resolveConn.
+ *
+ * Ключ бастиона (jump) намеренно не трогаем: он закреплён для многих устройств сразу,
+ * и снимать его из-за одного хоста было бы слишком широким жестом.
+ */
+export async function forgetDeviceHostKey(
+  deviceId: string
+): Promise<{ ok: boolean; host?: string; port?: number; error?: string }> {
+  const conn = await resolveConn(deviceId)
+  if (!conn) return { ok: false, error: 'устройство не отвечает — непонятно, какому адресу доверять' }
+  forgetHostKey(conn.host, conn.port)
+  return { ok: true, host: conn.host, port: conn.port }
+}
+
 export function writeShell(sessionId: string, data: string): void {
   sessions.get(sessionId)?.stream?.write(data)
 }
@@ -358,7 +381,12 @@ export function parseLinuxProbe(out: string): ProbeResult {
 
 export const LINUX_PROBE_CMD = PROBE_CMD
 
+// Одновременные опросы одного устройства склеиваются в один — см. single-flight.ts.
 export function probe(deviceId: string): Promise<ProbeResult> {
+  return singleFlight(`probe:${deviceId}`, () => probeNow(deviceId))
+}
+
+function probeNow(deviceId: string): Promise<ProbeResult> {
   const conn = getDeviceConn(deviceId)
   if (!conn || isPlaceholderHost(conn.host) || !hasCredential(conn)) {
     return Promise.resolve({ ok: false, status: 'offline', error: 'no host/credentials' })

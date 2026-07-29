@@ -239,12 +239,13 @@ export interface LiveMetrics {
 
 /** Результат операции питания (двухфазный вердикт: принято → проверено).
  *  phase: accepted = команда ушла (для reboot); verified = машина реально погасла/уснула;
+ *  unreachable = до хоста не доехали, команда НЕ выполнялась (не путать с rejected);
  *  rejected = хост отклонил (inhibitor/polkit/нет прав) — error несёт реальный stderr;
  *  still-up = команда ушла, но хост всё ещё отвечает; no-endpoint = не в сети. */
 export interface PowerResult {
   ok: boolean
   os: string
-  phase: 'accepted' | 'verified' | 'rejected' | 'still-up' | 'no-endpoint'
+  phase: 'accepted' | 'verified' | 'rejected' | 'still-up' | 'no-endpoint' | 'unreachable'
   output?: string
   error?: string
 }

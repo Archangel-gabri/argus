@@ -358,10 +358,23 @@ export async function initialize(password: string): Promise<void> {
   const keyHex = await deriveKeyHex(password, salt)
   const d = openEncrypted(keyHex)
   migrate(d)
-  seedInto(d)
+  // Соль публикуется СРАЗУ после создания схемы и ДО заполнения.
+  //
+  // Порядок здесь не косметика. Файл базы уже создан и зашифрован этим ключом, а признаком
+  // «хранилище существует» служит meta.json. Если упасть между этими двумя шагами, на диске
+  // остаётся база, ключ от которой нигде не записан: следующий запуск считает хранилище
+  // несозданным, берёт НОВУЮ соль — и не может открыть старый файл. Хранилище окирпичено
+  // ещё до того, как в него что-то положили.
   const meta: Meta = { salt: salt.toString('hex'), version: 1, createdAt: Date.now() }
   writeFileSync(metaPath(), JSON.stringify(meta), { mode: 0o600 })
   db = d
+  // Заполнение своим парком — удобство, а не обязанность. Кривой fleet.local.json не повод
+  // терять хранилище: пустое рабочее лучше сломанного.
+  try {
+    seedInto(d)
+  } catch (e) {
+    console.error('[vault] не удалось загрузить fleet.local.json, хранилище создано пустым:', (e as Error).message)
+  }
 }
 
 export async function unlock(password: string): Promise<void> {
@@ -382,12 +395,19 @@ export async function unlock(password: string): Promise<void> {
     }
   }
 
+  let keyWasCorrect = false
+  let schemaError: Error | null = null
   for (const cand of candidates) {
     const keyHex = await deriveKeyHex(password, Buffer.from(cand.salt, 'hex'))
     const d = openEncrypted(keyHex)
     try {
       // Force key verification: a wrong key makes the first read throw.
       d.prepare('SELECT count(*) AS n FROM sqlite_master').get()
+      // С этого места ПАРОЛЬ ТОЧНО ВЕРЕН: чтение зашифрованной базы удалось.
+      // Всё, что упадёт дальше, — это про схему, а не про пароль. Раньше такая ошибка
+      // проваливалась в общий catch и выходила наружу как «неверный мастер-пароль»:
+      // человек до бесконечности перенабирал правильный пароль, а дело было не в нём.
+      keyWasCorrect = true
       migrate(d) // idempotent — keeps schema current
       db = d
       if (cand.fromNew) {
@@ -402,7 +422,10 @@ export async function unlock(password: string): Promise<void> {
         }
       }
       return
-    } catch {
+    } catch (e) {
+      // Первую такую ошибку и запоминаем: она относится к сработавшему ключу,
+      // ошибки последующих кандидатов — уже про чужую соль.
+      if (keyWasCorrect && !schemaError) schemaError = e as Error
       try {
         d.close()
       } catch {
@@ -410,6 +433,8 @@ export async function unlock(password: string): Promise<void> {
       }
     }
   }
+  if (schemaError)
+    throw new Error(`Пароль верный, но хранилище не открылось: ${schemaError.message}`)
   throw new Error('Invalid master password')
 }
 
