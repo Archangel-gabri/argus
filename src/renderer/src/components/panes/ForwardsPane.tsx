@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Loader2, Trash2, ArrowRight, ArrowRightLeft, RefreshCw, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { Hint } from '@/components/ui/Hint'
 import type { DeviceDTO, ForwardInfo, ListeningPort } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
@@ -192,7 +193,13 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
 
       {/* ── Ручной туннель + пресеты ── */}
       <div className="rounded-lg border border-border bg-bg/40 p-3">
-        <div className="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Ручной туннель</div>
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-slate-500">
+          Ручной туннель
+          <Hint>
+            Доступ к сервису на сервере через localhost. Туннель живёт, пока открыто приложение.
+            UDP через SSH -L не туннелируется.
+          </Hint>
+        </div>
         <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-slate-400">
           <span className="font-mono">localhost:</span>
           <input
@@ -239,9 +246,6 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
           ))}
         </div>
         {error && <div className="mt-2 text-xs text-rose-400">{error}</div>}
-        <p className="mt-2 text-[11px] text-slate-600">
-          Доступ к сервису на сервере через localhost. Туннель живёт, пока открыто приложение. UDP через SSH -L не туннелируется.
-        </p>
       </div>
     </div>
   )

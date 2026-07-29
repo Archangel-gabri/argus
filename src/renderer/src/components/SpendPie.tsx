@@ -9,7 +9,7 @@ export function SpendPie(): React.JSX.Element {
   const monthly = totals(devices).monthly
 
   if (monthly <= 0) {
-    return <p className="text-xs text-slate-500">No tracked spend yet.</p>
+    return <p className="text-xs text-slate-500">Расходов пока нет</p>
   }
 
   return (

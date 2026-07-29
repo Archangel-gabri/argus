@@ -71,7 +71,7 @@ export function SshImportDialog(): React.JSX.Element | null {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {!api ? (
-            <p className="text-sm text-slate-500">Доступно только в десктоп-приложении.</p>
+            <p className="text-sm text-slate-500">Только в приложении</p>
           ) : loading ? (
             <div className="flex items-center gap-2 text-sm text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin" /> {isTailscale ? 'Опрашиваю тайнет…' : 'Читаю ~/.ssh/config…'}

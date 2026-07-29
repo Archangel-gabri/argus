@@ -24,6 +24,7 @@ import {
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { deviceIllustration } from '@/lib/illustrations'
+import { Hint } from '@/components/ui/Hint'
 import { STATUS, ProviderBadge, KIND_LABEL, isSshCapable } from '@/components/ServerCard'
 import { useDevices } from '@/store/devices'
 import type { DeviceDTO, PowerResult, HardwareInfo } from '@/types'
@@ -57,15 +58,17 @@ const powerFailed = (r: PowerResult): boolean =>
  *  только при заданном MAC — у VPS его нет, значит выключение необратимо средствами Argus. */
 const hasWakePath = (d: DeviceDTO): boolean => !!d.mac
 
-/** Постоянная пометка под кнопками, чтобы тупик был виден ДО клика, а не только в диалоге. */
+/** Постоянная пометка под кнопками, чтобы тупик был виден ДО клика, а не только в диалоге.
+ *  На экране остаётся короткая строка; почему именно так — под знаком «?». */
 function OneWayHint(): React.JSX.Element {
   return (
-    <div className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-amber-200/70">
-      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-      <span>
+    <div className="mt-2 flex items-center gap-1.5 text-[11px] leading-relaxed text-amber-200/70">
+      <AlertTriangle className="h-3 w-3 shrink-0" />
+      <span>Выключение необратимо — нет MAC</span>
+      <Hint>
         «Выключить» и «Сон» здесь необратимы: Wake-on-LAN недоступен без MAC, поднимать придётся
-        вручную (панель хостера или сама машина).
-      </span>
+        вручную — из панели хостера или с самой машины.
+      </Hint>
     </div>
   )
 }
@@ -261,9 +264,6 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
           {diag}
         </pre>
       )}
-      <p className="mt-1.5 text-[11px] text-slate-600">
-        Клик по неактивной ОС — перезагрузка в неё.{d.mac ? ' «Включить» — Wake-on-LAN (будит из сна S3).' : ' Укажи MAC в карточке для WoL.'}
-      </p>
     </div>
   )
 }
@@ -358,7 +358,7 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
         ) : (
           <button
             disabled
-            title="Укажи MAC (Wake-on-LAN в своей сети) или ссылку на консоль хостера"
+            title="Нужен MAC или панель хостера"
             className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 opacity-50 ring-1 ring-border"
           >
             <Zap className="h-3.5 w-3.5" /> Включить
@@ -679,7 +679,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             <Fact label="Где" value={d.country} />
           </div>
           <div className="rounded-lg border border-border bg-card/50 px-3 py-2.5 text-xs text-slate-500">
-            Для этого типа устройств живых данных пока нет.
+            Живых данных нет
           </div>
         </>
       )}

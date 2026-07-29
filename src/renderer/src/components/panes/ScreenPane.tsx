@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink, Lock, Cpu, Download } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { Hint } from '@/components/ui/Hint'
 import type { DeviceDTO, ScreenPreflight } from '@/types'
 import type { AgentStatus } from '../../../../main/agent'
 
@@ -66,7 +67,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   const open = async (): Promise<void> => {
     if (!api) return
     // Пароль нужен ТОЛЬКО запасному пути через RDP. Если агент работает, требовать его —
-    // прямое противоречие тому, что написано двумя строками выше в этой же вкладке.
+    // прямое противоречие подсказке у «Агента трансляции» в этой же вкладке.
     if (!password && !saved && !agent?.running) {
       setErr('Нужен пароль Windows-аккаунта — либо поставь агент, ему пароль не требуется')
       return
@@ -113,17 +114,16 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
       <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-bg/40 px-4 py-7 text-center">
         <MonitorPlay className="h-9 w-9 text-slate-600" />
         <div className="text-sm font-medium text-slate-300">Экран откроется в отдельном окне</div>
-        <p className="max-w-sm text-[11px] leading-relaxed text-slate-500">
-          Его можно развернуть на весь монитор, свернуть в панель задач или кинуть на второй экран — и
-          продолжать работать в Argus, пока смотришь на ПК.
-        </p>
       </div>
 
       {/* Агент — основной путь: пароль учётной записи ОС не нужен вовсе, работает не только
           на Windows. RDP ниже остаётся запасным вариантом. */}
       <div className="rounded-lg border border-border bg-card/50 p-3">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[11px] uppercase tracking-wide text-slate-500">Агент трансляции</span>
+          <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-slate-500">
+            Агент трансляции
+            <Hint>Ставится по SSH. После установки пароль учётной записи не нужен.</Hint>
+          </span>
           <button
             onClick={() => void checkAgent()}
             className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300"
@@ -146,20 +146,14 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
             </button>
           </div>
         ) : (
-          <div className="space-y-2">
-            <p className="text-[11px] leading-relaxed text-slate-500">
-              Ставится по SSH за один клик. После установки пароль от учётной записи не нужен — доверие
-              уже получено через SSH.
-            </p>
-            <button
-              onClick={() => void install()}
-              disabled={installing}
-              className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent ring-1 ring-accent/30 hover:bg-accent/10 disabled:opacity-60"
-            >
-              {installing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {installing ? 'Ставлю агент…' : 'Установить агент'}
-            </button>
-          </div>
+          <button
+            onClick={() => void install()}
+            disabled={installing}
+            className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-accent ring-1 ring-accent/30 hover:bg-accent/10 disabled:opacity-60"
+          >
+            {installing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {installing ? 'Ставлю агент…' : 'Установить агент'}
+          </button>
         )}
         {selftest && (
           <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-bg/50 p-2 text-[10px] leading-relaxed text-slate-500">
@@ -176,7 +170,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           onKeyDown={(e) => {
             if (e.key === 'Enter') void open()
           }}
-          placeholder={saved ? 'Пароль сохранён — можно просто открыть' : 'Пароль Windows-аккаунта'}
+          placeholder={saved ? 'Пароль сохранён' : 'Пароль Windows-аккаунта'}
           className="min-w-0 flex-1 rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40"
         />
         <button
@@ -191,7 +185,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
       <div className="flex items-center justify-between text-[11px]">
         {saved ? (
           <span className="inline-flex items-center gap-1.5 text-emerald-300/80">
-            <Lock className="h-3 w-3" /> пароль сохранён в хранилище
+            <Lock className="h-3 w-3" /> пароль сохранён
           </span>
         ) : (
           <label className="inline-flex cursor-pointer items-center gap-1.5 text-slate-500">
@@ -201,7 +195,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
               onChange={(e) => setRemember(e.target.checked)}
               className="h-3 w-3 accent-accent"
             />
-            запомнить пароль (в зашифрованном хранилище)
+            запомнить пароль
           </label>
         )}
         {saved && (
@@ -246,11 +240,6 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           </div>
         ))}
       </div>
-
-      <p className="text-[11px] leading-relaxed text-slate-600">
-        Просмотр и управление мышью и клавиатурой. Удалённый доступ включается по SSH — только внутри
-        твоей Tailscale-сети.
-      </p>
     </div>
   )
 }

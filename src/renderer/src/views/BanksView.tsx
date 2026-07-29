@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Bitcoin, Landmark, Wallet as WalletIcon, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card, SourceBadge, LimitNote } from '@/components/ui/Page'
+import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
+import { Hint } from '@/components/ui/Hint'
 import { money } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { MOCK_HOLDINGS, KIND_COLOR } from '@/data/finance'
@@ -27,7 +28,10 @@ function WalletForm({
   return (
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать кошелёк' : 'Добавить кошелёк'}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать кошелёк' : 'Добавить кошелёк'}</h3>
+          <Hint>Баланс читается публичным RPC. Нужен только адрес.</Hint>
+        </div>
         <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200">
           <X className="h-4 w-4" />
         </button>
@@ -54,7 +58,6 @@ function WalletForm({
       >
         {initial ? 'Сохранить' : 'Добавить'}
       </button>
-      <p className="mt-2 text-[11px] text-slate-600">Баланс тянется публичным RPC (без ключей). Только адрес — приватных данных нет.</p>
     </Card>
   )
 }
@@ -99,7 +102,7 @@ export function BanksView(): React.JSX.Element {
     <Page>
       <PageHeader
         title="Banks & Finance"
-        subtitle="net worth: кошельки (live) + брокередж + кэш"
+        subtitle="кошельки · брокередж · кэш"
         action={
           <div className="flex items-center gap-2">
             <button
@@ -121,12 +124,6 @@ export function BanksView(): React.JSX.Element {
           </div>
         }
       />
-      <LimitNote>
-        🇷🇺 Розничных банковских API в РФ фактически нет. Живое = <b className="text-slate-200">on-chain
-        кошельки</b> (public RPC) + <b className="text-slate-200">T-Invest</b>; кэш и банки — ручной ввод /
-        импорт выписок (CSV·1C). Скрейпинг кабинетов — out of scope.
-      </LimitNote>
-
       {(adding || editing) && (
         <WalletForm
           initial={editing}
@@ -227,7 +224,7 @@ export function BanksView(): React.JSX.Element {
 
             {wallets.length === 0 && (
               <p className="py-4 text-center text-xs text-slate-500">
-                Нет кошельков — жми «Кошелёк», вставь адрес (ETH/BTC/TON), баланс подтянется сам.
+                Кошельков нет — добавь адрес
               </p>
             )}
           </div>

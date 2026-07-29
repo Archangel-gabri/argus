@@ -206,8 +206,8 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
   return (
     <div className="h-full space-y-3 overflow-y-auto pr-1">
       <div className="flex items-center justify-between">
-        {/* Не пишем «3с»: интервал теперь адаптивный (следующий опрос планируется после ответа). */}
-        <span className="text-[11px] uppercase tracking-wide text-slate-500">Live-метрики · автообновление</span>
+        {/* Про автообновление не пишем: индикатор справа и так показывает, что поток идёт. */}
+        <span className="text-[11px] uppercase tracking-wide text-slate-500">Live-метрики</span>
         <span className="inline-flex items-center gap-1.5">
           <span
             className={cn(
@@ -273,7 +273,7 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
         </>
       ) : (
         <div className="flex items-center justify-center rounded-lg border border-border bg-surface/40 p-6 text-center text-sm text-slate-500">
-          {liveOk === false ? 'Live-метрики только в десктоп-приложении / хост офлайн.' : 'Собираю первый снимок…'}
+          {liveOk === false ? 'Нет связи с хостом' : 'Собираю первый снимок…'}
         </div>
       )}
 

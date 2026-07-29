@@ -97,7 +97,7 @@ export function LockScreen(): React.JSX.Element {
             autoFocus
             value={pw}
             onChange={(e) => setPw(e.target.value)}
-            placeholder="Master password"
+            placeholder="Мастер-пароль"
             className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
           />
           {setup && (
@@ -127,7 +127,7 @@ export function LockScreen(): React.JSX.Element {
                 type="password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Confirm password"
+                placeholder="Ещё раз"
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
               />
               <label className="flex items-start gap-2 text-[11px] leading-snug text-slate-400">
@@ -160,11 +160,11 @@ export function LockScreen(): React.JSX.Element {
         </button>
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-600">
-          <ShieldCheck className="h-3.5 w-3.5" /> Local-only · Argon2id → SQLCipher · keyring: {keyringBackend}
+          <ShieldCheck className="h-3.5 w-3.5" /> Локально · шифрование SQLCipher
         </div>
         {keyringBackend === 'basic_text' && (
           <p className="mt-2 text-center text-[11px] text-amber-500/80">
-            OS-кейчейн недоступен (plaintext fallback) — пароль не кэшируется, вводи каждый запуск.
+            Кейчейн ОС недоступен — вводи пароль каждый запуск.
           </p>
         )}
       </form>

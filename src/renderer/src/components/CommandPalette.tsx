@@ -243,7 +243,7 @@ export function CommandPalette(): React.JSX.Element | null {
                 })
               }
             >
-              Broadcast (много хостов)
+              Выполнить на многих
             </Item>
             <Item icon={Lock} value="lock vault" onSelect={() => run(() => lock())}>
               Заблокировать vault

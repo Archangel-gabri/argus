@@ -66,12 +66,3 @@ export function SourceBadge({ kind }: { kind: 'live' | 'manual' | 'soon' }): Rea
     </span>
   )
 }
-
-/** Honest note banner about what's live vs manual for a tab. */
-export function LimitNote({ children }: { children: ReactNode }): React.JSX.Element {
-  return (
-    <div className="mb-5 rounded-lg border border-border bg-surface/60 px-4 py-2.5 text-xs text-slate-400">
-      {children}
-    </div>
-  )
-}

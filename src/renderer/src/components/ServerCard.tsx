@@ -215,7 +215,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
                     }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
                   >
-                    <FolderOpen className="h-3.5 w-3.5" /> Файлы (SFTP)
+                    <FolderOpen className="h-3.5 w-3.5" /> Файлы
                   </button>
                   <button
                     onClick={() => {
@@ -224,7 +224,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
                     }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
                   >
-                    <Network className="h-3.5 w-3.5" /> Проброс портов
+                    <Network className="h-3.5 w-3.5" /> Порты
                   </button>
                 </>
               )}

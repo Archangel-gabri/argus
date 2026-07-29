@@ -79,7 +79,7 @@ export function Sidebar(): React.JSX.Element {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Quick search…"
+            placeholder="Поиск…"
             className="w-full rounded-lg border border-border bg-bg/60 py-2 pl-9 pr-3 text-sm text-slate-200 outline-none placeholder:text-slate-500 focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
           />
         </div>

@@ -63,8 +63,8 @@ export function DevicesView(): React.JSX.Element {
               onClick={onRefresh}
               disabled={refreshing}
               className="rounded-lg p-2 text-slate-400 ring-1 ring-border transition-colors hover:bg-white/5 hover:text-slate-200 disabled:opacity-60"
-              aria-label="Refresh live metrics over SSH"
-              title="Refresh live CPU/RAM over SSH (devices with stored credentials)"
+              aria-label="Обновить метрики"
+              title="Обновить метрики по SSH"
             >
               <RefreshCw className={cn('h-[18px] w-[18px]', refreshing && 'animate-spin')} />
             </button>
@@ -94,11 +94,11 @@ export function DevicesView(): React.JSX.Element {
             onClick={openCreate}
             className="w-full rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500 transition-colors hover:border-accent/40 hover:text-slate-300"
           >
-            No devices yet — click to add your first server.
+            Устройств нет — добавь первое
           </button>
         ) : list.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500">
-            No devices match “{search}”.
+            Ничего не найдено
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

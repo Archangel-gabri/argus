@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { CheckCircle2, XCircle, AlertTriangle, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card, LimitNote } from '@/components/ui/Page'
+import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
 import { money } from '@/lib/format'
 import { useAi } from '@/store/ai'
 import type { AiAccount, AiCheck } from '@/types'
@@ -80,7 +80,7 @@ function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose
             type="password"
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder={initial ? 'пусто = оставить текущий ключ' : 'sk-… (шифруется в vault, наружу не выходит)'}
+            placeholder={initial ? 'пусто — не менять' : 'sk-…'}
           />
         </label>
         <label className="block">
@@ -138,15 +138,9 @@ export function AIAccountsView(): React.JSX.Element {
           </button>
         }
       />
-      <LimitNote>
-        Честно: <b className="text-slate-200">OpenRouter</b> отдаёт остаток и usage по API. Для
-        Anthropic / OpenAI / Gemini доступна только <b className="text-slate-200">проверка валидности
-        ключа</b>; статус подписки и точный spend — вручную или Admin-ключами (этап C).
-      </LimitNote>
-
       {!api && (
         <div className="mb-4 rounded-lg border border-border bg-surface/60 p-3 text-xs text-slate-500">
-          Browser-preview: аккаунты и проверки доступны только в десктоп-приложении.
+          Доступно только в приложении.
         </div>
       )}
 
@@ -172,7 +166,7 @@ export function AIAccountsView(): React.JSX.Element {
             onClick={() => setAdding(true)}
             className="w-full rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500 transition-colors hover:border-accent/40 hover:text-slate-300"
           >
-            Нет аккаунтов — добавь первый ключ (OpenRouter — якорь).
+            Аккаунтов нет — добавь ключ
           </button>
         ) : (
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">

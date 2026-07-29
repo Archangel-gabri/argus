@@ -156,7 +156,7 @@ export function SubscriptionsView(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Subscriptions" subtitle={`${all.length} активных · сервера + приложения, к месяцу`} />
+      <PageHeader title="Subscriptions" subtitle={`${all.length} активных · в месяц`} />
 
       <div className="mb-4 flex justify-end">
         <button

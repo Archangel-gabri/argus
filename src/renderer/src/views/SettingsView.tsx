@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Lock, Loader2, ShieldCheck, Timer, Eye } from 'lucide-react'
-import { Page, PageHeader, Card, LimitNote } from '@/components/ui/Page'
+import { Page, PageHeader, Card } from '@/components/ui/Page'
+import { Hint } from '@/components/ui/Hint'
 import { useVault } from '@/store/vault'
 import { loadPrefs, savePrefs, type Prefs } from '@/lib/prefs'
 import { checkStrength, MIN_PASSWORD_SCORE } from '@/lib/password-strength'
@@ -65,7 +66,7 @@ function ChangePassword(): React.JSX.Element {
       <input className={inputCls} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Ещё раз" disabled={!api} />
       <div className="col-span-3 flex items-center justify-between">
         <span className={msg ? (msg.ok ? 'text-xs text-emerald-400' : 'text-xs text-rose-400') : 'text-[11px] text-slate-600'}>
-          {msg ? msg.text : api ? 'Перешифрует базу новым ключом (Argon2id → SQLCipher rekey).' : 'Только в десктоп-приложении.'}
+          {msg ? msg.text : api ? 'Перешифрует базу новым ключом.' : 'Только в десктоп-приложении.'}
         </span>
         <button
           type="submit"
@@ -91,7 +92,7 @@ export function SettingsView(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Settings" subtitle="безопасность · внешний вид · о приложении" />
+      <PageHeader title="Settings" />
 
       <Section title="Security">
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -117,7 +118,13 @@ export function SettingsView(): React.JSX.Element {
           </button>
         </div>
         <div className="border-t border-border/70 pt-4">
-          <div className="mb-2 text-xs font-medium text-slate-400">Смена мастер-пароля</div>
+          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
+            Смена мастер-пароля
+            <Hint>
+              Из нового пароля выводится ключ (Argon2id), и база перешифровывается им целиком —
+              SQLCipher rekey.
+            </Hint>
+          </div>
           <ChangePassword />
         </div>
       </Section>
@@ -138,17 +145,9 @@ export function SettingsView(): React.JSX.Element {
       <Section title="About">
         <div className="flex items-center gap-2 text-sm text-slate-300">
           <ShieldCheck className="h-4 w-4 text-emerald-400" />
-          Argus 0.1.0 · local-first · Argon2id → SQLCipher · секреты не покидают main-процесс
+          Argus 0.1.0 · всё хранится локально
         </div>
-        <p className="mt-2 text-xs text-slate-500">
-          Дизайн-контракт: DESIGN.md · Спек редизайна: docs/REDESIGN-2026-07.md · Карта UI: docs/UX-MAP.md
-        </p>
       </Section>
-
-      <LimitNote>
-        Recovery Kit, экспорт/импорт vault и Integrations (Ollama, ключи) — этап C: требует
-        envelope-архитектуры мастер-ключа, не делается на живом vault без миграции.
-      </LimitNote>
     </Page>
   )
 }

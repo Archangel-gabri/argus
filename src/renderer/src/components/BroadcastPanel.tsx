@@ -73,7 +73,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="flex items-center gap-2 text-base font-semibold text-white">
-            <TermIcon className="h-4 w-4 text-accent" /> Broadcast — выполнить на многих
+            <TermIcon className="h-4 w-4 text-accent" /> Выполнить на многих
           </h2>
           <button onClick={() => setOpen(false)} className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200">
             <X className="h-4 w-4" />
@@ -123,7 +123,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
               Хосты ({chosen.length}/{eligible.length})
             </span>
             {eligible.length === 0 ? (
-              <p className="text-xs text-slate-500">Нет хостов с сохранёнными кредами и реальным IP.</p>
+              <p className="text-xs text-slate-500">Нет хостов с сохранёнными доступами</p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {eligible.map((d) => (

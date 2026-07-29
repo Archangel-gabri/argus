@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { X, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { Hint } from '@/components/ui/Hint'
 import { ILLUSTRATIONS, defaultIllustrationKey } from '@/lib/illustrations'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
@@ -91,15 +92,9 @@ function Field({
     <label className={cn('block', full && 'col-span-2')}>
       <span className="mb-1 flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
-        {hint && (
-          <span
-            title={hint}
-            aria-label={hint}
-            className="flex h-4 w-4 cursor-help items-center justify-center rounded-full text-[10px] font-bold text-slate-500 ring-1 ring-border hover:text-slate-300 hover:ring-slate-500"
-          >
-            ?
-          </span>
-        )}
+        {/* Подсказка через свой компонент, а не через атрибут `title`: тот рисуется системой
+            мимо палитры, появляется с задержкой около секунды и не открывается с клавиатуры. */}
+        {hint && <Hint side="left">{hint}</Hint>}
       </span>
       {children}
     </label>
@@ -397,6 +392,9 @@ export function DeviceDialog(): React.JSX.Element | null {
             <div className="mb-4 rounded-lg border border-accent/20 bg-accent/5 p-3">
               <div className="mb-2 flex items-center gap-2 text-xs font-medium text-accent">
                 <Wand2 className="h-3.5 w-3.5" /> Заполнить по тексту (локальный ИИ)
+                {/* Было постоянным абзацем под полем. Знать это нужно один раз, а занимало
+                    место всегда — поэтому под «?». */}
+                <Hint>Разбор идёт локально, текст никуда не уходит.</Hint>
               </div>
               <textarea
                 value={assistText}
@@ -417,19 +415,16 @@ export function DeviceDialog(): React.JSX.Element | null {
                 </button>
                 {assistMsg && <span className="text-xs text-slate-500">{assistMsg}</span>}
               </div>
-              <p className="mt-1.5 text-[11px] text-slate-600">
-                Разбор идёт локально, текст никуда не отправляется.
-              </p>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Имя" full hint="Как устройство будет называться в списке. Только для тебя — на подключение не влияет.">
+            <Field label="Имя" full hint="Как называть в списке.">
               <input className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" autoFocus />
             </Field>
-            <Field label="Хостер / владелец" hint="Кто предоставляет машину: Hetzner, OVH, «Дома». Используется для логотипа и группировки расходов.">
+            <Field label="Хостер / владелец" hint="Для логотипа и группировки расходов.">
               <input className={inputCls} value={f.provider} onChange={set('provider')} placeholder="Hetzner" />
             </Field>
-            <Field label="Тип" hint="Сервер и компьютер получают полный набор: терминал, файлы, порты, метрики, экран. Роутер — только терминал.">
+            <Field label="Тип" hint="Роутеру доступен только терминал.">
               <select
                 className={inputCls}
                 value={f.kind}
@@ -440,7 +435,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                 ))}
               </select>
             </Field>
-            <Field label="Портрет" full hint="Картинка на карточке. «Авто» — по типу и роли; можно выбрать из готовых или загрузить свою.">
+            <Field label="Портрет" full hint="«Авто» — по типу и роли.">
               <IconPicker
                 value={f.icon}
                 kind={f.kind}
@@ -448,13 +443,13 @@ export function DeviceDialog(): React.JSX.Element | null {
                 onPick={(v) => setF((p) => ({ ...p, icon: v }))}
               />
             </Field>
-            <Field label="Роль" hint="Назначение машины: master, cascade, exit, app, db. Показывается на карточке и подбирает картинку в режиме «авто».">
+            <Field label="Роль" hint="Назначение: master, cascade, exit, app.">
               <input className={inputCls} value={f.role} onChange={set('role')} placeholder="app · cockpit" />
             </Field>
             <Field
               label="Загрузочная запись"
               full
-              hint="Нужна только машинам с несколькими ОС, чтобы переключение выбирало нужную. Нажми «Спросить машину» — Argus прочитает список сам; вручную это Linux: номер EFI-записи (efibootmgr), Windows: идентификатор вида {xxxxxxxx-…} из bcdedit /enum firmware."
+              hint="Нажми «Спросить машину» — Argus прочитает список сам. Вручную: Linux — номер EFI-записи (efibootmgr), Windows — идентификатор вида {xxxxxxxx-…} из bcdedit /enum firmware."
             >
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
@@ -490,15 +485,11 @@ export function DeviceDialog(): React.JSX.Element | null {
                         <span className="block break-all font-mono text-[10px] text-slate-600">{b.id}</span>
                       </button>
                     ))}
-                    <p className="px-2 pt-0.5 text-[11px] text-slate-600">
-                      Нажми на запись — она подставится в поле. Для другой ОС этой же машины запись указывается
-                      в её строке ниже.
-                    </p>
                   </div>
                 )}
               </div>
             </Field>
-            <Field label="Адрес" hint="IP или имя хоста для SSH. Можно адрес в Tailscale (100.x) — так надёжнее, чем публичный IP.">
+            <Field label="Адрес" hint="IP или хост для SSH. Годится адрес Tailscale.">
               <input
                 className={inputCls}
                 value={f.ip}
@@ -512,10 +503,10 @@ export function DeviceDialog(): React.JSX.Element | null {
             <Field label="Порт" hint="Порт SSH. По умолчанию 22.">
               <input className={inputCls} value={f.port} onChange={set('port')} inputMode="numeric" />
             </Field>
-            <Field label="Пользователь SSH" hint="Под какой учётной записью подключаться: root, ubuntu, admin.">
+            <Field label="Пользователь SSH" hint="Учётная запись SSH: root, ubuntu.">
               <input className={inputCls} value={f.user} onChange={set('user')} placeholder="root" />
             </Field>
-            <Field label="Операционная система" hint="Влияет на то, какие команды шлются: у Windows и Linux они разные. Можно определить кнопкой «Определить по SSH».">
+            <Field label="Операционная система" hint="Влияет на команды. Можно определить по SSH.">
               <input className={inputCls} value={f.os} onChange={set('os')} placeholder="Ubuntu" list="os-list" />
               <datalist id="os-list">
                 {OS_LIST.map((o) => (
@@ -523,26 +514,26 @@ export function DeviceDialog(): React.JSX.Element | null {
                 ))}
               </datalist>
             </Field>
-            <Field label="Страна" hint="Заполняется автоматически по IP кнопкой «Гео по IP».">
+            <Field label="Страна" hint="Заполняется кнопкой «Гео по IP».">
               <input className={inputCls} value={f.country} onChange={set('country')} placeholder="Japan" />
             </Field>
-            <Field label="Флаг" hint="Эмодзи-флаг для карточки. Подставляется вместе со страной.">
+            <Field label="Флаг" hint="Эмодзи-флаг для карточки.">
               <input className={inputCls} value={f.flag} onChange={set('flag')} placeholder="🇯🇵" />
             </Field>
-            <Field label="Стоимость в месяц" hint="Идёт в общий счёт расходов на разделе «Финансы». Ноль — если платить не нужно.">
+            <Field label="Стоимость в месяц" hint="Идёт в общий счёт расходов.">
               <input className={inputCls} value={f.amount} onChange={set('amount')} inputMode="decimal" placeholder="5" />
             </Field>
-            <Field label="Валюта" hint="Для общего счёта суммы приводятся к долларам по приблизительному курсу.">
+            <Field label="Валюта" hint="Для итога приводится к долларам.">
               <select className={inputCls} value={f.currency} onChange={set('currency')}>
                 {CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Панель управления хостера" full hint="Ссылка на панель, где машину можно включить или пересоздать. Открывается кнопкой на карточке — пригодится, когда SSH недоступен.">
+            <Field label="Панель управления хостера" full hint="Включить машину, когда SSH недоступен.">
               <input className={inputCls} value={f.consoleUrl} onChange={set('consoleUrl')} placeholder="https://…" />
             </Field>
-            <Field label="Промежуточный хост (бастион)" full hint="Если машина доступна только через другой сервер — выбери его здесь. Подключение пойдёт туннелем через него.">
+            <Field label="Промежуточный хост (бастион)" full hint="Если машина доступна только через другой сервер.">
               <select className={inputCls} value={f.jumpId} onChange={set('jumpId')}>
                 <option value="">— нет —</option>
                 {devices
@@ -623,13 +614,10 @@ export function DeviceDialog(): React.JSX.Element | null {
                   >
                     + добавить ОС
                   </button>
-                  <p className="text-[11px] text-slate-600">
-                    Для dual/triple-boot: каждая ОС на своём адресе (напр. Tailscale), тот же SSH-ключ. На карточке — переключатель.
-                  </p>
                 </div>
               </Field>
             )}
-            <Field label="Заметки" full hint="Свободный текст: что на машине крутится, к чему подключена, что не забыть. Виден на карточке.">
+            <Field label="Заметки" full hint="Свободный текст. Виден на карточке.">
               <textarea
                 className={cn(inputCls, 'h-16 resize-y')}
                 value={f.notes}
@@ -637,7 +625,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                 placeholder="Что здесь работает, особенности, чего не трогать"
               />
             </Field>
-            <Field label="Способ входа" full hint="Пароль или приватный ключ. Всё хранится в зашифрованном виде и наружу не уходит.">
+            <Field label="Способ входа" full hint="Пароль или ключ. Хранится зашифрованным.">
               <div className="flex gap-1 rounded-lg border border-border bg-bg/60 p-1">
                 {(['password', 'key'] as const).map((m) => (
                   <button
@@ -659,7 +647,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               <Field
                 label={editing ? 'Пароль SSH (пусто = оставить текущий)' : 'Пароль SSH'}
                 full
-                hint="Хранится в зашифрованном виде и в интерфейс обратно не возвращается. При правке пустое поле означает «не менять»."
+                hint="Хранится зашифрованным. Пусто при правке — не менять."
               >
                 <input
                   className={inputCls}
@@ -743,7 +731,6 @@ export function DeviceDialog(): React.JSX.Element | null {
           {error && <div className="mt-3 text-xs text-rose-400">{error}</div>}
 
           <div className="mt-5 flex items-center justify-between">
-            <span className="text-[11px] text-slate-600">Пароли и ключи хранятся в зашифрованном виде.</span>
             <div className="flex gap-2">
               <button
                 type="button"
