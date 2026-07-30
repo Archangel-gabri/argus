@@ -7,6 +7,7 @@ import { lock as lockVault } from './vault'
 import { closeAll as closeSsh } from './ssh'
 import { sftpCloseAll } from './sftp'
 import { closeAllForwards } from './forward'
+import { startWatchdog, stopWatchdog } from './watchdog'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.argus.app')
@@ -51,6 +52,10 @@ app.whenReady().then(() => {
 
   createAppWindow()
 
+  // Сторож: сообщает о падении машины, кончающемся диске и о продлении, которое надо
+  // сделать руками, — не дожидаясь, пока приложение откроют и посмотрят.
+  startWatchdog()
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createAppWindow()
   })
@@ -62,6 +67,7 @@ app.on('window-all-closed', () => {
 
 // Close SSH sessions + the encrypted DB connection on exit.
 app.on('will-quit', () => {
+  stopWatchdog()
   closeSsh()
   sftpCloseAll()
   closeAllForwards()
