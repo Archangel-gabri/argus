@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -47,12 +48,7 @@ func (s *Server) equal(t string) bool {
 }
 
 func (s *Server) authOK(r *http.Request) bool {
-	if t := r.Header.Get("X-Argus-Token"); t != "" {
-		return s.equal(t)
-	}
-	// Query оставлен только для ручной диагностики курлом на своей же машине;
-	// Argus им не пользуется и по нему нельзя открыть поток (см. handleStream).
-	return s.equal(r.URL.Query().Get("token"))
+	return s.equal(r.Header.Get("X-Argus-Token"))
 }
 
 // wsToken достаёт токен из предложенных клиентом подпротоколов.
@@ -145,52 +141,42 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	log.Printf("клиент подключился: %s", r.RemoteAddr)
 
 	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 
 	inj, injErr := newInjector()
 	if injErr != nil {
 		log.Printf("управление недоступно: %v", injErr)
 		inj = &noopInjector{reason: injErr.Error()}
 	}
-	defer inj.Close()
 
-	// Пишем в сокет только из ОДНОЙ горутины — gorilla это требует.
-	out := make(chan []byte, 64)
-	var writeOnce sync.Once
-	stop := func() { writeOnce.Do(func() { close(out) }) }
-	defer stop()
-
+	// Пишем в сокет только из ОДНОЙ горутины — gorilla это требует. Управляющие сообщения
+	// отделены от видео: hello/fatal нельзя молча потерять из-за пары старых P-кадров.
+	out := newSessionOutbox(ctx, 8, 2)
+	writerDone := make(chan error, 1)
 	go func() {
-		for msg := range out {
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			mt := websocket.BinaryMessage
-			if len(msg) > 0 && msg[0] == '{' {
-				mt = websocket.TextMessage
-			}
-			if err := conn.WriteMessage(mt, msg); err != nil {
-				cancel()
-				return
-			}
-		}
+		err := out.writeLoop(conn)
+		cancel()
+		writerDone <- err
 	}()
 
 	// Состояние сеанса объявлено ДО чтения ввода: обработчик наблюдений клиента обращается
 	// и к подстройке, и к отправке, поэтому они должны существовать раньше него.
 	st := NewStreamer(s.fps, s.w, s.h)
 	sentHello := false
-	var seq uint32
+	var seq atomic.Uint32
 	started := time.Now()
 	gov := &qualityGovernor{}
-	sendJSON := func(v any) {
-		b, _ := json.Marshal(v)
-		select {
-		case out <- b:
-		default:
+	sendJSON := func(v any, waitDelivery bool) error {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return err
 		}
+		return out.enqueueControl(b, waitDelivery)
 	}
 
 	// Ввод от клиента и его наблюдения за потоком.
+	readerDone := make(chan struct{})
 	go func() {
+		defer close(readerDone)
 		defer cancel()
 		for {
 			mt, data, err := conn.ReadMessage()
@@ -224,8 +210,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				log.Printf("ступень качества: %s (%d к/с, %d кбит/с)", tier.comment, tier.fps, tier.kbps)
-				sendJSON(QualityApplied{Type: "quality", FPS: tier.fps, Bitrate: tier.kbps,
-					Comment: tier.comment, Seq: seq})
+				if err := sendJSON(QualityApplied{Type: "quality", FPS: tier.fps, Bitrate: tier.kbps,
+					Comment: tier.comment, Seq: seq.Load()}, false); err != nil && ctx.Err() == nil {
+					log.Printf("не удалось сообщить о ступени качества: %v", err)
+				}
 			}
 		}
 	}()
@@ -237,7 +225,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			// Размеры и частоту берём У ПОТОКА, а не из флагов запуска: на мониторе 3440×1440
 			// флаги говорили «1920×1080», и клиент растягивал картинку в чужие пропорции.
 			d := st.Dims()
-			sendJSON(Hello{
+			if err := sendJSON(Hello{
 				Type: "hello", Version: Version, OS: goos(),
 				Encoder: ch.encoder, Source: ch.source,
 				Width: d.width, Height: d.height, FPS: d.fps,
@@ -246,32 +234,49 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				// поток на мониторе 3440×1440 оказался уровня 6.0. По этой строке клиент
 				// настраивает декодер, и аппаратный вправе отказаться от заниженного уровня.
 				Codec: st.Codec(),
-			})
+			}, false); err != nil && ctx.Err() == nil {
+				log.Printf("не удалось отправить приветствие: %v", err)
+			}
 		}
 		// Заголовок кадра: флаги, порядковый номер, метка времени захвата.
 		// Номер нужен, чтобы отличить потерю в сети от сброса кадра на сервере: без него
 		// «клиент получил меньше, чем мы отправили» не значит ничего. Метка времени избавляет
 		// клиента от выдумывания собственных временных меток исходя из «наверное, 60 к/с».
-		seq++
+		frameSeq := seq.Add(1)
 		flag := byte(0)
 		if au.IsKey {
 			flag = 1
 		}
 		msg := make([]byte, frameHeaderLen, frameHeaderLen+len(au.Data))
 		msg[0] = flag
-		binary.BigEndian.PutUint32(msg[1:5], seq)
+		binary.BigEndian.PutUint32(msg[1:5], frameSeq)
 		binary.BigEndian.PutUint64(msg[5:13], uint64(time.Since(started).Microseconds()))
 		msg = append(msg, au.Data...)
-		gov.note()
-		select {
-		case out <- msg:
-		default:
-			// Клиент не успевает — рвать сеанс из-за этого нельзя, просто пропускаем кадр.
+		enqueued, requestKeyframe := out.enqueueVideo(msg, au.IsKey)
+		if enqueued {
+			gov.note()
+		}
+		if requestKeyframe {
+			// Произвольный drop P-кадра ломает всю цепочку до следующего IDR. Очередь уже
+			// очищена; просим ключевой кадр и не принимаем delta, пока он не придёт.
+			if err := st.RequestKeyframe(); err != nil && ctx.Err() == nil {
+				log.Printf("не удалось запросить ключевой кадр после переполнения: %v", err)
+			}
 		}
 	})
 	if err != nil && ctx.Err() == nil {
 		log.Printf("захват не завёлся: %v", err)
-		sendJSON(Fatal{Type: "fatal", Error: "не удалось начать захват экрана", Detail: err.Error()})
-		time.Sleep(300 * time.Millisecond) // дать сообщению уйти до закрытия сокета
+		if sendErr := sendJSON(Fatal{Type: "fatal", Error: "не удалось начать захват экрана", Detail: err.Error()}, true); sendErr != nil {
+			log.Printf("не удалось отправить причину остановки: %v", sendErr)
+		}
 	}
+
+	// Каналы не закрываем: reader мог одновременно ставить control-сообщение. Context
+	// останавливает producers, Close будит заблокированный ReadMessage/WriteMessage, а join
+	// гарантирует, что injector и conn не исчезнут из-под ещё работающей горутины.
+	cancel()
+	_ = conn.Close()
+	<-readerDone
+	<-writerDone
+	inj.Close()
 }

@@ -92,7 +92,8 @@ func TestStreamAcceptsSubprotocol(t *testing.T) {
 	}
 }
 
-// Диагностический /health намеренно принимает заголовок; query оставлен только для curl.
+// Диагностический /health принимает только заголовок: query оседает в access/proxy-логах
+// даже при ручном curl и потому не может быть исключением из общего credential contract.
 func TestHealthPrefersHeader(t *testing.T) {
 	const tok = "0123456789abcdef0123456789abcdef"
 	srv := httptest.NewServer(NewServer(tok, 30, 640, 360).Handler())
@@ -118,5 +119,14 @@ func TestHealthPrefersHeader(t *testing.T) {
 	defer res2.Body.Close()
 	if res2.StatusCode != http.StatusUnauthorized {
 		t.Errorf("health с неверным заголовком вернул %d, ожидался 401", res2.StatusCode)
+	}
+
+	res3, err := http.Get(srv.URL + "/health?token=" + tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res3.Body.Close()
+	if res3.StatusCode != http.StatusUnauthorized {
+		t.Errorf("health принял credential из query: статус %d, ожидался 401", res3.StatusCode)
 	}
 }

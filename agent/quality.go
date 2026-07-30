@@ -1,6 +1,9 @@
 package main
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Ступени качества и правило перехода между ними.
 //
@@ -44,6 +47,7 @@ type clientStats struct {
 
 // qualityGovernor — состояние подстройки для одного сеанса.
 type qualityGovernor struct {
+	mu        sync.Mutex
 	tier      int
 	calmSince time.Time
 	// sent — сколько кадров сервер отправил за текущее окно; сбрасывается при каждом решении.
@@ -70,6 +74,9 @@ const (
 // продолжительного спокойствия. Пользователь замечает заикание мгновенно, а возврат чёткости
 // на несколько секунд позже не замечает вовсе.
 func (g *qualityGovernor) decide(st clientStats, now time.Time) (qualityTier, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	delivered := 1.0
 	if g.sent > 0 {
 		delivered = float64(st.RxFrames) / float64(g.sent)
@@ -99,4 +106,8 @@ func (g *qualityGovernor) decide(st clientStats, now time.Time) (qualityTier, bo
 }
 
 // note учитывает отправленный кадр — знаменатель для доли дошедших.
-func (g *qualityGovernor) note() { g.sent++ }
+func (g *qualityGovernor) note() {
+	g.mu.Lock()
+	g.sent++
+	g.mu.Unlock()
+}

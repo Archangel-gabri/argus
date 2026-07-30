@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -112,4 +113,28 @@ func TestGovernorReactsToNetworkLoss(t *testing.T) {
 	if _, changed := g2.decide(clientStats{RxFrames: 30, DecodeQueue: 0, Lost: 1}, time.Now()); changed {
 		t.Error("одиночный пропуск понизил ступень — так мы будем сбавлять на ровном месте")
 	}
+}
+
+func TestQualityGovernorConcurrent(t *testing.T) {
+	// Кадры учитывает горутина захвата, а статистику клиента разбирает другая горутина.
+	// Последовательные unit-тесты этого не замечают, поэтому реальный контракт проверяется
+	// именно под race detector: note и decide обязаны быть безопасны одновременно.
+	g := &qualityGovernor{}
+	var wg sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 2_000; i++ {
+				g.note()
+			}
+		}()
+		go func(offset int) {
+			defer wg.Done()
+			for i := 0; i < 500; i++ {
+				g.decide(clientStats{RxFrames: 30}, time.Unix(int64(offset), int64(i)))
+			}
+		}(worker)
+	}
+	wg.Wait()
 }

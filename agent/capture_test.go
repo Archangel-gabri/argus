@@ -7,9 +7,56 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type overlapDetectWriter struct {
+	writing  atomic.Bool
+	overlaps atomic.Int32
+}
+
+func (w *overlapDetectWriter) Write(p []byte) (int, error) {
+	if !w.writing.CompareAndSwap(false, true) {
+		w.overlaps.Add(1)
+	}
+	// Pipe.Write обычно достаточно долгий, чтобы команды из reader и capture пересеклись;
+	// пауза делает этот межпоточный контракт детерминированным в unit-тесте.
+	time.Sleep(200 * time.Microsecond)
+	w.writing.Store(false)
+	return len(p), nil
+}
+
+func (w *overlapDetectWriter) Close() error { return nil }
+
+func TestStreamerSerializesControlCommands(t *testing.T) {
+	w := &overlapDetectWriter{}
+	s := NewStreamer(30, 640, 360)
+	s.ctrl = w
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = s.SetQuality(2_000, 15)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = s.RequestKeyframe()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if got := w.overlaps.Load(); got != 0 {
+		t.Fatalf("управляющий pipe получил %d перекрывающихся записей", got)
+	}
+}
 
 // Нарезка Annex-B на access unit'ы — самое хрупкое место: WebCodecs принимает только ЦЕЛЫЕ
 // кадры, и ошибка здесь даёт «подключено, но чёрный экран» без единого сообщения об ошибке.

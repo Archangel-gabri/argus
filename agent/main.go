@@ -11,6 +11,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -26,46 +27,76 @@ var (
 	bitrate    int
 )
 
+type cliConfig struct {
+	addr          string
+	tokenFile     string
+	fps           int
+	width         int
+	height        int
+	bitrate       int
+	testSource    bool
+	showVersion   bool
+	selftest      bool
+	bench         int
+	only          string
+	switchAfter   int
+	switchBitrate int
+	switchFPS     int
+	certDir       string
+	showFP        bool
+	noTLS         bool
+}
+
+func parseCLI(args []string, output io.Writer) (cliConfig, error) {
+	var c cliConfig
+	fs := flag.NewFlagSet("argus-agent", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&c.addr, "addr", "0.0.0.0:47990", "адрес прослушивания")
+	fs.StringVar(&c.tokenFile, "token-file", defaultTokenFile(), "файл с токеном")
+	fs.IntVar(&c.fps, "fps", 30, "кадров в секунду")
+	fs.IntVar(&c.width, "width", 1920, "ширина (для тестового источника)")
+	fs.IntVar(&c.height, "height", 1080, "высота (для тестового источника)")
+	fs.IntVar(&c.bitrate, "bitrate", 8000, "битрейт, кбит/с")
+	fs.BoolVar(&c.testSource, "test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
+	fs.BoolVar(&c.showVersion, "version", false, "показать версию и выйти")
+	fs.BoolVar(&c.selftest, "selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
+	fs.IntVar(&c.bench, "bench", 0, "замер: сколько секунд гнать захват и посчитать кадры/битрейт, потом выйти")
+	fs.StringVar(&c.only, "only", "", "замер только вариантов, чей кодировщик содержит эту подстроку (nvenc, x264…)")
+	fs.IntVar(&c.switchAfter, "switch-after", 0, "замер: через сколько секунд сменить ступень качества (0 = не менять)")
+	fs.IntVar(&c.switchBitrate, "switch-bitrate", 0, "замер: на какой битрейт перейти, кбит/с")
+	fs.IntVar(&c.switchFPS, "switch-fps", -1, "замер: на какую частоту перейти (0 = не ограничивать)")
+	fs.StringVar(&c.certDir, "cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
+	fs.BoolVar(&c.showFP, "fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
+	fs.BoolVar(&c.noTLS, "no-tls", false, "без TLS — только для отладки на localhost")
+	return c, fs.Parse(args)
+}
+
 func goos() string { return runtime.GOOS }
 
 func main() {
-	var (
-		addr      = flag.String("addr", "0.0.0.0:47990", "адрес прослушивания")
-		token     = flag.String("token", "", "токен доступа (или файл через --token-file, или ARGUS_AGENT_TOKEN)")
-		tokenF    = flag.String("token-file", defaultTokenFile(), "файл с токеном")
-		fps       = flag.Int("fps", 30, "кадров в секунду")
-		width     = flag.Int("width", 1920, "ширина (для тестового источника)")
-		height    = flag.Int("height", 1080, "высота (для тестового источника)")
-		br        = flag.Int("bitrate", 8000, "битрейт, кбит/с")
-		test      = flag.Bool("test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
-		showVer   = flag.Bool("version", false, "показать версию и выйти")
-		selftest  = flag.Bool("selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
-		bench     = flag.Int("bench", 0, "замер: сколько секунд гнать захват и посчитать кадры/битрейт, потом выйти")
-		only      = flag.String("only", "", "замер только вариантов, чей кодировщик содержит эту подстроку (nvenc, x264…)")
-		swAfter   = flag.Int("switch-after", 0, "замер: через сколько секунд сменить ступень качества (0 = не менять)")
-		swBitrate = flag.Int("switch-bitrate", 0, "замер: на какой битрейт перейти, кбит/с")
-		swFPS     = flag.Int("switch-fps", -1, "замер: на какую частоту перейти (0 = не ограничивать)")
-		certDir   = flag.String("cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
-		showFP    = flag.Bool("fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
-		plain     = flag.Bool("no-tls", false, "без TLS — только для отладки на localhost")
-	)
-	flag.Parse()
+	cfg, err := parseCLI(os.Args[1:], os.Stderr)
+	if err != nil {
+		if err == flag.ErrHelp {
+			return
+		}
+		os.Exit(2)
+	}
 
-	if *showVer {
+	if cfg.showVersion {
 		fmt.Printf("argus-agent %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		return
 	}
-	testSource = *test
-	bitrate = *br
+	testSource = cfg.testSource
+	bitrate = cfg.bitrate
 
-	dir := *certDir
+	dir := cfg.certDir
 	if dir == "" {
-		dir = filepath.Dir(*tokenF)
+		dir = filepath.Dir(cfg.tokenFile)
 	}
 
 	// Отпечаток печатается ДО всего остального: провижининг Argus читает его по SSH сразу
 	// после установки и запоминает (TOFU), чтобы потом принимать только этот сертификат.
-	if *showFP {
+	if cfg.showFP {
 		cp, _, err := ensureCert(dir)
 		if err != nil {
 			log.Fatalf("сертификат: %v", err)
@@ -78,44 +109,41 @@ func main() {
 		return
 	}
 
-	if *selftest {
-		runSelfTest(*fps, *width, *height)
+	if cfg.selftest {
+		runSelfTest(cfg.fps, cfg.width, cfg.height)
 		return
 	}
 
-	if *bench > 0 {
-		runBench(*bench, *fps, *width, *height, *only, *swAfter, *swBitrate, *swFPS)
+	if cfg.bench > 0 {
+		runBench(cfg.bench, cfg.fps, cfg.width, cfg.height, cfg.only, cfg.switchAfter, cfg.switchBitrate, cfg.switchFPS)
 		return
 	}
 
-	tok := *token
-	if tok == "" {
-		tok = os.Getenv("ARGUS_AGENT_TOKEN")
-	}
-	if tok == "" && *tokenF != "" {
-		if b, err := os.ReadFile(*tokenF); err == nil {
+	tok := os.Getenv("ARGUS_AGENT_TOKEN")
+	if tok == "" && cfg.tokenFile != "" {
+		if b, err := os.ReadFile(cfg.tokenFile); err == nil {
 			tok = strings.TrimSpace(string(b))
 		}
 	}
 	if tok == "" {
-		log.Fatalf("не задан токен: --token, --token-file (%s) или ARGUS_AGENT_TOKEN", *tokenF)
+		log.Fatalf("не задан токен: --token-file (%s) или ARGUS_AGENT_TOKEN", cfg.tokenFile)
 	}
 
-	srv := NewServer(tok, *fps, *width, *height)
+	srv := NewServer(tok, cfg.fps, cfg.width, cfg.height)
 	httpSrv := &http.Server{
-		Addr:              *addr,
+		Addr:              cfg.addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	ln, err := net.Listen("tcp", *addr)
+	ln, err := net.Listen("tcp", cfg.addr)
 	if err != nil {
-		log.Fatalf("не удалось занять %s: %v", *addr, err)
+		log.Fatalf("не удалось занять %s: %v", cfg.addr, err)
 	}
 
-	if *plain {
+	if cfg.noTLS {
 		// Открытый транспорт оставлен только для отладки: по локальной сети токен и картинка
 		// пошли бы без шифрования. В обычной работе этот флаг не используется.
-		log.Printf("argus-agent %s слушает %s БЕЗ TLS (%s/%s, fps=%d)", Version, *addr, runtime.GOOS, runtime.GOARCH, *fps)
+		log.Printf("argus-agent %s слушает %s БЕЗ TLS (%s/%s, fps=%d)", Version, cfg.addr, runtime.GOOS, runtime.GOARCH, cfg.fps)
 		log.Fatal(httpSrv.Serve(ln))
 	}
 
@@ -125,7 +153,7 @@ func main() {
 	}
 	fp, _ := certFingerprint(cp)
 	log.Printf("argus-agent %s слушает %s по TLS (%s/%s, fps=%d, отпечаток sha256:%s)",
-		Version, *addr, runtime.GOOS, runtime.GOARCH, *fps, fp)
+		Version, cfg.addr, runtime.GOOS, runtime.GOARCH, cfg.fps, fp)
 	log.Fatal(httpSrv.ServeTLS(ln, cp, kp))
 }
 

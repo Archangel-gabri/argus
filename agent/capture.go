@@ -68,7 +68,8 @@ type Streamer struct {
 	dimsFromHelper bool
 	// ctrl — управляющий канал к помощнику конвейера (его stdin). Есть только у вариантов,
 	// которые умеют менять качество на ходу.
-	ctrl io.WriteCloser
+	ctrlMu sync.Mutex
+	ctrl   io.WriteCloser
 }
 
 func NewStreamer(fps, width, height int) *Streamer {
@@ -207,16 +208,18 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 	}
 	s.mu.Lock()
 	s.cmd = cmd
-	s.ctrl = ctrl
 	s.dimsFromHelper = false
 	s.mu.Unlock()
+	s.ctrlMu.Lock()
+	s.ctrl = ctrl
+	s.ctrlMu.Unlock()
 	defer func() {
-		s.mu.Lock()
+		s.ctrlMu.Lock()
 		s.ctrl = nil
-		s.mu.Unlock()
 		if ctrl != nil {
 			_ = ctrl.Close()
 		}
+		s.ctrlMu.Unlock()
 	}()
 
 	go func() {
@@ -519,9 +522,9 @@ func (s *Streamer) applyHelperEvent(ev helperEvent) {
 // свойство битрейта помечено «changeable in PLAYING» — кодировщик применит его на следующем
 // кадре. Для вариантов на ffmpeg управлять нечем, и это честно возвращается ошибкой.
 func (s *Streamer) SetQuality(bitrateKbps, fps int) error {
-	s.mu.Lock()
+	s.ctrlMu.Lock()
+	defer s.ctrlMu.Unlock()
 	ctrl := s.ctrl
-	s.mu.Unlock()
 	if ctrl == nil {
 		return errors.New("этот вариант захвата не умеет менять качество на ходу")
 	}
@@ -541,9 +544,9 @@ func (s *Streamer) SetQuality(bitrateKbps, fps int) error {
 
 // RequestKeyframe просит немедленный ключевой кадр — восстановление после потери.
 func (s *Streamer) RequestKeyframe() error {
-	s.mu.Lock()
+	s.ctrlMu.Lock()
+	defer s.ctrlMu.Unlock()
 	ctrl := s.ctrl
-	s.mu.Unlock()
 	if ctrl == nil {
 		return errors.New("этот вариант захвата не умеет выдавать ключевой кадр по требованию")
 	}
