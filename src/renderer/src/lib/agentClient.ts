@@ -30,6 +30,8 @@ export interface AgentClientHandlers {
   onHello?: (h: AgentHello) => void
   onFrame?: () => void
   onQuality?: (q: AgentQuality) => void
+  /** Раз в секунду: фактическая частота и потери за окно — то, что стоит показать человеку. */
+  onStats?: (s: { fps: number; lost: number }) => void
   onError?: (message: string) => void
   onClose?: () => void
 }
@@ -177,6 +179,7 @@ export class AgentClient {
       this.rxFrames = 0
       this.lostFrames = 0
       this.liveFps = rx
+      this.h.onStats?.({ fps: rx, lost })
       this.send({
         type: 'stats',
         stats: {

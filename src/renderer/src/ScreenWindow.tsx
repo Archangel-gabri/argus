@@ -61,6 +61,14 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
   const sessionRef = useRef<{ mode: 'agent' | 'rdp'; wsPort: number; token: string; url?: string } | null>(null)
   const agentRef = useRef<AgentClient | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  // Что за поток идёт: неизменная часть (агент и кодировщик) и меняющаяся (частота, ступень).
+  // Показываем ИЗМЕРЕННУЮ частоту, а не заявленную в приветствии: та — лишь ориентир
+  // кодировщика, и на источнике, отдающем кадры по изменениям картинки, она мало что значит.
+  const streamRef = useRef<{ base: string; fps: number; tier: string | null }>({
+    base: '',
+    fps: 0,
+    tier: null
+  })
   const attemptRef = useRef(0)
   const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Поколение соединения. teardown его увеличивает — и все обработчики прошлого клиента
@@ -131,8 +139,27 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
         attemptRef.current = 0
         setErr(null)
         setPhase('connected')
-        setInfo(`агент ${h.version} · ${h.source}/${h.encoder} · ${h.fps} к/с`)
+        streamRef.current = {
+          base: `агент ${h.version} · ${h.source}/${h.encoder}`,
+          fps: 0,
+          tier: null
+        }
+        setInfo(streamRef.current.base)
         canvas.focus()
+      },
+      onStats: ({ fps }) => {
+        if (genRef.current !== gen) return
+        const s = streamRef.current
+        s.fps = fps
+        setInfo(`${s.base} · ${fps} к/с${s.tier ? ` · ${s.tier}` : ''}`)
+      },
+      onQuality: (q) => {
+        if (genRef.current !== gen) return
+        const s = streamRef.current
+        // Ступень показываем только когда она НЕ верхняя: «как есть» — это отсутствие
+        // ограничений, и сообщать о нём нечего.
+        s.tier = q.fps > 0 ? q.comment : null
+        setInfo(`${s.base} · ${s.fps} к/с${s.tier ? ` · ${s.tier}` : ''}`)
       },
       onError: (m) => {
         if (genRef.current !== gen) return
