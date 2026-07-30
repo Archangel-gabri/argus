@@ -3,6 +3,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +28,9 @@ type captureOption struct {
 	// если стали известны, реальные размеры картинки. Нужна там, где аргументы известны только
 	// после переговоров: номер узла PipeWire выдаёт портал, и узнать его заранее нельзя.
 	prepare func() ([]string, func(), *captureDims, error)
+	// control — вариант принимает команды строками JSON в свой stdin (помощник конвейера).
+	// Только у таких можно менять качество, не переоткрывая сеанс портала.
+	control bool
 	// fps — сколько кадров даёт ИМЕННО этот вариант. Аппаратный кодировщик тянет 60, программный
 	// честно ограничен 30. Ноль = как задано флагом.
 	fps int
@@ -58,6 +63,12 @@ type Streamer struct {
 	lastErr string
 	dims    captureDims
 	codec   string
+	// dimsFromHelper — размеры сообщил сам помощник (событие приходит ДО первого кадра).
+	// Без этого признака установка размеров на первом кадре затирала бы правду догадкой.
+	dimsFromHelper bool
+	// ctrl — управляющий канал к помощнику конвейера (его stdin). Есть только у вариантов,
+	// которые умеют менять качество на ходу.
+	ctrl io.WriteCloser
 }
 
 func NewStreamer(fps, width, height int) *Streamer {
@@ -177,6 +188,15 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 	if err != nil {
 		return err
 	}
+	// Управляющий канал открываем ТОЛЬКО тем вариантам, которые его понимают: лишний stdin
+	// у ffmpeg безвреден, но обещать через него управление качеством было бы неправдой.
+	var ctrl io.WriteCloser
+	if opt.control {
+		ctrl, err = cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+	}
 	var errBuf strings.Builder
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -187,12 +207,32 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 	}
 	s.mu.Lock()
 	s.cmd = cmd
+	s.ctrl = ctrl
+	s.dimsFromHelper = false
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.ctrl = nil
+		s.mu.Unlock()
+		if ctrl != nil {
+			_ = ctrl.Close()
+		}
+	}()
 
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
 			line := sc.Text()
+			// Наш помощник конвейера пишет в этот же канал СОБЫТИЯ строками JSON. Отличить их
+			// от обычного вывода ffmpeg просто: там нет поля «ev». Разбор здесь, а не отдельным
+			// дескриптором, потому что порядок строк относительно ошибок важен, а один канал
+			// его гарантирует.
+			if ev, ok := parseHelperEvent(line); ok {
+				s.applyHelperEvent(ev)
+				if ev.Ev != "error" {
+					continue
+				}
+			}
 			if errBuf.Len() < 4000 {
 				errBuf.WriteString(line + "\n")
 			}
@@ -217,7 +257,12 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 				codec := codecFromSPS(au.Data)
 				s.mu.Lock()
 				s.chosen = opt
-				s.dims = dims
+				if s.dimsFromHelper {
+					// Помощник уже сообщил настоящий размер — берём только частоту.
+					s.dims.fps = dims.fps
+				} else {
+					s.dims = dims
+				}
 				if codec != "" {
 					s.codec = codec
 				}
@@ -416,4 +461,92 @@ func splitAnnexB(r io.Reader, onAU func(AU)) error {
 			buf = buf[:0]
 		}
 	}
+}
+
+// ── События помощника конвейера ────────────────────────────────────────────────────────────────
+
+// helperEvent — строка JSON, которую пишет helpers/portal-stream.py в свой fd 2.
+// Каналы разведены намеренно: в fd 1 идёт двоичный H.264 и ничего кроме него, иначе журнал
+// попал бы прямо в видеопоток.
+type helperEvent struct {
+	Ev      string `json:"ev"`
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Node    int    `json:"node"`
+	Reused  bool   `json:"reused"`
+	Encoder string `json:"encoder"`
+	Error   string `json:"error"`
+	Detail  string `json:"detail"`
+}
+
+func parseHelperEvent(line string) (helperEvent, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "{") || !strings.Contains(line, `"ev"`) {
+		return helperEvent{}, false
+	}
+	var ev helperEvent
+	if err := json.Unmarshal([]byte(line), &ev); err != nil || ev.Ev == "" {
+		return helperEvent{}, false
+	}
+	return ev, true
+}
+
+func (s *Streamer) applyHelperEvent(ev helperEvent) {
+	switch ev.Ev {
+	case "stream":
+		// Настоящий размер картинки известен только после ответа портала, то есть уже внутри
+		// помощника. Приходит ДО первого кадра, поэтому в приветствие попадает верным.
+		if ev.Width > 0 && ev.Height > 0 {
+			s.mu.Lock()
+			s.dims.width, s.dims.height = ev.Width, ev.Height
+			s.dimsFromHelper = true
+			s.mu.Unlock()
+		}
+		log.Printf("портал отдал поток: узел %d, %dx%d (согласие переиспользовано: %v)",
+			ev.Node, ev.Width, ev.Height, ev.Reused)
+	case "ready":
+		log.Printf("конвейер собран: %s", ev.Encoder)
+	case "applied":
+		log.Printf("качество применено: %s", ev.Detail)
+	case "error":
+		log.Printf("помощник конвейера: %s %s", ev.Error, ev.Detail)
+	}
+}
+
+// SetQuality меняет качество У ЖИВОГО конвейера, без переоткрытия сеанса портала.
+//
+// Работает только с помощником (Wayland): у него сохранена ссылка на элемент кодировщика, а
+// свойство битрейта помечено «changeable in PLAYING» — кодировщик применит его на следующем
+// кадре. Для вариантов на ffmpeg управлять нечем, и это честно возвращается ошибкой.
+func (s *Streamer) SetQuality(bitrateKbps, fps int) error {
+	s.mu.Lock()
+	ctrl := s.ctrl
+	s.mu.Unlock()
+	if ctrl == nil {
+		return errors.New("этот вариант захвата не умеет менять качество на ходу")
+	}
+	var b strings.Builder
+	if bitrateKbps > 0 {
+		fmt.Fprintf(&b, `{"cmd":"set-bitrate","kbps":%d}`+"\n", bitrateKbps)
+	}
+	if fps >= 0 {
+		fmt.Fprintf(&b, `{"cmd":"set-fps","fps":%d}`+"\n", fps)
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	_, err := io.WriteString(ctrl, b.String())
+	return err
+}
+
+// RequestKeyframe просит немедленный ключевой кадр — восстановление после потери.
+func (s *Streamer) RequestKeyframe() error {
+	s.mu.Lock()
+	ctrl := s.ctrl
+	s.mu.Unlock()
+	if ctrl == nil {
+		return errors.New("этот вариант захвата не умеет выдавать ключевой кадр по требованию")
+	}
+	_, err := io.WriteString(ctrl, `{"cmd":"keyframe"}`+"\n")
+	return err
 }

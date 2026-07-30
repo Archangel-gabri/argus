@@ -30,21 +30,24 @@ func goos() string { return runtime.GOOS }
 
 func main() {
 	var (
-		addr     = flag.String("addr", "0.0.0.0:47990", "адрес прослушивания")
-		token    = flag.String("token", "", "токен доступа (или файл через --token-file, или ARGUS_AGENT_TOKEN)")
-		tokenF   = flag.String("token-file", defaultTokenFile(), "файл с токеном")
-		fps      = flag.Int("fps", 30, "кадров в секунду")
-		width    = flag.Int("width", 1920, "ширина (для тестового источника)")
-		height   = flag.Int("height", 1080, "высота (для тестового источника)")
-		br       = flag.Int("bitrate", 8000, "битрейт, кбит/с")
-		test     = flag.Bool("test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
-		showVer  = flag.Bool("version", false, "показать версию и выйти")
-		selftest = flag.Bool("selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
-		bench    = flag.Int("bench", 0, "замер: сколько секунд гнать захват и посчитать кадры/битрейт, потом выйти")
-		only     = flag.String("only", "", "замер только вариантов, чей кодировщик содержит эту подстроку (nvenc, x264…)")
-		certDir  = flag.String("cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
-		showFP   = flag.Bool("fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
-		plain    = flag.Bool("no-tls", false, "без TLS — только для отладки на localhost")
+		addr      = flag.String("addr", "0.0.0.0:47990", "адрес прослушивания")
+		token     = flag.String("token", "", "токен доступа (или файл через --token-file, или ARGUS_AGENT_TOKEN)")
+		tokenF    = flag.String("token-file", defaultTokenFile(), "файл с токеном")
+		fps       = flag.Int("fps", 30, "кадров в секунду")
+		width     = flag.Int("width", 1920, "ширина (для тестового источника)")
+		height    = flag.Int("height", 1080, "высота (для тестового источника)")
+		br        = flag.Int("bitrate", 8000, "битрейт, кбит/с")
+		test      = flag.Bool("test-source", false, "вместо экрана — тестовая картинка (проверка тракта без прав на захват)")
+		showVer   = flag.Bool("version", false, "показать версию и выйти")
+		selftest  = flag.Bool("selftest", false, "проверить окружение (ffmpeg, кодировщики, ввод) и выйти")
+		bench     = flag.Int("bench", 0, "замер: сколько секунд гнать захват и посчитать кадры/битрейт, потом выйти")
+		only      = flag.String("only", "", "замер только вариантов, чей кодировщик содержит эту подстроку (nvenc, x264…)")
+		swAfter   = flag.Int("switch-after", 0, "замер: через сколько секунд сменить ступень качества (0 = не менять)")
+		swBitrate = flag.Int("switch-bitrate", 0, "замер: на какой битрейт перейти, кбит/с")
+		swFPS     = flag.Int("switch-fps", -1, "замер: на какую частоту перейти (0 = не ограничивать)")
+		certDir   = flag.String("cert-dir", "", "каталог сертификата TLS (по умолчанию — рядом с файлом токена)")
+		showFP    = flag.Bool("fingerprint", false, "напечатать отпечаток сертификата (SHA-256) и выйти")
+		plain     = flag.Bool("no-tls", false, "без TLS — только для отладки на localhost")
 	)
 	flag.Parse()
 
@@ -81,7 +84,7 @@ func main() {
 	}
 
 	if *bench > 0 {
-		runBench(*bench, *fps, *width, *height, *only)
+		runBench(*bench, *fps, *width, *height, *only, *swAfter, *swBitrate, *swFPS)
 		return
 	}
 
@@ -208,7 +211,7 @@ func runSelfTest(fps, w, h int) {
 // то, ради чего вообще делался аппаратный путь. Замер честен ровно настолько, насколько на
 // экране в этот момент что-то происходит: источник на Wayland отдаёт кадры только при
 // изменениях картинки, поэтому мерить надо под нагрузкой (например, анимацией во весь экран).
-func runBench(seconds, fps, w, h int, only string) {
+func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int) {
 	st := NewStreamer(fps, w, h)
 	if only != "" {
 		var kept []captureOption
@@ -228,6 +231,10 @@ func runBench(seconds, fps, w, h int, only string) {
 	defer cancel()
 
 	var frames, bytes, keys int
+	// Вторая половина замера считается отдельно: смысл проверки в том, ЧТО ИЗМЕНИЛОСЬ после
+	// смены ступени, а не в среднем по всему прогону.
+	var frames2, bytes2 int
+	var switchAt time.Time
 	var firstAt time.Time
 	done := make(chan error, 1)
 	go func() {
@@ -240,11 +247,26 @@ func runBench(seconds, fps, w, h int, only string) {
 					<-time.After(time.Duration(seconds) * time.Second)
 					cancel()
 				}()
+				if swAfter > 0 {
+					go func() {
+						<-time.After(time.Duration(swAfter) * time.Second)
+						if err := st.SetQuality(swBitrate, swFPS); err != nil {
+							fmt.Printf("смена ступени не удалась: %v\n", err)
+							return
+						}
+						switchAt = time.Now()
+						fmt.Printf("ступень сменена: битрейт %d кбит/с, частота %d\n", swBitrate, swFPS)
+					}()
+				}
 			}
 			frames++
 			bytes += len(au.Data)
 			if au.IsKey {
 				keys++
+			}
+			if !switchAt.IsZero() {
+				frames2++
+				bytes2 += len(au.Data)
 			}
 		})
 	}()
@@ -265,4 +287,12 @@ func runBench(seconds, fps, w, h int, only string) {
 	fmt.Printf("  кадров: %d за %.1fс = %.1f к/с (ключевых %d)\n", frames, elapsed, float64(frames)/elapsed, keys)
 	fmt.Printf("  поток: %.1f Мбит/с, средний кадр %.0f КБ\n",
 		float64(bytes)*8/elapsed/1e6, float64(bytes)/float64(frames)/1024)
+	if !switchAt.IsZero() && frames2 > 0 {
+		after := time.Since(switchAt).Seconds()
+		before := elapsed - after
+		fmt.Printf("  ДО смены:    %.1f к/с, %.1f Мбит/с\n",
+			float64(frames-frames2)/before, float64(bytes-bytes2)*8/before/1e6)
+		fmt.Printf("  ПОСЛЕ смены: %.1f к/с, %.1f Мбит/с\n",
+			float64(frames2)/after, float64(bytes2)*8/after/1e6)
+	}
 }
