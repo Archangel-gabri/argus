@@ -63,7 +63,7 @@ export function SshImportDialog(): React.JSX.Element | null {
           <button
             onClick={() => setSource(false)}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
-            aria-label="Close"
+            aria-label="Закрыть"
           >
             <X className="h-4 w-4" />
           </button>

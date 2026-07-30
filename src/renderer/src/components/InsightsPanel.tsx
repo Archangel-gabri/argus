@@ -29,22 +29,22 @@ export function InsightsPanel(): React.JSX.Element {
       </button>
 
       <section>
-        <Title>Costs Overview</Title>
+        <Title>Расходы</Title>
         <div className="rounded-xl border border-border bg-card/60 p-4">
           <div className="flex items-center justify-between py-1">
-            <span className="text-sm text-slate-400">Total Monthly</span>
+            <span className="text-sm text-slate-400">В месяц</span>
             <span className="text-lg font-semibold tabular-nums text-white">{money(monthly)}</span>
           </div>
           <div className="my-1 h-px bg-border" />
           <div className="flex items-center justify-between py-1">
-            <span className="text-sm text-slate-400">Total Yearly</span>
+            <span className="text-sm text-slate-400">В год</span>
             <span className="text-lg font-semibold tabular-nums text-white">{money(yearly)}</span>
           </div>
         </div>
       </section>
 
       <section>
-        <Title>Infrastructure Spend</Title>
+        <Title>По хостерам</Title>
         <SpendPie />
       </section>
     </div>

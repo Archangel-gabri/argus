@@ -6,7 +6,7 @@ import { money } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
-import { catColor, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
+import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 
@@ -64,7 +64,7 @@ function SubForm({
         <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
           {SUB_CATEGORIES.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {catLabel(c)}
             </option>
           ))}
         </select>
@@ -78,7 +78,7 @@ function SubForm({
         <select className={inputCls} value={currency} onChange={(e) => setCurrency(e.target.value as Currency)}>
           {CURRENCY_CODES.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {catLabel(c)}
             </option>
           ))}
         </select>
@@ -156,7 +156,7 @@ export function SubscriptionsView(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Subscriptions" subtitle={`${all.length} активных · в месяц`} />
+      <PageHeader title="Подписки" subtitle={`${all.length} активных · в месяц`} />
 
       <div className="mb-4 flex justify-end">
         <button
@@ -207,7 +207,7 @@ export function SubscriptionsView(): React.JSX.Element {
                       через {days}д
                     </span>
                   )}
-                  <span className="hidden w-16 text-xs text-slate-500 sm:inline">{x.category}</span>
+                  <span className="hidden w-16 text-xs text-slate-500 sm:inline">{catLabel(x.category)}</span>
                   <SourceBadge kind={x.source} />
                   <span className="w-24 text-right tabular-nums text-slate-300">
                     {money(x.amount, x.currency)}

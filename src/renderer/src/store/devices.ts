@@ -65,14 +65,14 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   },
 
   create: async (input) => {
-    if (!api) return { ok: false, error: 'preview mode' }
+    if (!api) return { ok: false, error: 'недоступно вне приложения' }
     const r = await api.devices.create(input)
     if (r.ok && r.device) set({ devices: [...get().devices, r.device] })
     return { ok: r.ok, error: r.error }
   },
 
   update: async (id, input) => {
-    if (!api) return { ok: false, error: 'preview mode' }
+    if (!api) return { ok: false, error: 'недоступно вне приложения' }
     const r = await api.devices.update(id, input)
     if (r.ok && r.device) {
       const updated = r.device

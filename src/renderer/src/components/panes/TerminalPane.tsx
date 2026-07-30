@@ -21,10 +21,10 @@ function b64ToBytes(b64: string): Uint8Array {
 type ConnStatus = 'connecting' | 'connected' | 'closed' | 'error'
 
 const PILL: Record<ConnStatus, { dot: string; text: string; label: string }> = {
-  connecting: { dot: 'bg-amber-400 animate-pulse', text: 'text-amber-400', label: 'connecting' },
-  connected: { dot: 'bg-emerald-500', text: 'text-emerald-400', label: 'connected' },
-  closed: { dot: 'bg-slate-500', text: 'text-slate-400', label: 'closed' },
-  error: { dot: 'bg-rose-500', text: 'text-rose-400', label: 'error' }
+  connecting: { dot: 'bg-amber-400 animate-pulse', text: 'text-amber-400', label: 'подключаюсь' },
+  connected: { dot: 'bg-emerald-500', text: 'text-emerald-400', label: 'на связи' },
+  closed: { dot: 'bg-slate-500', text: 'text-slate-400', label: 'закрыт' },
+  error: { dot: 'bg-rose-500', text: 'text-rose-400', label: 'ошибка' }
 }
 
 export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Element {
@@ -73,15 +73,15 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
 
     if (!api) {
       setStatus('error')
-      term.writeln('\x1b[31m✖ Terminal needs the desktop app (no Electron API in browser preview).\x1b[0m')
+      term.writeln('\x1b[31m✖ Терминал работает только в приложении.\x1b[0m')
     } else {
       void (async () => {
         const r = await api.ssh.open(device.id, term.cols, term.rows)
         if (disposed) return
         if (!r.ok || !r.sessionId) {
           setStatus('error')
-          setErrMsg(r.error ?? 'Failed to connect')
-          term.writeln(`\x1b[31m✖ ${r.error ?? 'Failed to connect'}\x1b[0m`)
+          setErrMsg(r.error ?? 'Не удалось подключиться')
+          term.writeln(`\x1b[31m✖ ${r.error ?? 'Не удалось подключиться'}\x1b[0m`)
           return
         }
         sessionId = r.sessionId

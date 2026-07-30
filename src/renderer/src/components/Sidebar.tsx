@@ -12,11 +12,11 @@ interface NavItem {
 }
 
 const INFRA: NavItem[] = [
-  { id: 'devices', label: 'Fleet', icon: Server },
-  { id: 'banks', label: 'Finance', icon: Landmark },
-  { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
-  { id: 'ai', label: 'AI', icon: Bot },
-  { id: 'settings', label: 'Settings', icon: Settings }
+  { id: 'devices', label: 'Парк', icon: Server },
+  { id: 'banks', label: 'Финансы', icon: Landmark },
+  { id: 'subscriptions', label: 'Подписки', icon: Repeat },
+  { id: 'ai', label: 'ИИ', icon: Bot },
+  { id: 'settings', label: 'Настройки', icon: Settings }
 ]
 
 function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.Element {
@@ -107,7 +107,7 @@ export function Sidebar(): React.JSX.Element {
           <button
             onClick={() => setView('settings')}
             className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"
-            aria-label="Settings"
+            aria-label="Настройки"
           >
             <Settings className="h-[18px] w-[18px]" />
           </button>

@@ -14,7 +14,7 @@ import type { DeviceDTO } from '@/types'
 
 const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }> = [
   { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
-  { id: 'terminal', label: 'Terminal', icon: TerminalSquare },
+  { id: 'terminal', label: 'Терминал', icon: TerminalSquare },
   { id: 'files', label: 'Файлы', icon: FolderOpen },
   { id: 'forwards', label: 'Порты', icon: Network },
   { id: 'metrics', label: 'Метрики', icon: Activity },
@@ -132,7 +132,7 @@ export function DeviceDrawer(): React.JSX.Element | null {
           <button
             onClick={close}
             className="rounded-md p-1.5 text-slate-400 hover:bg-white/5 hover:text-slate-200"
-            aria-label="Close"
+            aria-label="Закрыть"
           >
             <X className="h-4 w-4" />
           </button>

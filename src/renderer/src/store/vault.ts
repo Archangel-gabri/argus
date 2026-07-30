@@ -41,7 +41,7 @@ export const useVault = create<VaultStore>((set) => ({
       status: r.state.status,
       keyringBackend: r.state.keyringBackend,
       canRemember: r.state.canRemember,
-      error: r.ok ? null : r.error ?? 'Failed'
+      error: r.ok ? null : r.error ?? 'Не удалось открыть хранилище'
     })
     return r.ok
   },
@@ -58,7 +58,7 @@ export const useVault = create<VaultStore>((set) => ({
       status: r.state.status,
       keyringBackend: r.state.keyringBackend,
       canRemember: r.state.canRemember,
-      error: r.ok ? null : r.error ?? 'Failed'
+      error: r.ok ? null : r.error ?? 'Не удалось открыть хранилище'
     })
     return r.ok
   },

@@ -9,6 +9,19 @@ const api = typeof window !== 'undefined' ? window.api : undefined
 
 const PROVIDERS = ['openrouter', 'anthropic', 'openai', 'gemini', 'groq', 'xai', 'other'] as const
 
+// Идентификатор провайдера ХРАНИТСЯ в записи аккаунта и уходит в main-процесс, поэтому в списке
+// остаётся как есть; читаемое имя — отдельной картой. «other» подписан по-русски, остальные —
+// это названия компаний, их не переводят.
+const PROVIDER_LABEL: Record<string, string> = {
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  openai: 'OpenAI',
+  gemini: 'Gemini',
+  groq: 'Groq',
+  xai: 'xAI',
+  other: 'Другой'
+}
+
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 
@@ -23,7 +36,7 @@ function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React
   if (check.status === 'valid')
     return (
       <span className="inline-flex items-center gap-1 text-xs text-emerald-400">
-        <CheckCircle2 className="h-3.5 w-3.5" /> key valid
+        <CheckCircle2 className="h-3.5 w-3.5" /> ключ рабочий
       </span>
     )
   if (check.status === 'quota')
@@ -34,7 +47,7 @@ function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React
     )
   return (
     <span className="inline-flex items-center gap-1 text-xs text-rose-400">
-      <XCircle className="h-3.5 w-3.5" /> {check.status === 'error' ? 'ошибка' : 'invalid'}
+      <XCircle className="h-3.5 w-3.5" /> {check.status === 'error' ? 'ошибка' : 'неверный'}
     </span>
   )
 }
@@ -65,7 +78,7 @@ function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose
           <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">Провайдер</span>
           <select className={inputCls} value={provider} onChange={(e) => setProvider(e.target.value)}>
             {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>{PROVIDER_LABEL[p] ?? p}</option>
             ))}
           </select>
         </label>
@@ -147,7 +160,7 @@ export function AIAccountsView(): React.JSX.Element {
       <div className="grid grid-cols-3 gap-4">
         <StatTile label="Аккаунтов" value={String(accounts.length)} />
         <StatTile label="Ключи валидны" value={`${validCount}/${accounts.length}`} hint="по последней проверке" />
-        <StatTile label="Live credit" value={money(totalCredit)} hint="OpenRouter" />
+        <StatTile label="Остаток" value={money(totalCredit)} hint="OpenRouter" />
       </div>
 
       <div className="mt-6">
@@ -186,7 +199,7 @@ export function AIAccountsView(): React.JSX.Element {
                         </span>
                       </div>
                       <div className="mt-0.5 text-xs text-slate-500">
-                        Plan: <span className="text-slate-300">{a.plan || '—'}</span>
+                        План: <span className="text-slate-300">{a.plan || '—'}</span>
                       </div>
                     </div>
                     <Verdict check={c} hasKey={a.hasKey} />
@@ -194,13 +207,13 @@ export function AIAccountsView(): React.JSX.Element {
 
                   <div className="mt-4 grid grid-cols-2 gap-3">
                     <div className="rounded-lg bg-bg/40 p-3">
-                      <div className="text-[11px] text-slate-500">Credit left</div>
+                      <div className="text-[11px] text-slate-500">Остаток</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-white">
                         {c?.remaining != null ? money(c.remaining) : '—'}
                       </div>
                     </div>
                     <div className="rounded-lg bg-bg/40 p-3">
-                      <div className="text-[11px] text-slate-500">Usage</div>
+                      <div className="text-[11px] text-slate-500">Потрачено</div>
                       <div className="mt-0.5 text-sm font-semibold tabular-nums text-white">
                         {c?.usage != null ? money(c.usage) : '—'}
                       </div>

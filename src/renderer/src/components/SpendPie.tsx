@@ -33,7 +33,7 @@ export function SpendPie(): React.JSX.Element {
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">/ month</span>
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">/ мес</span>
           <span className="text-base font-semibold tabular-nums text-white">{money(monthly)}</span>
         </div>
       </div>

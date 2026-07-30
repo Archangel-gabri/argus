@@ -437,7 +437,7 @@ function MetricChips({ device: d }: { device: DeviceDTO }): React.JSX.Element | 
     d.tempCpu == null ? undefined : d.tempCpu >= 80 ? 'text-rose-400' : d.tempCpu >= 60 ? 'text-amber-400' : 'text-emerald-400'
   return (
     <div className="grid grid-cols-2 gap-2">
-      {hasLoad && <Chip icon={Gauge} label="Load" value={d.load1!.toFixed(2)} />}
+      {hasLoad && <Chip icon={Gauge} label="Нагрузка" value={d.load1!.toFixed(2)} />}
       {hasNet && <Chip icon={ArrowDownUp} label="Сеть" value={`↓${fmtBps(d.netRx)} ↑${fmtBps(d.netTx)}`} />}
       {hasSwap && <Chip icon={Layers} label="Swap" value={`${d.swapUsed}/${d.swapTotal} GB`} />}
       {hasTemp && <Chip icon={Thermometer} label="Темп." value={`${d.tempCpu}°C`} tone={tempTone} />}
@@ -612,7 +612,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
               label="Авторизация"
               value={d.authType === 'key' ? 'SSH-ключ' : d.authType === 'password' ? 'пароль' : 'нет'}
             />
-            <Fact label="Jump-host" value={jump ?? '—'} />
+            <Fact label="Через хост" value={jump ?? '—'} />
           </div>
 
           <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
@@ -692,7 +692,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             rel="noreferrer"
             className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:text-accent-hover"
           >
-            <ExternalLink className="h-3.5 w-3.5" /> {ssh ? 'Hoster Console' : 'Открыть панель'}
+            <ExternalLink className="h-3.5 w-3.5" /> {ssh ? 'Панель хостера' : 'Открыть панель'}
           </a>
         ) : (
           <span className="text-xs text-slate-600">Без панели</span>
@@ -700,7 +700,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
         {d.cost.amount > 0 && (
           <span className="text-xs font-medium tabular-nums text-slate-300">
             {money(d.cost.amount, d.cost.currency)}
-            <span className="text-slate-500">/mo · ${d.cost.usd} норм.</span>
+            <span className="text-slate-500">/мес · ≈${d.cost.usd}</span>
           </span>
         )}
       </div>

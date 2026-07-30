@@ -25,11 +25,11 @@ import { useAi } from '@/store/ai'
 import { useWallets } from '@/store/wallets'
 
 const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
-  { id: 'devices', label: 'Fleet', icon: Server },
-  { id: 'banks', label: 'Finance', icon: Landmark },
-  { id: 'subscriptions', label: 'Subscriptions', icon: Repeat },
-  { id: 'ai', label: 'AI', icon: Bot },
-  { id: 'settings', label: 'Settings', icon: Settings }
+  { id: 'devices', label: 'Парк', icon: Server },
+  { id: 'banks', label: 'Финансы', icon: Landmark },
+  { id: 'subscriptions', label: 'Подписки', icon: Repeat },
+  { id: 'ai', label: 'ИИ', icon: Bot },
+  { id: 'settings', label: 'Настройки', icon: Settings }
 ]
 
 const GROUP =
@@ -103,7 +103,7 @@ export function CommandPalette(): React.JSX.Element | null {
       onMouseDown={() => setPalette(false)}
     >
       <Command
-        label="Command palette"
+        label="Палитра команд"
         className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >

@@ -92,9 +92,9 @@ export function SettingsView(): React.JSX.Element {
 
   return (
     <Page>
-      <PageHeader title="Settings" />
+      <PageHeader title="Настройки" />
 
-      <Section title="Security">
+      <Section title="Безопасность">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-slate-300">
             <Timer className="h-4 w-4 text-slate-500" />
@@ -129,7 +129,7 @@ export function SettingsView(): React.JSX.Element {
         </div>
       </Section>
 
-      <Section title="Appearance">
+      <Section title="Внешний вид">
         <label className="flex items-center gap-2 text-sm text-slate-300">
           <Eye className="h-4 w-4 text-slate-500" />
           <input
@@ -142,7 +142,7 @@ export function SettingsView(): React.JSX.Element {
         </label>
       </Section>
 
-      <Section title="About">
+      <Section title="О приложении">
         <div className="flex items-center gap-2 text-sm text-slate-300">
           <ShieldCheck className="h-4 w-4 text-emerald-400" />
           Argus 0.1.0 · всё хранится локально

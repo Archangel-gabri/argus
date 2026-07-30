@@ -82,7 +82,7 @@ export function LockScreen(): React.JSX.Element {
         <div className="mb-6 text-center">
           <img src={wordmark} alt="Argus" className="mx-auto w-56 rounded-xl" />
           <h1 className="mt-4 text-xl font-semibold text-white">
-            {setup ? 'Create your vault' : 'Unlock Argus'}
+            {setup ? 'Создать хранилище' : 'Argus заблокирован'}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {setup
@@ -156,7 +156,7 @@ export function LockScreen(): React.JSX.Element {
           className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-bold text-bg transition-colors hover:bg-accent-hover disabled:opacity-60"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-          {setup ? 'Create vault' : 'Unlock'}
+          {setup ? 'Создать' : 'Войти'}
         </button>
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-600">

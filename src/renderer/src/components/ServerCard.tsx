@@ -32,12 +32,12 @@ export const STATUS: Record<
   Status,
   { dot: string; label: string; text: string; hex: string; ring: boolean }
 > = {
-  online: { dot: 'bg-emerald-500', label: 'Online', text: 'text-emerald-400', hex: '#10b981', ring: true },
-  degraded: { dot: 'bg-amber-400', label: 'Degraded', text: 'text-amber-400', hex: '#fbbf24', ring: false },
-  reboot: { dot: 'bg-sky-400', label: 'Rebooting', text: 'text-sky-400', hex: '#38bdf8', ring: false },
-  offline: { dot: 'bg-rose-500', label: 'Offline', text: 'text-rose-400', hex: '#f43f5e', ring: false },
-  unknown: { dot: 'bg-slate-500', label: 'Unknown', text: 'text-slate-400', hex: '#78716c', ring: false },
-  maintenance: { dot: 'bg-violet-400', label: 'Maintenance', text: 'text-violet-400', hex: '#a78bfa', ring: false }
+  online: { dot: 'bg-emerald-500', label: 'Онлайн', text: 'text-emerald-400', hex: '#10b981', ring: true },
+  degraded: { dot: 'bg-amber-400', label: 'С проблемами', text: 'text-amber-400', hex: '#fbbf24', ring: false },
+  reboot: { dot: 'bg-sky-400', label: 'Перезагрузка', text: 'text-sky-400', hex: '#38bdf8', ring: false },
+  offline: { dot: 'bg-rose-500', label: 'Выключен', text: 'text-rose-400', hex: '#f43f5e', ring: false },
+  unknown: { dot: 'bg-slate-500', label: 'Неизвестно', text: 'text-slate-400', hex: '#78716c', ring: false },
+  maintenance: { dot: 'bg-violet-400', label: 'Обслуживание', text: 'text-violet-400', hex: '#a78bfa', ring: false }
 }
 
 function Bar({
@@ -148,7 +148,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') openDetail(s)
         }}
-        aria-label={`Open ${s.name}`}
+        aria-label={`Открыть ${s.name}`}
         className="relative h-44 cursor-pointer overflow-hidden rounded-lg bg-bg"
         style={{ boxShadow: `inset 0 0 0 1px ${st.hex}33${st.ring ? `, inset 0 -24px 48px -32px ${st.hex}55` : ''}` }}
       >
@@ -191,7 +191,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           <button
             onClick={() => setMenu((v) => !v)}
             className="rounded-md p-1.5 text-slate-400 hover:bg-white/5 hover:text-slate-200"
-            aria-label="More"
+            aria-label="Ещё"
           >
             <MoreVertical className="h-[18px] w-[18px]" />
           </button>
@@ -204,7 +204,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 hover:bg-white/5"
               >
-                <Pencil className="h-3.5 w-3.5" /> Edit
+                <Pencil className="h-3.5 w-3.5" /> Правка
               </button>
               {ssh && (
                 <>
@@ -231,13 +231,13 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
               <button
                 onClick={async () => {
                   setMenu(false)
-                  if (!window.confirm(`Delete “${s.name}”? This cannot be undone.`)) return
+                  if (!window.confirm(`Удалить «${s.name}»? Отменить будет нельзя.`)) return
                   const r = await remove(s.id)
                   if (!r.ok) window.alert(`Не удалось удалить: ${r.error ?? 'неизвестная ошибка'}`)
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-rose-400 hover:bg-rose-500/10"
               >
-                <Trash2 className="h-3.5 w-3.5" /> Delete
+                <Trash2 className="h-3.5 w-3.5" /> Удалить
               </button>
             </div>
           )}
@@ -274,17 +274,17 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
             rel="noreferrer"
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-border transition-colors hover:bg-white/5"
           >
-            <ExternalLink className="h-3.5 w-3.5" /> Panel
+            <ExternalLink className="h-3.5 w-3.5" /> Панель
           </a>
         ) : (
           <span className="flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-xs text-slate-600 ring-1 ring-border/50">
-            No console
+            Нет панели
           </span>
         )}
         {s.cost.amount > 0 && (
           <span className="shrink-0 rounded-md bg-white/5 px-2 py-1.5 text-xs font-medium tabular-nums text-slate-300">
             {money(s.cost.amount, s.cost.currency)}
-            <span className="text-slate-500">/mo</span>
+            <span className="text-slate-500">/мес</span>
           </span>
         )}
       </div>

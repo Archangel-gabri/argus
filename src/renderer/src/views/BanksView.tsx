@@ -101,7 +101,7 @@ export function BanksView(): React.JSX.Element {
   return (
     <Page>
       <PageHeader
-        title="Banks & Finance"
+        title="Финансы"
         subtitle="кошельки · брокередж · кэш"
         action={
           <div className="flex items-center gap-2">
@@ -141,7 +141,7 @@ export function BanksView(): React.JSX.Element {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Net worth" value={money(net)} hint="все источники, USD" />
+        <StatTile label="Всего" value={money(net)} hint="все источники, USD" />
         <StatTile label="Live (кошельки)" value={money(liveUsd)} hint={`${wallets.length} адресов через RPC`} />
         <StatTile label="Ручные" value={money(manualUsd)} hint={`${manual.length} позиций`} />
       </div>

@@ -367,7 +367,7 @@ export function DeviceDialog(): React.JSX.Element | null {
     const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
     setBusy(false)
     if (r.ok) close()
-    else setError(r.error ?? 'Failed to save')
+    else setError(r.error ?? 'Не удалось сохранить')
   }
 
   return (
@@ -381,7 +381,7 @@ export function DeviceDialog(): React.JSX.Element | null {
           <button
             onClick={close}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
-            aria-label="Close"
+            aria-label="Закрыть"
           >
             <X className="h-4 w-4" />
           </button>
@@ -737,7 +737,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                 onClick={close}
                 className="rounded-lg px-3.5 py-2 text-sm font-medium text-slate-300 hover:bg-white/5"
               >
-                Cancel
+                Отмена
               </button>
               <button
                 type="submit"
