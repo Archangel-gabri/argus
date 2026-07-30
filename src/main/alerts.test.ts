@@ -79,7 +79,7 @@ describe('ручное продление', () => {
     name: 'OVH',
     provider: 'OVH',
     nextRenewal: '2026-08-02',
-    manual: true,
+    manualRenewal: true,
     ...over
   })
 
@@ -104,7 +104,7 @@ describe('ручное продление', () => {
   })
 
   it('автосписание не напоминаем — оно само себя не забудет', () => {
-    expect(run([], [sub({ manual: false })])).toHaveLength(0)
+    expect(run([], [sub({ manualRenewal: false })])).toHaveLength(0)
   })
 
   it('нет даты — нет напоминания', () => {

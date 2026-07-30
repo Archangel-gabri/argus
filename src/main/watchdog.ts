@@ -47,11 +47,7 @@ function check(): void {
     name: s.name,
     provider: s.provider,
     nextRenewal: s.nextRenewal,
-    // Признака «продление ручное» в записи подписки нет, а напоминать обо ВСЕХ нельзя:
-    // автосписание само себя не забудет, и лишние уведомления приучают их не читать.
-    // Поэтому владелец отмечает такие подписки словом в заметке — это его решение, а не
-    // догадка приложения. Временное решение, пока у подписки не появится отдельное поле.
-    manual: /ручн/i.test(s.notes ?? '')
+    manualRenewal: s.manualRenewal
   }))
 
   last = evaluateAlerts({ devices, subscriptions, now: Date.now() })

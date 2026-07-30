@@ -18,9 +18,10 @@ import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
-import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
+import type { DeviceInput, VaultState, AiAccountInput } from './types'
 import { nextReachability, type Reachability } from '../shared/reachability'
 import { masterPasswordPolicyError } from '../shared/password-strength'
+import { parseSubscriptionInput, parseWalletInput } from './finance-validation'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
 function keyringInfo(): { backend: string; canRemember: boolean } {
@@ -273,28 +274,29 @@ export function registerIpc(): void {
 
   // Subscriptions — stored in the encrypted vault
   ipcMain.handle('subs:list', () => (vault.isUnlocked() ? vault.listSubscriptions() : []))
-  ipcMain.handle('subs:create', (_e, input: unknown) => vault.createSubscription(input as SubscriptionInput))
+  ipcMain.handle('subs:create', (_e, input: unknown) => vault.createSubscription(parseSubscriptionInput(input)))
   ipcMain.handle('subs:update', (_e, id: unknown, input: unknown) =>
-    vault.updateSubscription(asString(id), input as SubscriptionInput)
+    vault.updateSubscription(asString(id), parseSubscriptionInput(input))
   )
   ipcMain.handle('subs:delete', (_e, id: unknown) => {
-    vault.deleteSubscription(asString(id))
-    return { ok: true }
+    const removed = vault.deleteSubscription(asString(id))
+    return removed ? { ok: true } : { ok: false, error: 'Подписка не найдена' }
   })
 
   // Crypto wallets — addresses in the vault, balances from public keyless endpoints
   ipcMain.handle('wallets:list', () => (vault.isUnlocked() ? vault.listWallets() : []))
-  ipcMain.handle('wallets:create', (_e, input: unknown) => vault.createWallet(input as WalletInput))
+  ipcMain.handle('wallets:create', (_e, input: unknown) => vault.createWallet(parseWalletInput(input)))
   ipcMain.handle('wallets:update', (_e, id: unknown, input: unknown) =>
-    vault.updateWallet(asString(id), input as WalletInput)
+    vault.updateWallet(asString(id), parseWalletInput(input))
   )
   ipcMain.handle('wallets:delete', (_e, id: unknown) => {
-    vault.deleteWallet(asString(id))
-    return { ok: true }
+    const removed = vault.deleteWallet(asString(id))
+    return removed ? { ok: true } : { ok: false, error: 'Кошелёк не найден' }
   })
-  ipcMain.handle('wallets:balance', (_e, chain: unknown, address: unknown) =>
-    walletBalance(asString(chain), asString(address))
-  )
+  ipcMain.handle('wallets:balance', (_e, chain: unknown, address: unknown) => {
+    const wallet = parseWalletInput({ chain, address })
+    return walletBalance(wallet.chain, wallet.address)
+  })
 
   // AI accounts — keys stay in the vault; only validity/quota verdicts cross IPC
   ipcMain.handle('ai:list', () => (vault.isUnlocked() ? vault.listAiAccounts() : []))

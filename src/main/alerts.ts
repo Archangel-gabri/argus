@@ -9,6 +9,8 @@
 // приучает не смотреть на уведомления, а пропущенная — обесценивает всю затею. И то, и другое
 // невозможно поймать вручную, зато легко закрыть проверками.
 
+import { daysUntilCalendar } from '../shared/billing'
+
 /** Что сторож умеет замечать. */
 export type AlertKind =
   | 'device-offline' // машина не отвечает
@@ -45,7 +47,7 @@ export interface AlertInput {
     provider: string
     nextRenewal: string | null
     /** Продление ручное: о таком надо напоминать, автосписание само себя не забудет. */
-    manual?: boolean
+    manualRenewal?: boolean
   }>
   now: number
 }
@@ -107,8 +109,8 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
   for (const s of input.subscriptions) {
     // Напоминаем только о РУЧНЫХ продлениях: автосписание само себя не забудет, а вот
     // «продлить OVH руками до 13-го» забывается ровно один раз и стоит сервера.
-    if (!s.manual || !s.nextRenewal) continue
-    const days = daysUntil(s.nextRenewal, input.now)
+    if (!s.manualRenewal || !s.nextRenewal) continue
+    const days = daysUntilCalendar(s.nextRenewal, input.now)
     if (days === null || days > RENEWAL_WARNING_DAYS) continue
     out.push({
       key: `renewal:${s.id}`,
@@ -128,17 +130,7 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
 }
 
 /** Сколько полных дней до даты. null — дату не разобрать. */
-export function daysUntil(iso: string, now: number): number | null {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return null
-  // Считаем по календарным суткам, а не по «24 часа от сейчас»: «продлить через 1 день»
-  // должно означать завтра, независимо от времени суток.
-  const startOfDay = (ms: number): number => {
-    const d = new Date(ms)
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-  }
-  return Math.round((startOfDay(t) - startOfDay(now)) / 86_400_000)
-}
+export const daysUntil = daysUntilCalendar
 
 /**
  * Память о том, о чём уже сообщили.

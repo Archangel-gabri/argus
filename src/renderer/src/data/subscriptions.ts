@@ -39,9 +39,9 @@ export const toUsd = (amount: number, currency: string): number =>
 
 // Browser-preview fallback (no Electron API): app subscriptions in the vault shape.
 export const MOCK_SUBSCRIPTIONS: Subscription[] = [
-  { id: 'claude', name: 'Claude Pro', provider: 'Anthropic', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-14', notes: null },
-  { id: 'chatgpt', name: 'ChatGPT Plus', provider: 'OpenAI', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-09', notes: null },
-  { id: 'copilot', name: 'GitHub Copilot', provider: 'GitHub', category: 'Dev', amount: 10, currency: 'USD', period: 'mo', nextRenewal: '2026-07-22', notes: null },
-  { id: 'spotify', name: 'Spotify Premium', provider: 'Spotify', category: 'Media', amount: 169, currency: 'RUB', period: 'mo', nextRenewal: '2026-07-20', notes: null },
-  { id: 'domains', name: 'Domains (HubVPN)', provider: 'Namecheap', category: 'Other', amount: 35, currency: 'USD', period: 'yr', nextRenewal: '2026-11-02', notes: null }
+  { id: 'claude', name: 'Claude Pro', provider: 'Anthropic', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-14', notes: null, manualRenewal: false },
+  { id: 'chatgpt', name: 'ChatGPT Plus', provider: 'OpenAI', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-09', notes: null, manualRenewal: false },
+  { id: 'copilot', name: 'GitHub Copilot', provider: 'GitHub', category: 'Dev', amount: 10, currency: 'USD', period: 'mo', nextRenewal: '2026-07-22', notes: null, manualRenewal: false },
+  { id: 'spotify', name: 'Spotify Premium', provider: 'Spotify', category: 'Media', amount: 169, currency: 'RUB', period: 'mo', nextRenewal: '2026-07-20', notes: null, manualRenewal: false },
+  { id: 'domains', name: 'Domains (HubVPN)', provider: 'Namecheap', category: 'Other', amount: 35, currency: 'USD', period: 'yr', nextRenewal: '2026-11-02', notes: null, manualRenewal: true }
 ]

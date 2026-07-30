@@ -16,15 +16,27 @@ const inputCls =
 function WalletForm({
   initial,
   onSubmit,
-  onClose
+  onClose,
+  error
 }: {
   initial?: Wallet | null
-  onSubmit: (i: WalletInput) => void
+  onSubmit: (i: WalletInput) => Promise<boolean>
   onClose: () => void
+  error: string | null
 }): React.JSX.Element {
   const [chain, setChain] = useState(initial?.chain ?? 'ETH')
   const [address, setAddress] = useState(initial?.address ?? '')
   const [label, setLabel] = useState(initial?.label ?? '')
+  const [busy, setBusy] = useState(false)
+  const submit = async (): Promise<void> => {
+    if (!address.trim() || busy) return
+    setBusy(true)
+    try {
+      await onSubmit({ chain, address: address.trim(), label: label.trim() || undefined })
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
@@ -52,11 +64,13 @@ function WalletForm({
         />
         <input className={inputCls} placeholder="Метка" value={label} onChange={(e) => setLabel(e.target.value)} />
       </div>
+      {error && <p role="alert" className="mt-2 text-xs text-rose-400">{error}</p>}
       <button
-        onClick={() => address.trim() && onSubmit({ chain, address: address.trim(), label: label.trim() || undefined })}
-        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
+        onClick={() => void submit()}
+        disabled={busy || !address.trim()}
+        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {initial ? 'Сохранить' : 'Добавить'}
+        {busy ? 'Сохраняю…' : initial ? 'Сохранить' : 'Добавить'}
       </button>
     </Card>
   )
@@ -65,8 +79,11 @@ function WalletForm({
 export function BanksView(): React.JSX.Element {
   const wallets = useWallets((s) => s.wallets)
   const balances = useWallets((s) => s.balances)
+  const balanceLoading = useWallets((s) => s.balanceLoading)
+  const balanceErrors = useWallets((s) => s.balanceErrors)
   const loaded = useWallets((s) => s.loaded)
   const loading = useWallets((s) => s.loading)
+  const error = useWallets((s) => s.error)
   const load = useWallets((s) => s.load)
   const add = useWallets((s) => s.add)
   const updateWallet = useWallets((s) => s.update)
@@ -79,16 +96,18 @@ export function BanksView(): React.JSX.Element {
     if (!loaded) load()
   }, [loaded, load])
 
-  // Keep cash + brokerage as manual/soon holdings; crypto now comes from real wallets.
-  const manual = MOCK_HOLDINGS.filter((h) => h.kind !== 'crypto')
+  // Демо остаётся только у browser-preview без Electron bridge. В desktop ни одна
+  // зашитая сумма не участвует ни в итогах, ни в строках холдингов.
+  const preview = typeof window !== 'undefined' && window.api ? [] : MOCK_HOLDINGS
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
-  const manualUsd = manual.reduce((s, h) => s + h.usd, 0)
-  const net = liveUsd + manualUsd
+  const previewUsd = preview.reduce((s, h) => s + h.usd, 0)
+  const net = liveUsd + previewUsd
+  const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   const byKind = [
     { label: 'crypto', value: liveUsd },
     ...Object.entries(
-      manual.reduce<Record<string, number>>((a, h) => {
+      preview.reduce<Record<string, number>>((a, h) => {
         a[h.kind] = (a[h.kind] ?? 0) + h.usd
         return a
       }, {})
@@ -102,7 +121,7 @@ export function BanksView(): React.JSX.Element {
     <Page>
       <PageHeader
         title="Финансы"
-        subtitle="кошельки · брокередж · кэш"
+        subtitle="публичные on-chain кошельки · брокередж и кэш пока не подключены"
         action={
           <div className="flex items-center gap-2">
             <button
@@ -127,11 +146,14 @@ export function BanksView(): React.JSX.Element {
       {(adding || editing) && (
         <WalletForm
           initial={editing}
-          onSubmit={(i) => {
-            if (editing) updateWallet(editing.id, i)
-            else add(i)
-            setAdding(false)
-            setEditing(null)
+          error={error}
+          onSubmit={async (input) => {
+            const ok = editing ? await updateWallet(editing.id, input) : await add(input)
+            if (ok) {
+              setAdding(false)
+              setEditing(null)
+            }
+            return ok
           }}
           onClose={() => {
             setAdding(false)
@@ -141,10 +163,16 @@ export function BanksView(): React.JSX.Element {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Всего" value={money(net)} hint="все источники, USD" />
-        <StatTile label="Live (кошельки)" value={money(liveUsd)} hint={`${wallets.length} адресов через RPC`} />
-        <StatTile label="Ручные" value={money(manualUsd)} hint={`${manual.length} позиций`} />
+        <StatTile label="Подтверждено" value={money(net)} hint="только известные USD-значения" />
+        <StatTile label="Кошельки" value={String(wallets.length)} hint="адреса из зашифрованного vault" />
+        <StatTile
+          label={preview.length ? 'Демо' : 'Недоступно'}
+          value={preview.length ? money(previewUsd) : String(unavailable)}
+          hint={preview.length ? 'только browser preview' : 'RPC/цена не подтверждены'}
+        />
       </div>
+
+      {error && !adding && !editing && <p role="alert" className="mt-3 text-xs text-rose-400">{error}</p>}
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
@@ -171,11 +199,20 @@ export function BanksView(): React.JSX.Element {
                   </div>
                   <div className="text-right">
                     <div className="tabular-nums text-slate-200">{bal?.usd != null ? money(bal.usd) : '—'}</div>
-                    <div className="text-xs tabular-nums text-slate-500">
-                      {bal ? `${bal.native.toFixed(4)} ${bal.symbol}` : <Loader2 className="inline h-3 w-3 animate-spin" />}
+                    <div
+                      className={cn('text-xs tabular-nums', balanceErrors[w.id] ? 'text-rose-400' : 'text-slate-500')}
+                      title={balanceErrors[w.id]}
+                    >
+                      {balanceLoading[w.id] && !bal ? (
+                        <Loader2 className="inline h-3 w-3 animate-spin" />
+                      ) : bal?.native != null ? (
+                        `${bal.native.toFixed(4)} ${bal.symbol}${balanceErrors[w.id] ? ' · устарело' : ''}`
+                      ) : (
+                        balanceErrors[w.id] ?? 'баланс неизвестен'
+                      )}
                     </div>
                   </div>
-                  <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100">
+                  <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
                     <button
                       onClick={() => {
                         setEditing(w)
@@ -183,13 +220,15 @@ export function BanksView(): React.JSX.Element {
                       }}
                       className="rounded p-1 text-slate-500 hover:text-accent"
                       title="Редактировать"
+                      aria-label={`Редактировать кошелёк ${w.label}`}
                     >
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => remove(w.id)}
+                      onClick={() => void remove(w.id)}
                       className="rounded p-1 text-slate-500 hover:text-rose-400"
                       title="Удалить"
+                      aria-label={`Удалить кошелёк ${w.label}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -198,7 +237,7 @@ export function BanksView(): React.JSX.Element {
               )
             })}
 
-            {manual.map((h) => (
+            {preview.map((h) => (
               <div key={h.id} className="flex items-center gap-3 py-3 text-sm">
                 <span
                   className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"

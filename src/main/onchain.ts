@@ -1,60 +1,102 @@
 import type { WalletBalance } from './types'
 
 // Keyless, public-endpoint balance lookups. Works from RU (no geofenced exchange APIs).
-// Best-effort: any failure returns a zero balance rather than throwing.
+// Сетевой сбой никогда не становится нулём: нулевой баланс можно показать только
+// после успешного ответа RPC.
+
+const RPC_TIMEOUT_MS = 10_000
+
+class RpcTimeoutError extends Error {}
+
+async function fetchJson(url: string, init: RequestInit = {}): Promise<unknown> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status} — баланс неизвестен`)
+    try {
+      return await response.json()
+    } catch {
+      throw new Error('Ответ RPC не разобран — баланс неизвестен')
+    }
+  } catch (error) {
+    if (controller.signal.aborted) throw new RpcTimeoutError('Тайм-аут RPC — баланс неизвестен')
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function ethBalance(address: string): Promise<number> {
-  const r = await fetch('https://ethereum-rpc.publicnode.com', {
+  const payload = (await fetchJson('https://ethereum-rpc.publicnode.com', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] })
-  })
-  const j = (await r.json()) as { result?: string }
-  return j.result ? parseInt(j.result, 16) / 1e18 : 0
+  })) as { result?: unknown; error?: { code?: unknown; message?: unknown } }
+  if (payload.error) throw new Error(`RPC отклонил запрос — баланс неизвестен`)
+  if (typeof payload.result !== 'string' || !/^0x[0-9a-f]+$/i.test(payload.result))
+    throw new Error('Ответ RPC не содержит баланс')
+  return Number(BigInt(payload.result)) / 1e18
 }
 
 async function btcBalance(address: string): Promise<number> {
-  const r = await fetch(`https://blockstream.info/api/address/${encodeURIComponent(address)}`)
-  const j = (await r.json()) as { chain_stats?: { funded_txo_sum: number; spent_txo_sum: number } }
+  const j = (await fetchJson(`https://blockstream.info/api/address/${encodeURIComponent(address)}`)) as {
+    chain_stats?: { funded_txo_sum?: unknown; spent_txo_sum?: unknown }
+  }
   const s = j.chain_stats
-  return s ? (s.funded_txo_sum - s.spent_txo_sum) / 1e8 : 0
+  if (!s || typeof s.funded_txo_sum !== 'number' || typeof s.spent_txo_sum !== 'number')
+    throw new Error('Ответ RPC не содержит баланс')
+  return (s.funded_txo_sum - s.spent_txo_sum) / 1e8
 }
 
 async function tonBalance(address: string): Promise<number> {
-  const r = await fetch(`https://toncenter.com/api/v2/getAddressBalance?address=${encodeURIComponent(address)}`)
-  const j = (await r.json()) as { result?: string }
-  return j.result ? Number(j.result) / 1e9 : 0
+  const j = (await fetchJson(
+    `https://toncenter.com/api/v2/getAddressBalance?address=${encodeURIComponent(address)}`
+  )) as { ok?: unknown; result?: unknown; error?: unknown }
+  if (j.ok === false || j.error) throw new Error('RPC отклонил запрос — баланс неизвестен')
+  if (typeof j.result !== 'string' || !/^\d+$/.test(j.result))
+    throw new Error('Ответ RPC не содержит баланс')
+  return Number(BigInt(j.result)) / 1e9
 }
 
-async function prices(): Promise<Record<string, number>> {
+async function prices(): Promise<Record<string, number> | null> {
   try {
-    const r = await fetch(
+    const j = (await fetchJson(
       'https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin,the-open-network&vs_currencies=usd'
-    )
-    const j = (await r.json()) as Record<string, { usd?: number }>
-    return { ETH: j.ethereum?.usd ?? 0, BTC: j.bitcoin?.usd ?? 0, TON: j['the-open-network']?.usd ?? 0 }
+    )) as Record<string, { usd?: unknown }>
+    const result: Record<string, number> = {}
+    if (typeof j.ethereum?.usd === 'number') result.ETH = j.ethereum.usd
+    if (typeof j.bitcoin?.usd === 'number') result.BTC = j.bitcoin.usd
+    if (typeof j['the-open-network']?.usd === 'number') result.TON = j['the-open-network'].usd
+    return result
   } catch {
-    return {}
+    return null
   }
 }
 
 export async function walletBalance(chain: string, address: string): Promise<WalletBalance> {
-  const px = await prices()
+  const symbol = chain.toUpperCase()
+  const priceRequest = prices()
   try {
-    if (chain === 'ETH') {
-      const n = await ethBalance(address)
-      return { native: n, symbol: 'ETH', usd: px.ETH ? n * px.ETH : null }
+    const native =
+      symbol === 'ETH'
+        ? await ethBalance(address)
+        : symbol === 'BTC'
+          ? await btcBalance(address)
+          : symbol === 'TON'
+            ? await tonBalance(address)
+            : null
+    if (native === null) throw new Error(`Сеть ${symbol} не поддерживается`)
+    const px = await priceRequest
+    const usdPrice = px?.[symbol]
+    const updatedAt = Date.now()
+    if (typeof usdPrice !== 'number') {
+      return { status: 'partial', native, symbol, usd: null, updatedAt, error: 'USD-цена неизвестна' }
     }
-    if (chain === 'BTC') {
-      const n = await btcBalance(address)
-      return { native: n, symbol: 'BTC', usd: px.BTC ? n * px.BTC : null }
-    }
-    if (chain === 'TON') {
-      const n = await tonBalance(address)
-      return { native: n, symbol: 'TON', usd: px.TON ? n * px.TON : null }
-    }
-  } catch {
-    /* network / parse failure → zero */
+    return { status: 'ok', native, symbol, usd: native * usdPrice, updatedAt }
+  } catch (error) {
+    // priceRequest уже имеет catch внутри, поэтому не оставит unhandled rejection.
+    const message = error instanceof Error && error.message ? error.message : 'Ошибка RPC — баланс неизвестен'
+    return { status: 'error', native: null, symbol, usd: null, error: message, updatedAt: Date.now() }
   }
-  return { native: 0, symbol: chain, usd: null }
 }

@@ -50,9 +50,17 @@ export default function App(): React.JSX.Element {
       // Lock — не только другая картинка. Убираем чувствительные DTO и незавершённые UI-состояния
       // из памяти renderer, чтобы после повторного входа ничего не «воскресало» из старой сессии.
       useDevices.setState({ devices: [], loaded: false })
-      useWallets.setState({ wallets: [], balances: {}, loaded: false, loading: false })
-      useSubs.setState({ subs: [], loaded: false })
-      useAi.setState({ accounts: [], checks: {}, loaded: false, checking: {} })
+      useWallets.setState({
+        wallets: [],
+        balances: {},
+        balanceLoading: {},
+        balanceErrors: {},
+        loaded: false,
+        loading: false,
+        error: null
+      })
+      useSubs.setState({ subs: [], loaded: false, loading: false, error: null })
+      useAi.setState({ accounts: [], checks: {}, loaded: false, loading: false, error: null, checking: {} })
       useUI.setState({
         dialog: { mode: 'closed' },
         detail: null,

@@ -169,6 +169,8 @@ export interface Subscription {
   period: 'mo' | 'yr'
   nextRenewal: string | null
   notes: string | null
+  /** true — платёж надо продлить руками; false — есть автосписание. */
+  manualRenewal: boolean
 }
 
 export interface SubscriptionInput {
@@ -180,6 +182,7 @@ export interface SubscriptionInput {
   period?: 'mo' | 'yr'
   nextRenewal?: string | null
   notes?: string | null
+  manualRenewal?: boolean
 }
 
 export interface Wallet {
@@ -194,9 +197,13 @@ export interface WalletInput {
   label?: string
 }
 export interface WalletBalance {
-  native: number
+  /** ok — баланс и USD доказаны; partial — баланс есть, цены нет; error — баланс неизвестен. */
+  status: 'ok' | 'partial' | 'error'
+  native: number | null
   symbol: string
   usd: number | null
+  error?: string
+  updatedAt: number
 }
 
 export interface MetricSnapshot {

@@ -122,13 +122,13 @@ export interface ArgusApi {
     list: () => Promise<Subscription[]>
     create: (input: SubscriptionInput) => Promise<Subscription>
     update: (id: string, input: SubscriptionInput) => Promise<Subscription>
-    remove: (id: string) => Promise<{ ok: boolean }>
+    remove: (id: string) => Promise<{ ok: boolean; error?: string }>
   }
   wallets: {
     list: () => Promise<Wallet[]>
     create: (input: WalletInput) => Promise<Wallet>
     update: (id: string, input: WalletInput) => Promise<Wallet>
-    remove: (id: string) => Promise<{ ok: boolean }>
+    remove: (id: string) => Promise<{ ok: boolean; error?: string }>
     balance: (chain: string, address: string) => Promise<WalletBalance>
   }
   metrics: {

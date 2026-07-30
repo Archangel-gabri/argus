@@ -13,6 +13,7 @@ import {
   type SnapshotInput
 } from './metric-snapshot'
 import { initialStatus } from '../shared/reachability'
+import { legacyManualRenewal, parseSubscriptionInput, parseWalletInput } from './finance-validation'
 import type {
   AuthType,
   AltBoot,
@@ -196,8 +197,23 @@ function migrate(d: Database.Database): void {
     period TEXT,
     next_renewal TEXT,
     notes TEXT,
+    manual_renewal INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER
   )`)
+  let addedManualRenewal = false
+  try {
+    d.exec('ALTER TABLE subscriptions ADD COLUMN manual_renewal INTEGER NOT NULL DEFAULT 0')
+    addedManualRenewal = true
+  } catch {
+    /* column already exists */
+  }
+  if (addedManualRenewal) {
+    // Старые записи один раз переезжают из notes. После миграции notes больше не
+    // влияют на логику: владелец может явно снять флаг.
+    const legacy = d.prepare('SELECT id, notes FROM subscriptions').all() as Array<{ id: string; notes: string | null }>
+    const mark = d.prepare('UPDATE subscriptions SET manual_renewal = 1 WHERE id = ?')
+    for (const row of legacy) if (legacyManualRenewal(row.notes)) mark.run(row.id)
+  }
   d.exec(`CREATE TABLE IF NOT EXISTS wallets (
     id TEXT PRIMARY KEY,
     chain TEXT NOT NULL,
@@ -1015,59 +1031,73 @@ export function deleteSnippet(id: string): void {
 }
 
 export function listSubscriptions(): Subscription[] {
-  return requireDb()
+  const rows = requireDb()
     .prepare(
-      'SELECT id, name, provider, category, amount, currency, period, next_renewal as nextRenewal, notes FROM subscriptions ORDER BY name'
+      `SELECT id, name, provider, category, amount, currency, period,
+              next_renewal as nextRenewal, notes, manual_renewal as manualRenewal
+         FROM subscriptions ORDER BY name`
     )
-    .all() as Subscription[]
+    .all() as Array<Omit<Subscription, 'manualRenewal'> & { manualRenewal: number }>
+  return rows.map((row) => ({ ...row, manualRenewal: Boolean(row.manualRenewal) }))
 }
 
 export function createSubscription(input: SubscriptionInput): Subscription {
+  const valid = parseSubscriptionInput(input)
   const sub: Subscription = {
     id: randomUUID(),
-    name: input.name.trim() || 'Подписка',
-    provider: input.provider ?? '',
-    category: input.category ?? 'Прочее',
-    amount: input.amount || 0,
-    currency: input.currency ?? 'USD',
-    period: input.period ?? 'mo',
-    nextRenewal: input.nextRenewal ?? null,
-    notes: input.notes ?? null
+    name: valid.name,
+    provider: valid.provider ?? '',
+    category: valid.category ?? 'Other',
+    amount: valid.amount,
+    currency: valid.currency ?? 'USD',
+    period: valid.period ?? 'mo',
+    nextRenewal: valid.nextRenewal ?? null,
+    notes: valid.notes ?? null,
+    manualRenewal: valid.manualRenewal ?? false
   }
   requireDb()
     .prepare(
-      `INSERT INTO subscriptions (id, name, provider, category, amount, currency, period, next_renewal, notes, created_at)
-       VALUES (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @notes, @created_at)`
+      `INSERT INTO subscriptions
+         (id, name, provider, category, amount, currency, period, next_renewal, notes, manual_renewal, created_at)
+       VALUES
+         (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @notes, @manual_renewal, @created_at)`
     )
-    .run({ ...sub, created_at: Date.now() })
+    .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0, created_at: Date.now() })
   return sub
 }
 
 export function updateSubscription(id: string, input: SubscriptionInput): Subscription {
   const cur = listSubscriptions().find((s) => s.id === id)
-  if (!cur) throw new Error('Subscription not found')
+  if (!cur) throw new Error('Подписка не найдена')
+  const valid = parseSubscriptionInput(input)
   const sub: Subscription = {
     id,
-    name: input.name?.trim() || cur.name,
-    provider: input.provider ?? cur.provider,
-    category: input.category ?? cur.category,
-    amount: input.amount ?? cur.amount,
-    currency: input.currency ?? cur.currency,
-    period: input.period ?? cur.period,
-    nextRenewal: input.nextRenewal !== undefined ? input.nextRenewal : cur.nextRenewal,
-    notes: input.notes !== undefined ? input.notes : cur.notes
+    name: valid.name,
+    provider: valid.provider ?? '',
+    category: valid.category ?? 'Other',
+    amount: valid.amount,
+    currency: valid.currency ?? 'USD',
+    period: valid.period ?? 'mo',
+    nextRenewal: valid.nextRenewal ?? null,
+    notes: valid.notes ?? null,
+    manualRenewal: valid.manualRenewal ?? false
   }
   requireDb()
     .prepare(
       `UPDATE subscriptions SET name=@name, provider=@provider, category=@category, amount=@amount,
-       currency=@currency, period=@period, next_renewal=@nextRenewal, notes=@notes WHERE id=@id`
+       currency=@currency, period=@period, next_renewal=@nextRenewal, notes=@notes,
+       manual_renewal=@manual_renewal WHERE id=@id`
     )
-    .run(sub)
+    .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0 })
   return sub
 }
 
-export function deleteSubscription(id: string): void {
-  requireDb().prepare('DELETE FROM subscriptions WHERE id = ?').run(id)
+export function deleteSubscription(id: string): boolean {
+  const d = requireDb()
+  return d.transaction((entityId: string): boolean => {
+    d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(entityId, entityId)
+    return d.prepare('DELETE FROM subscriptions WHERE id = ?').run(entityId).changes > 0
+  })(id)
 }
 
 export function listWallets(): Wallet[] {
@@ -1075,13 +1105,19 @@ export function listWallets(): Wallet[] {
 }
 
 export function createWallet(input: WalletInput): Wallet {
+  const valid = parseWalletInput(input)
+  const d = requireDb()
+  const duplicate = d
+    .prepare('SELECT 1 FROM wallets WHERE upper(chain) = ? AND address = ?')
+    .get(valid.chain, valid.address)
+  if (duplicate) throw new Error('Этот кошелёк уже добавлен')
   const wallet: Wallet = {
     id: randomUUID(),
-    chain: (input.chain || 'ETH').toUpperCase(),
-    address: input.address.trim(),
-    label: input.label?.trim() || input.chain.toUpperCase()
+    chain: valid.chain,
+    address: valid.address,
+    label: valid.label ?? valid.chain
   }
-  requireDb()
+  d
     .prepare('INSERT INTO wallets (id, chain, address, label, created_at) VALUES (@id, @chain, @address, @label, @created_at)')
     .run({ ...wallet, created_at: Date.now() })
   return wallet
@@ -1089,19 +1125,29 @@ export function createWallet(input: WalletInput): Wallet {
 
 export function updateWallet(id: string, input: WalletInput): Wallet {
   const cur = listWallets().find((w) => w.id === id)
-  if (!cur) throw new Error('Wallet not found')
+  if (!cur) throw new Error('Кошелёк не найден')
+  const valid = parseWalletInput(input)
+  const d = requireDb()
+  const duplicate = d
+    .prepare('SELECT 1 FROM wallets WHERE upper(chain) = ? AND address = ? AND id <> ?')
+    .get(valid.chain, valid.address, id)
+  if (duplicate) throw new Error('Этот кошелёк уже добавлен')
   const wallet: Wallet = {
     id,
-    chain: (input.chain || cur.chain).toUpperCase(),
-    address: input.address?.trim() || cur.address,
-    label: input.label?.trim() || cur.label
+    chain: valid.chain,
+    address: valid.address,
+    label: valid.label ?? valid.chain
   }
-  requireDb().prepare('UPDATE wallets SET chain=@chain, address=@address, label=@label WHERE id=@id').run(wallet)
+  d.prepare('UPDATE wallets SET chain=@chain, address=@address, label=@label WHERE id=@id').run(wallet)
   return wallet
 }
 
-export function deleteWallet(id: string): void {
-  requireDb().prepare('DELETE FROM wallets WHERE id = ?').run(id)
+export function deleteWallet(id: string): boolean {
+  const d = requireDb()
+  return d.transaction((entityId: string): boolean => {
+    d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(entityId, entityId)
+    return d.prepare('DELETE FROM wallets WHERE id = ?').run(entityId).changes > 0
+  })(id)
 }
 
 // Хранение истории метрик: до 5000 точек ИЛИ последние 60 дней на устройство (что раньше).

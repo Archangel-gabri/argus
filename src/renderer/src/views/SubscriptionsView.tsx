@@ -9,6 +9,7 @@ import { useSubs } from '@/store/subs'
 import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
+import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
 
 interface Row {
   id: string
@@ -24,10 +25,7 @@ interface Row {
 }
 const monthlyUsd = (r: Row): number => (r.period === 'mo' ? r.usd : r.usd / 12)
 
-function daysUntil(iso: string | null): number | null {
-  if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return null
-  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
-}
+const daysUntil = (iso: string | null): number | null => iso ? daysUntilCalendar(iso) : null
 
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-2.5 py-1.5 text-sm text-slate-200 outline-none focus:border-accent/40'
@@ -35,21 +33,46 @@ const inputCls =
 function SubForm({
   initial,
   onSubmit,
-  onClose
+  onClose,
+  error
 }: {
   initial?: Subscription | null
-  onSubmit: (i: SubscriptionInput) => void
+  onSubmit: (i: SubscriptionInput) => Promise<boolean>
   onClose: () => void
+  error: string | null
 }): React.JSX.Element {
   const [name, setName] = useState(initial?.name ?? '')
+  const [provider, setProvider] = useState(initial?.provider ?? '')
   const [category, setCategory] = useState(initial?.category ?? 'AI')
   const [amount, setAmount] = useState(initial ? String(initial.amount) : '')
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? 'USD')
   const [period, setPeriod] = useState<'mo' | 'yr'>(initial?.period === 'yr' ? 'yr' : 'mo')
   const [renews, setRenews] = useState(initial?.nextRenewal ?? '')
-  const submit = (): void => {
-    if (!name.trim() || !parseFloat(amount)) return
-    onSubmit({ name: name.trim(), category, amount: parseFloat(amount), currency, period, nextRenewal: renews || null })
+  const [notes, setNotes] = useState(initial?.notes ?? '')
+  const [manualRenewal, setManualRenewal] = useState(initial?.manualRenewal ?? false)
+  const [busy, setBusy] = useState(false)
+  const [validation, setValidation] = useState<string | null>(null)
+  const submit = async (): Promise<void> => {
+    const parsedAmount = Number(amount)
+    if (!name.trim()) {
+      setValidation('Укажи название')
+      return
+    }
+    if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
+      setValidation('Сумма должна быть неотрицательным числом')
+      return
+    }
+    if (busy) return
+    setValidation(null)
+    setBusy(true)
+    try {
+      await onSubmit({
+        name: name.trim(), provider: provider.trim(), category, amount: parsedAmount,
+        currency, period, nextRenewal: renews || null, notes: notes.trim() || null, manualRenewal
+      })
+    } finally {
+      setBusy(false)
+    }
   }
   return (
     <Card className="mb-4">
@@ -61,6 +84,7 @@ function SubForm({
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <input className={inputCls} placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className={inputCls} placeholder="Провайдер" value={provider} onChange={(e) => setProvider(e.target.value)} />
         <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
           {SUB_CATEGORIES.map((c) => (
             <option key={c} value={c}>
@@ -87,9 +111,28 @@ function SubForm({
           <option value="yr">/год</option>
         </select>
         <input className={inputCls} type="date" value={renews} onChange={(e) => setRenews(e.target.value)} />
+        <textarea
+          className={cn(inputCls, 'min-h-16 resize-y sm:col-span-2')}
+          placeholder="Заметки"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+        />
+        <label className="flex items-center gap-2 rounded-lg border border-border bg-bg/40 px-3 py-2 text-sm text-slate-300">
+          <input
+            type="checkbox"
+            checked={manualRenewal}
+            onChange={(event) => setManualRenewal(event.target.checked)}
+          />
+          Продлеваю вручную
+        </label>
       </div>
-      <button onClick={submit} className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover">
-        {initial ? 'Сохранить' : 'Добавить'}
+      {(validation || error) && <p role="alert" className="mt-2 text-xs text-rose-400">{validation ?? error}</p>}
+      <button
+        onClick={() => void submit()}
+        disabled={busy}
+        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? 'Сохраняю…' : initial ? 'Сохранить' : 'Добавить'}
       </button>
     </Card>
   )
@@ -99,6 +142,7 @@ export function SubscriptionsView(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const subs = useSubs((s) => s.subs)
   const loaded = useSubs((s) => s.loaded)
+  const error = useSubs((s) => s.error)
   const loadSubs = useSubs((s) => s.load)
   const addSub = useSubs((s) => s.create)
   const updateSub = useSubs((s) => s.update)
@@ -173,11 +217,14 @@ export function SubscriptionsView(): React.JSX.Element {
       {(adding || editing) && (
         <SubForm
           initial={editing}
-          onSubmit={(i) => {
-            if (editing) updateSub(editing.id, i)
-            else addSub(i)
-            setAdding(false)
-            setEditing(null)
+          error={error}
+          onSubmit={async (input) => {
+            const ok = editing ? await updateSub(editing.id, input) : await addSub(input)
+            if (ok) {
+              setAdding(false)
+              setEditing(null)
+            }
+            return ok
           }}
           onClose={() => {
             setAdding(false)
@@ -192,16 +239,22 @@ export function SubscriptionsView(): React.JSX.Element {
         <StatTile label="Активных" value={String(all.length)} hint={`${infra.length} инфра · ${userRows.length} приложений`} />
       </div>
 
+      {error && !adding && !editing && <p role="alert" className="mt-3 text-xs text-rose-400">{error}</p>}
+
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
           <h2 className="mb-3 text-sm font-semibold text-white">Все подписки</h2>
           <div className="divide-y divide-border">
             {all.map((x) => {
               const days = daysUntil(x.renews)
+              const stored = x.userId ? subs.find((sub) => sub.id === x.userId) : undefined
               return (
                 <div key={x.id} className="group flex items-center gap-3 py-2.5 text-sm">
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: catColor(x.category) }} />
-                  <span className="min-w-0 flex-1 truncate text-slate-200">{x.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-slate-200">{x.name}</span>
+                    {stored && <span className="block truncate text-[10px] text-slate-500">{stored.provider || 'провайдер не указан'}</span>}
+                  </span>
                   {days != null && days <= 14 && (
                     <span className="hidden shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 sm:inline">
                       через {days}д
@@ -209,12 +262,28 @@ export function SubscriptionsView(): React.JSX.Element {
                   )}
                   <span className="hidden w-16 text-xs text-slate-500 sm:inline">{catLabel(x.category)}</span>
                   <SourceBadge kind={x.source} />
+                  {stored?.manualRenewal && (
+                    <span className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline">вручную</span>
+                  )}
                   <span className="w-24 text-right tabular-nums text-slate-300">
                     {money(x.amount, x.currency)}
                     <span className="text-slate-500">/{x.period}</span>
                   </span>
                   {x.userId ? (
-                    <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100">
+                    <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+                      {stored?.manualRenewal && stored.nextRenewal && (
+                        <button
+                          onClick={() => {
+                            const nextRenewal = advanceRenewal(stored.nextRenewal!, stored.period)
+                            if (nextRenewal) void updateSub(stored.id, { ...stored, nextRenewal })
+                          }}
+                          className="rounded px-1.5 py-1 text-[10px] text-slate-500 hover:text-emerald-400"
+                          title="Сдвинуть дату на оплаченный период"
+                          aria-label={`Отметить продление ${stored.name}`}
+                        >
+                          Продлено
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           const s = subs.find((sub) => sub.id === x.userId)
@@ -225,13 +294,15 @@ export function SubscriptionsView(): React.JSX.Element {
                         }}
                         className="rounded p-1 text-slate-500 hover:text-accent"
                         title="Редактировать"
+                        aria-label={`Редактировать подписку ${x.name}`}
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => removeSub(x.userId!)}
+                        onClick={() => void removeSub(x.userId!)}
                         className="rounded p-1 text-slate-500 hover:text-rose-400"
                         title="Удалить"
+                        aria-label={`Удалить подписку ${x.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -259,7 +330,7 @@ export function SubscriptionsView(): React.JSX.Element {
                 <li key={x.id} className="flex items-center justify-between text-xs">
                   <span className="truncate text-slate-300">{x.name}</span>
                   <span className={cn('tabular-nums', x.days <= 14 ? 'text-amber-400' : 'text-slate-500')}>
-                    {x.days <= 0 ? 'сегодня' : `${x.days}д`}
+                    {renewalLabel(x.days)}
                   </span>
                 </li>
               ))}
