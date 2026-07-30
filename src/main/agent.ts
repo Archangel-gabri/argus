@@ -78,6 +78,11 @@ export function certPinMatches(host: string, pem: string): boolean {
   return fingerprintFromPem(pem) === want
 }
 
+/** Пины нужны только пока vault разблокирован и открывается экран. */
+export function clearPinnedHosts(): void {
+  pinnedByHost.clear()
+}
+
 /**
  * HTTPS-запрос к агенту.
  *
@@ -137,8 +142,6 @@ export async function agentStatus(deviceId: string): Promise<AgentStatus> {
   if (cert) pinHost(conn.host, cert)
   return agentHTTP(conn.host, token, cert)
 }
-
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 
 /** PowerShell в один вызов, безопасно относительно кавычек и кодировок. */
 function psCmd(script: string): string {
@@ -211,24 +214,11 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
   const up = await uploadFile(deviceId, bin, family === 'windows' ? 'argus-agent.exe' : 'argus-agent', family)
   if (!up.ok) return { ok: false, step: 'загрузка агента', error: up.error }
 
-  // 3. Токен — файлом с правами только для владельца, не через командную строку
-  //    (аргументы процесса видны всей системе в списке процессов).
-  const tokWrite =
-    family === 'windows'
-      ? await execOnce(
-          deviceId,
-          psCmd(
-            `Set-Content -Path "$env:LOCALAPPDATA\\Argus\\agent.token" -Value ${JSON.stringify(token)} -NoNewline -Encoding ascii; ` +
-              `$acl=Get-Acl "$env:LOCALAPPDATA\\Argus\\agent.token"; $acl.SetAccessRuleProtection($true,$false); ` +
-              `$r=New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME,'FullControl','Allow'); ` +
-              `$acl.SetAccessRule($r); Set-Acl "$env:LOCALAPPDATA\\Argus\\agent.token" $acl; 'ok'`
-          )
-        )
-      : await execOnce(
-          deviceId,
-          `umask 077 && printf %s ${shq(token)} > "$HOME/.argus/agent.token" && chmod 600 "$HOME/.argus/agent.token" && echo ok`
-        )
-  if (!tokWrite.ok) return { ok: false, step: 'токен', error: tokWrite.error || tokWrite.output }
+  // 3. Токен — напрямую по SFTP с mode 0600. Раньше значение встраивалось в удалённую
+  // shell/PowerShell-команду: комментарий обещал обратное, а секрет можно было вытащить из
+  // process listing или ScriptBlock logging. Теперь командная строка значения не видит.
+  const tokWrite = await writeTokenFile(deviceId, family, token)
+  if (!tokWrite.ok) return { ok: false, step: 'токен', error: tokWrite.error }
 
   // 3.5 Проба запуска. Отдельным шагом — чтобы упереться здесь с внятной причиной, а не
   //     позже с загадочным «exit 1» от следующей команды.
@@ -290,6 +280,44 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
         ? undefined
         : 'агент установлен и отвечает, но захват экрана на этой машине не заработал (см. самотест)'
       : status.error || 'агент установлен, но не отвечает по сети'
+  }
+}
+
+/** Записать token через уже доверенный SSH/SFTP-канал, ни разу не подставляя его в команду. */
+async function writeTokenFile(
+  deviceId: string,
+  family: string,
+  token: string
+): Promise<{ ok: boolean; error?: string }> {
+  const { sftpOpen, sftpWriteFile, sftpClose } = await import('./sftp')
+  const s = await sftpOpen(deviceId)
+  if (!s.ok || !s.sessionId) return { ok: false, error: s.error || 'sftp не открылся' }
+  try {
+    const home = await execOnce(
+      deviceId,
+      family === 'windows' ? psCmd('$env:LOCALAPPDATA') : 'printf %s "$HOME"'
+    )
+    const base = (home.output || '').trim()
+    if (!base) return { ok: false, error: 'не удалось определить домашний каталог' }
+    const remote = family === 'windows' ? `${base}\\Argus\\agent.token` : `${base}/.argus/agent.token`
+    const written = await sftpWriteFile(s.sessionId, remote, token, 0o600)
+    if (!written.ok) return written
+    if (family === 'windows') {
+      // SFTP mode не задаёт Windows DACL. Ужимаем ACL отдельной командой БЕЗ значения токена.
+      const acl = await execOnce(
+        deviceId,
+        psCmd(
+          `$p="$env:LOCALAPPDATA\\Argus\\agent.token"; $acl=Get-Acl $p; ` +
+            `$acl.SetAccessRuleProtection($true,$false); ` +
+            `$r=New-Object System.Security.AccessControl.FileSystemAccessRule($env:USERNAME,'FullControl','Allow'); ` +
+            `$acl.SetAccessRule($r); Set-Acl $p $acl; 'ok'`
+        )
+      )
+      if (!acl.ok) return { ok: false, error: acl.error || 'не удалось ограничить ACL токена' }
+    }
+    return { ok: true }
+  } finally {
+    sftpClose(s.sessionId)
   }
 }
 

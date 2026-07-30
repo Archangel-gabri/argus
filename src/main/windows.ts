@@ -4,10 +4,10 @@
 import { BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import { isSafeExternalUrl } from './navigation'
 
 /** Единственный набор настроек безопасности рендерера. Менять только здесь. */
 const HARDENED = {
-  preload: join(__dirname, '../preload/index.js'),
   sandbox: true,
   contextIsolation: true,
   nodeIntegration: false,
@@ -37,16 +37,25 @@ function createWindow(o: WindowOptions): BrowserWindow {
     autoHideMenuBar: true,
     backgroundColor: '#121110',
     icon: ICON,
-    webPreferences: { ...HARDENED }
+    webPreferences: {
+      ...HARDENED,
+      // Разные окна — разные полномочия. Screen получает только claim/window/clipboard.
+      preload: join(__dirname, `../preload/${o.page === 'screen' ? 'screen' : 'index'}.js`)
+    }
   })
 
   win.on('ready-to-show', () => win.show())
 
   // Внешние ссылки — в браузер ОС, никогда внутрь приложения.
   win.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })
+
+  // SPA не должна уходить со своей локальной страницы. Без этого внешний документ загружался
+  // в тот же WebContents и наследовал preload-мост к main-процессу.
+  win.webContents.on('will-navigate', (event) => event.preventDefault())
+  win.webContents.on('will-redirect', (event) => event.preventDefault())
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = `${process.env['ELECTRON_RENDERER_URL']}/${o.page}.html`

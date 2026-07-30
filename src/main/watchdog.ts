@@ -24,6 +24,12 @@ export function currentAlerts(): Alert[] {
   return last
 }
 
+/** После lock не отдаём renderer имена устройств/подписок из последнего снимка. */
+export function clearAlerts(): void {
+  last = []
+  memory.update([])
+}
+
 function check(): void {
   // Хранилище заперто — читать нечего, и будить человека тоже нечем.
   if (!isUnlocked()) return

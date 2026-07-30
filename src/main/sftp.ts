@@ -2,6 +2,7 @@ import { Client, type SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import { dialog, type BrowserWindow } from 'electron'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
+import { beginAccess, isAccessCurrent } from './access-epoch'
 
 /** Понятные тексты вместо сырых ssh2-ошибок (частые причины «Файлы не работают»). */
 function friendlyErr(msg: string): string {
@@ -28,7 +29,9 @@ export interface SftpEntry {
 }
 
 export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
+  const accessTicket = beginAccess()
   const conn = await resolveConn(deviceId)
+  if (!isAccessCurrent(accessTicket)) return { ok: false, error: 'Argus заблокирован' }
   if (!conn) return Promise.resolve({ ok: false, error: 'Device not found' })
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, error: 'Placeholder IP — set a real host first.' })
   if (!hasCredential(conn)) return Promise.resolve({ ok: false, error: 'No SSH credential stored (password or key).' })
@@ -54,10 +57,20 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
       }
     }
     client.on('ready', () => {
+      if (!isAccessCurrent(accessTicket)) {
+        client.end()
+        done({ ok: false, error: 'Argus заблокирован' })
+        return
+      }
       client.sftp((err, sftp) => {
         if (err) {
           done({ ok: false, error: friendlyErr(err.message) })
           client.end()
+          return
+        }
+        if (!isAccessCurrent(accessTicket)) {
+          client.end()
+          done({ ok: false, error: 'Argus заблокирован' })
           return
         }
         const id = randomUUID()
@@ -155,6 +168,23 @@ export function sftpPutFile(
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
   return new Promise((resolve) => {
     s.sftp.fastPut(localPath, remotePath, (err) =>
+      resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true })
+    )
+  })
+}
+
+/** Записать небольшой секрет напрямую по SFTP. В отличие от `ssh exec "printf <secret>"`,
+ * содержимое не попадает в argv удалённого shell, историю PowerShell и process listing. */
+export function sftpWriteFile(
+  sessionId: string,
+  remotePath: string,
+  content: string,
+  mode = 0o600
+): Promise<{ ok: boolean; error?: string }> {
+  const s = sessions.get(sessionId)
+  if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  return new Promise((resolve) => {
+    s.sftp.writeFile(remotePath, Buffer.from(content, 'utf8'), { mode }, (err) =>
       resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true })
     )
   })

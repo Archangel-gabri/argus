@@ -77,7 +77,12 @@ export function TerminalPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
     } else {
       void (async () => {
         const r = await api.ssh.open(device.id, term.cols, term.rows)
-        if (disposed) return
+        if (disposed) {
+          // Drawer закрыли, пока SSH рукопожимался. Успешно созданная main-сессия уже никому
+          // не принадлежит — закрываем её так же, как соседняя SFTP-панель.
+          if (r.ok && r.sessionId) api.ssh.close(r.sessionId)
+          return
+        }
         if (!r.ok || !r.sessionId) {
           setStatus('error')
           setErrMsg(r.error ?? 'Не удалось подключиться')

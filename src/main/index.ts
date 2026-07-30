@@ -3,11 +3,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpc } from './ipc'
 import { createAppWindow } from './windows'
 import { certPinMatches } from './agent'
-import { lock as lockVault } from './vault'
-import { closeAll as closeSsh } from './ssh'
-import { sftpCloseAll } from './sftp'
-import { closeAllForwards } from './forward'
 import { startWatchdog, stopWatchdog } from './watchdog'
+import { lockApplication } from './lockdown'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.argus.app')
@@ -15,8 +12,8 @@ app.whenReady().then(() => {
   // Strict CSP in production only (dev stays relaxed so Vite HMR works).
   if (!is.dev) {
     const BASE =
-      "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; " +
-      "font-src 'self' data:; script-src 'self'; connect-src 'self' https: ws://127.0.0.1:* wss://127.0.0.1:*"
+      "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+      "font-src 'self' data:; script-src 'self'; connect-src 'self' ws://127.0.0.1:* wss://127.0.0.1:*"
     // Окно экрана ходит к агенту НА АДРЕС УСТРОЙСТВА (wss://100.x…), а не на loopback, поэтому
     // ему нужен более широкий connect-src. Расширяем ТОЛЬКО эту страницу: у основного окна
     // политика остаётся прежней. Подмену сертификата это не открывает — его проверяет пиннинг.
@@ -43,6 +40,10 @@ app.whenReady().then(() => {
     callback(-3) // -3 = решение остаётся за Chromium (штатная проверка цепочки)
   })
 
+  // Renderer не должен сам получать камеры/микрофон/геолокацию и прочие Chromium-permissions.
+  // Нужные возможности Argus реализует строго через валидируемый main IPC.
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -68,8 +69,5 @@ app.on('window-all-closed', () => {
 // Close SSH sessions + the encrypted DB connection on exit.
 app.on('will-quit', () => {
   stopWatchdog()
-  closeSsh()
-  sftpCloseAll()
-  closeAllForwards()
-  lockVault()
+  lockApplication()
 })

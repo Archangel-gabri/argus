@@ -8,7 +8,18 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    // Окно экрана имеет отдельный минимальный bridge. Общий preload давал ему весь API
+    // основного окна (vault/SSH/SFTP/провижининг), хотя по контракту оно должно знать только
+    // параметры своего потока, действия собственного окна и буфер обмена.
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          screen: resolve('src/preload/screen.ts')
+        }
+      }
+    }
   },
   renderer: {
     server: { port: 5273, strictPort: true },

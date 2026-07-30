@@ -2,6 +2,7 @@ import { Client } from 'ssh2'
 import * as net from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
+import { beginAccess, isAccessCurrent } from './access-epoch'
 
 interface Forward {
   id: string
@@ -29,7 +30,9 @@ export async function openLocalForward(
   remoteHost: string,
   remotePort: number
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const accessTicket = beginAccess()
   const conn = await resolveConn(deviceId)
+  if (!isAccessCurrent(accessTicket)) return { ok: false, error: 'Argus заблокирован' }
   if (!conn) return Promise.resolve({ ok: false, error: 'device not found' })
   if (!conn.host || conn.host.includes('x.x') || !hasCredential(conn)) {
     return Promise.resolve({ ok: false, error: 'нет реального host или SSH-доступа (пароль/ключ)' })
@@ -44,6 +47,11 @@ export async function openLocalForward(
       }
     }
     client.on('ready', () => {
+      if (!isAccessCurrent(accessTicket)) {
+        client.end()
+        done({ ok: false, error: 'Argus заблокирован' })
+        return
+      }
       const server = net.createServer((sock) => {
         client.forwardOut('127.0.0.1', localPort, remoteHost, remotePort, (err, stream) => {
           if (err) {
@@ -62,6 +70,12 @@ export async function openLocalForward(
         }
       })
       server.listen(localPort, '127.0.0.1', () => {
+        if (!isAccessCurrent(accessTicket)) {
+          server.close()
+          client.end()
+          done({ ok: false, error: 'Argus заблокирован' })
+          return
+        }
         const id = randomUUID()
         forwards.set(id, { id, deviceId, localPort, remoteHost, remotePort, client, server })
         done({ ok: true, id })

@@ -10,7 +10,6 @@ import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
-import * as geo from './geo'
 import * as ports from './ports'
 import * as watchdog from './watchdog'
 import * as hardware from './hardware'
@@ -18,6 +17,7 @@ import * as screen from './screen'
 import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
+import { lockApplication } from './lockdown'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
@@ -68,7 +68,7 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('vault:lock', () => {
-    vault.lock()
+    lockApplication()
     return state()
   })
 
@@ -111,31 +111,25 @@ export function registerIpc(): void {
     }
   })
 
-  ipcMain.handle('devices:list', (e) => {
+  ipcMain.handle('devices:list', () => {
     if (!vault.isUnlocked()) return []
-    const list = vault.listDevices()
-    // Фоновая дозагрузка гео (страна/флаг/хостер) для устройств без них — не блокирует ответ.
-    void geo.enrichMissing(
-      e.sender,
-      list.map((d) => ({ id: d.id, ip: d.ip, country: d.country, flag: d.flag }))
-    )
-    return list
+    // Никаких сетевых действий при простом открытии парка. Публичный IP — часть приватной
+    // топологии; во внешний geo-сервис он уходит только после явной кнопки пользователя.
+    return vault.listDevices()
   })
 
-  ipcMain.handle('devices:create', (e, input: DeviceInput) => {
+  ipcMain.handle('devices:create', (_e, input: DeviceInput) => {
     try {
       const device = vault.createDevice(input)
-      void geo.enrichDevice(e.sender, device.id, device.ip) // авто-подстановка гео в фоне
       return { ok: true, device }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
   })
 
-  ipcMain.handle('devices:update', (e, id: unknown, input: DeviceInput) => {
+  ipcMain.handle('devices:update', (_e, id: unknown, input: DeviceInput) => {
     try {
       const device = vault.updateDevice(asString(id), input)
-      void geo.enrichDevice(e.sender, device.id, device.ip)
       return { ok: true, device }
     } catch (err) {
       return { ok: false, error: (err as Error).message }

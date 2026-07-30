@@ -13,10 +13,11 @@ import GuacamoleLite from 'guacamole-lite'
 import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
 import { createScreenWindow } from './windows'
-import { listDevices, getScreenPassword, setScreenPassword } from './vault'
+import { listDevices, getScreenPassword, setScreenPassword, isUnlocked } from './vault'
 import { agentEndpoint, agentStatus } from './agent'
 import { ensureScreenUnlocked } from './session'
 import type { ScreenPreflight } from './types'
+import { beginAccess, isAccessCurrent } from './access-epoch'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
 const LINUX_PREFLIGHT = [
@@ -171,6 +172,7 @@ async function ensureGuacd(): Promise<boolean> {
 
 // Один guacamole-lite WS-сервер на loopback (ленивый старт), общий для всех подключений.
 let guacServer: GuacamoleLite | null = null
+let guacHttpServer: http.Server | null = null
 let guacPort = 0
 async function ensureGuacServer(): Promise<number> {
   if (guacServer && guacPort) return guacPort
@@ -180,6 +182,7 @@ async function ensureGuacServer(): Promise<number> {
     httpServer.listen(0, '127.0.0.1', () => res())
   })
   guacPort = (httpServer.address() as AddressInfo).port
+  guacHttpServer = httpServer
   guacServer = new GuacamoleLite(
     { server: httpServer },
     GUACD,
@@ -273,6 +276,8 @@ export async function screenOpen(
   deviceId: string,
   opts: { password: string; remember?: boolean }
 ): Promise<{ ok: boolean; error?: string }> {
+  const accessTicket = beginAccess()
+  if (!isUnlocked()) return { ok: false, error: 'Argus заблокирован' }
   // Второе окно на то же устройство открывать НЕЛЬЗЯ: Windows-клиент держит один сеанс, и
   // новое подключение выбивает предыдущее — оба окна начинают драться, картинка чернеет.
   // (Поймано на живом тесте: два открытых окна дали чёрный экран при статусе «подключено».)
@@ -288,7 +293,8 @@ export async function screenOpen(
   }
 
   const area = electronScreen.getPrimaryDisplay().workAreaSize
-  const openWindow = (sess: Omit<LiveSession, 'winId'>): { ok: boolean } => {
+  const openWindow = (sess: Omit<LiveSession, 'winId'>): { ok: boolean; error?: string } => {
+    if (!isAccessCurrent(accessTicket) || !isUnlocked()) return { ok: false, error: 'Argus заблокирован' }
     const h = crypto.randomUUID()
     const w = createScreenWindow(h, `Экран — ${deviceName(deviceId)}`, {
       width: Math.min(1600, Math.round(area.width * 0.8)),
@@ -369,4 +375,28 @@ export function screenClaim(
   if (!s) return { ok: false, error: 'сеанс не найден или уже закрыт' }
   if (s.winId !== senderWinId) return { ok: false, error: 'сеанс принадлежит другому окну' }
   return { ok: true, mode: s.mode, wsPort: s.wsPort, token: s.token, url: s.url }
+}
+
+/** Закрыть все удалённые экраны и loopback-мост. Вызывается при lock и завершении приложения. */
+export function closeAllScreens(): void {
+  for (const s of sessions.values()) {
+    const w = BrowserWindow.fromId(s.winId)
+    if (w && !w.isDestroyed()) w.close()
+  }
+  sessions.clear()
+  try {
+    guacServer?.close?.()
+  } catch {
+    /* мост уже закрыт */
+  }
+  try {
+    guacHttpServer?.closeAllConnections()
+    guacHttpServer?.close()
+  } catch {
+    /* HTTP-сервер уже закрыт */
+  }
+  guacServer = null
+  guacHttpServer = null
+  guacPort = 0
+  rdpReady.clear()
 }

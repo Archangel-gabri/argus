@@ -6,6 +6,7 @@ import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
 import type { LiveMetrics } from './types'
+import { beginAccess, isAccessCurrent } from './access-epoch'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -166,7 +167,9 @@ const isPlaceholderHost = (host: string): boolean => !host || host.includes('x.x
 
 /** Open an interactive shell. Streams output to the renderer as base64 'ssh:data' events. */
 export async function openShell(wc: WebContents, deviceId: string, cols = 80, rows = 24): Promise<OpenResult> {
+  const accessTicket = beginAccess()
   const conn = await resolveConn(deviceId)
+  if (!isAccessCurrent(accessTicket)) return { ok: false, error: 'Argus заблокирован' }
   if (!conn) return Promise.resolve({ ok: false, error: 'Device not found' })
   if (isPlaceholderHost(conn.host)) {
     return Promise.resolve({ ok: false, error: 'Placeholder IP — edit the device and set a real host first.' })
@@ -188,13 +191,25 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
     }
 
     client.on('ready', () => {
+      if (!isAccessCurrent(accessTicket)) {
+        client.end()
+        done({ ok: false, error: 'Argus заблокирован' })
+        return
+      }
       client.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
         if (err) {
           done({ ok: false, error: err.message })
           client.end()
           return
         }
+        if (!isAccessCurrent(accessTicket)) {
+          stream.end()
+          client.end()
+          done({ ok: false, error: 'Argus заблокирован' })
+          return
+        }
         sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [] })
+        wc.once('destroyed', () => closeShell(id))
         const forward = (d: Buffer): void => {
           const s = sessions.get(id)
           if (!s) return
