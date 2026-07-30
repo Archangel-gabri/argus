@@ -19,6 +19,7 @@ import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
+import { nextReachability, type Reachability } from '../shared/reachability'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
 function keyringInfo(): { backend: string; canRemember: boolean } {
@@ -45,6 +46,18 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
 const probeMisses = new Map<string, number>()
+const pcMisses = new Map<string, number>()
+
+function trackedReach(
+  memory: Map<string, number>,
+  id: string,
+  observation: Reachability
+): Reachability {
+  const next = nextReachability(memory.get(id) ?? 0, observation)
+  if (next.misses) memory.set(id, next.misses)
+  else memory.delete(id)
+  return next.status
+}
 
 export function registerIpc(): void {
   ipcMain.handle('vault:state', () => state())
@@ -174,18 +187,15 @@ export function registerIpc(): void {
     // другая. Отметить такую машину выключенной означает соврать. Первый промах = «не знаю»
     // (снимок не трогаем, старый остаётся), выключенной считаем со второго подряд.
     // Тот же принцип уже работает у быстрой проверки живости — здесь он просто был не доделан.
-    if (r.ok) {
-      probeMisses.delete(id)
+    const status = trackedReach(probeMisses, id, r.ok ? 'online' : 'offline')
+    if (status === 'online') {
       if (vault.isUnlocked()) vault.recordSnapshot(id, r)
-      return r
+      return { ...r, status }
     }
-    const misses = (probeMisses.get(id) ?? 0) + 1
-    probeMisses.set(id, misses)
-    if (misses >= 2) {
+    if (status === 'offline') {
       if (vault.isUnlocked()) vault.recordSnapshot(id, { status: 'offline' })
-      return r
     }
-    return { ...r, status: 'unknown' as const }
+    return { ...r, status }
   })
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
     vault.isUnlocked() ? vault.getSnapshots(asString(deviceId), Number(limit) || 30) : []
@@ -198,10 +208,24 @@ export function registerIpc(): void {
     // Windows без второй ОС тоже обслуживается OS-aware веткой (см. store/devices.ts).
     if (dev && (dev.altOs.length > 0 || /win/i.test(dev.os))) {
       const r = await pc.metrics(id)
-      return { ok: r.family !== 'off', family: r.family, os: r.current, metrics: r.metrics ?? null }
+      if (r.metrics)
+        return { ok: true, state: 'live' as const, family: r.family, os: r.current, metrics: r.metrics }
+      return {
+        ok: false,
+        state: r.family === 'off' ? ('unreachable' as const) : ('unavailable' as const),
+        family: r.family,
+        os: r.current,
+        metrics: null
+      }
     }
     const r = await ssh.probe(id)
-    return { ok: r.ok, family: 'linux' as const, os: '', metrics: r.metrics ?? null }
+    return {
+      ok: r.ok && Boolean(r.metrics),
+      state: r.metrics ? ('live' as const) : r.ok ? ('unavailable' as const) : ('unreachable' as const),
+      family: 'linux' as const,
+      os: '',
+      metrics: r.metrics ?? null
+    }
   })
   ipcMain.handle('ssh:probeHost', (_e, opts: unknown) => {
     const o = (opts ?? {}) as Record<string, unknown>
@@ -290,19 +314,27 @@ export function registerIpc(): void {
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))
   ipcMain.handle('pc:bootEntries', (_e, id: unknown) => pc.bootEntries(asString(id)))
   ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
-    const r = await pc.metrics(asString(id))
+    const deviceId = asString(id)
+    const r = await pc.metrics(deviceId)
+    const status = trackedReach(pcMisses, deviceId, r.family === 'off' ? 'offline' : 'online')
     // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).
     // Выключенный ПК записываем ТОЖЕ, только статусом: иначе кэш последнего состояния воскрешал
     // его как «online» после перезапуска приложения, а в истории не оставалось провала.
-    if (vault.isUnlocked()) {
+    if (vault.isUnlocked() && status !== 'unknown') {
       vault.recordSnapshot(
-        asString(id),
-        r.family === 'off'
+        deviceId,
+        status === 'offline'
           ? { status: 'off' }
-          : { cpu: r.cpu, ramUsed: r.ramUsed, ramTotal: r.ramTotal, status: r.family }
+          : {
+              cpu: r.cpu,
+              ramUsed: r.ramUsed,
+              ramTotal: r.ramTotal,
+              disk: r.disk,
+              status: r.family
+            }
       )
     }
-    return r
+    return { ...r, status }
   })
   ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) => pc.boot(asString(id), asString(target)))
   ipcMain.handle('pc:power', (_e, id: unknown, action: unknown) => {

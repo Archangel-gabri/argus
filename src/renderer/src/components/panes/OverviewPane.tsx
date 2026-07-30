@@ -574,6 +574,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
   }, [d.id, d.kind, refreshOne])
   const jump = d.jumpId ? (devices.find((x) => x.id === d.jumpId)?.name ?? d.jumpId) : null
   const ramPct = d.ram.total ? (d.ram.used / d.ram.total) * 100 : 0
+  const metricsKnown = Boolean(d.metricsKnown)
   const ssh = isSshCapable(d.kind)
 
   return (
@@ -619,24 +620,41 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             <div>
               <div className="mb-1 flex justify-between">
                 <span className="text-slate-500">CPU</span>
-                <span className="tabular-nums text-slate-200">{pct(d.cpu)}</span>
+                <span className="tabular-nums text-slate-200">{metricsKnown ? pct(d.cpu) : '—'}</span>
               </div>
               <div className="h-1.5 rounded-full bg-slate-600/30">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, d.cpu))}%` }} />
+                <div
+                  className={cn('h-full rounded-full', metricsKnown ? 'bg-accent' : 'bg-slate-600')}
+                  style={{ width: `${metricsKnown ? Math.min(100, Math.max(2, d.cpu)) : 0}%` }}
+                />
               </div>
             </div>
             <div>
               <div className="mb-1 flex justify-between">
                 <span className="text-slate-500">RAM</span>
                 <span className="tabular-nums text-slate-200">
-                  {d.ram.used}/{d.ram.total} GB
+                  {metricsKnown ? `${d.ram.used}/${d.ram.total} GB` : '—'}
                 </span>
               </div>
               <div className="h-1.5 rounded-full bg-slate-600/30">
-                <div className="h-full rounded-full bg-accent" style={{ width: `${Math.min(100, Math.max(2, ramPct))}%` }} />
+                <div
+                  className={cn('h-full rounded-full', metricsKnown ? 'bg-accent' : 'bg-slate-600')}
+                  style={{ width: `${metricsKnown ? Math.min(100, Math.max(2, ramPct)) : 0}%` }}
+                />
               </div>
             </div>
           </div>
+
+          {metricsKnown &&
+            d.lastSeen != null &&
+            (!d.metricsFresh ||
+              (d.status !== 'online' && d.status !== 'degraded') ||
+              Date.now() - d.lastSeen > 60_000) && (
+            <div className="-mt-2 text-[10px] text-slate-500">
+              Последний снимок{' '}
+              {new Date(d.lastSeen).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          )}
 
           <MetricChips device={d} />
 

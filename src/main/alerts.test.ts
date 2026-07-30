@@ -63,6 +63,10 @@ describe('место на диске', () => {
     expect(a.map((x) => x.kind)).toEqual(['device-offline'])
   })
 
+  it('при «не знаю» не тревожит по устаревшему диску', () => {
+    expect(run([dev({ status: 'unknown', disk: 99 })])).toHaveLength(0)
+  })
+
   it('нет данных о диске — нет тревоги', () => {
     expect(run([dev({ disk: null })])).toHaveLength(0)
     expect(run([dev({ disk: undefined })])).toHaveLength(0)

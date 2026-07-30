@@ -100,6 +100,10 @@ export interface DeviceDTO {
   bootEntry?: string | null
   /** Когда состояние было снято в последний раз (мс). Есть = данные из кэша, можно показать «N мин назад». */
   lastSeen?: number | null
+  /** CPU/RAM хотя бы раз были фактически измерены. false не равен измеренному 0. */
+  metricsKnown?: boolean
+  /** Последняя проверка статуса одновременно принесла метрики; false = ниже показан старый снимок. */
+  metricsFresh?: boolean
   /** Сохранён ли пароль для трансляции экрана. Само значение через IPC НЕ ходит. */
   hasScreenSecret?: boolean
   /** Эфемерно (только в renderer-сторе, не из БД): какая ОС сейчас РЕАЛЬНО запущена (multi-boot). */
@@ -200,6 +204,7 @@ export interface MetricSnapshot {
   cpu: number | null
   ramUsed: number | null
   ramTotal: number | null
+  disk: number | null
   status: string
 }
 
@@ -236,6 +241,8 @@ export interface LiveMetrics {
   netTx: number // байт/с
   diskR: number // байт/с
   diskW: number // байт/с
+  /** false = платформа/счётчик не поддерживает замер; diskR=0 тогда не является измерением. */
+  diskIoAvailable?: boolean
   disk?: number // % корня
   uptime?: number // сек
   tempCpu?: number // °C

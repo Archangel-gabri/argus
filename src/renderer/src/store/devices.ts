@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { DeviceDTO, DeviceInput } from '@/types'
 import { FALLBACK_DEVICES } from '@/data/mock'
+import { nextReachability } from '../../../shared/reachability'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -57,7 +58,26 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     set({
       devices: list.map((d) => {
         const p = prev.get(d.id)
-        return p ? { ...d, status: p.status, cpu: p.cpu, ram: p.ram, runningOs: p.runningOs } : d
+        return p
+          ? {
+              ...d,
+              status: p.status,
+              cpu: p.cpu,
+              ram: p.ram,
+              runningOs: p.runningOs,
+              disk: p.disk,
+              uptime: p.uptime,
+              load1: p.load1,
+              netRx: p.netRx,
+              netTx: p.netTx,
+              swapUsed: p.swapUsed,
+              swapTotal: p.swapTotal,
+              tempCpu: p.tempCpu,
+              lastSeen: p.lastSeen,
+              metricsKnown: p.metricsKnown,
+              metricsFresh: p.metricsFresh
+            }
+          : d
       }),
       loaded: true
     })
@@ -95,7 +115,9 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                 swapUsed: d.swapUsed,
                 swapTotal: d.swapTotal,
                 tempCpu: d.tempCpu,
-                lastSeen: d.lastSeen
+                lastSeen: d.lastSeen,
+                metricsKnown: d.metricsKnown,
+                metricsFresh: d.metricsFresh
               }
             : d
         )
@@ -132,7 +154,17 @@ export const useDevices = create<DevicesStore>((set, get) => ({
               netTx: m.netTx ?? d.netTx,
               swapUsed: m.swapUsed ?? d.swapUsed,
               swapTotal: m.swapTotal ?? d.swapTotal,
-              tempCpu: m.tempCpu ?? d.tempCpu
+              tempCpu: m.tempCpu ?? d.tempCpu,
+              metricsKnown:
+                m.cpu != null || m.ramTotal != null || m.ramUsed != null ? true : d.metricsKnown,
+              metricsFresh:
+                m.cpu != null || m.ramTotal != null || m.ramUsed != null || m.disk != null
+                  ? true
+                  : m.status != null
+                    ? false
+                    : d.metricsFresh,
+              lastSeen:
+                m.cpu != null || m.ramTotal != null || m.ramUsed != null ? Date.now() : d.lastSeen
             }
           : d
       )
@@ -148,15 +180,10 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       devices: get().devices.map((d) => {
         const r = reach[d.id]
         if (!r) return d
-        if (r.up) {
-          missStreak.set(d.id, 0)
-          return { ...d, status: 'online' }
-        }
-        // Один промах в offline НЕ роняем: канал до дальних нод флапает (замерено — 1 ложный
-        // промах из 6 на LAX), и мигание «online→offline→online» врало бы чаще, чем помогало.
-        const n = (missStreak.get(d.id) ?? 0) + 1
-        missStreak.set(d.id, n)
-        return n >= 2 ? { ...d, status: 'offline' } : d
+        const next = nextReachability(missStreak.get(d.id) ?? 0, r.status)
+        if (next.misses) missStreak.set(d.id, next.misses)
+        else missStreak.delete(d.id)
+        return { ...d, status: next.status }
       })
     })
   },
@@ -183,7 +210,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
           // (раз в 10с) увидит его снова, следующий проход соберёт метрики.
           if (d.status === 'offline') return
           const r = await api.ssh.probe(d.id)
-          get().updateMetrics(d.id, r.ok ? r : { status: 'offline' })
+          get().updateMetrics(d.id, r)
         })
       )
       await get().refreshOsStatus()
@@ -202,13 +229,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     await Promise.all(
       pcs.map(async (d) => {
         const r = await api.pc.metrics(d.id)
-        const running = r.family === 'off' ? null : r.current || (r.family === 'windows' ? 'Windows' : d.os)
+        const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
         set({
           devices: get().devices.map((x) =>
             x.id === d.id
               ? {
                   ...x,
-                  status: r.family === 'off' ? 'offline' : 'online',
+                  status: r.status,
                   runningOs: running,
                   cpu: r.cpu ?? x.cpu,
                   ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
@@ -219,7 +246,17 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                   netTx: r.netTx ?? x.netTx,
                   swapUsed: r.swapUsed ?? x.swapUsed,
                   swapTotal: r.swapTotal ?? x.swapTotal,
-                  tempCpu: r.tempCpu ?? x.tempCpu
+                  tempCpu: r.tempCpu ?? x.tempCpu,
+                  metricsKnown:
+                    r.cpu != null || r.ramTotal != null || r.ramUsed != null ? true : x.metricsKnown,
+                  metricsFresh:
+                    r.cpu != null || r.ramTotal != null || r.ramUsed != null || r.disk != null
+                      ? true
+                      : r.status != null
+                        ? false
+                        : x.metricsFresh,
+                  lastSeen:
+                    r.cpu != null || r.ramTotal != null || r.ramUsed != null ? Date.now() : x.lastSeen
                 }
               : x
           )
@@ -235,13 +272,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     if (!d || !d.hasSecret || d.ip.includes('x.x')) return
     if (d.altOs.length > 0) {
       const r = await api.pc.metrics(deviceId)
-      const running = r.family === 'off' ? null : r.current || (r.family === 'windows' ? 'Windows' : d.os)
+      const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
       set({
         devices: get().devices.map((x) =>
           x.id === deviceId
             ? {
                 ...x,
-                status: r.family === 'off' ? 'offline' : 'online',
+                status: r.status,
                 runningOs: running,
                 cpu: r.cpu ?? x.cpu,
                 ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
@@ -252,14 +289,24 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                 netTx: r.netTx ?? x.netTx,
                 swapUsed: r.swapUsed ?? x.swapUsed,
                 swapTotal: r.swapTotal ?? x.swapTotal,
-                tempCpu: r.tempCpu ?? x.tempCpu
+                tempCpu: r.tempCpu ?? x.tempCpu,
+                metricsKnown:
+                  r.cpu != null || r.ramTotal != null || r.ramUsed != null ? true : x.metricsKnown,
+                metricsFresh:
+                  r.cpu != null || r.ramTotal != null || r.ramUsed != null || r.disk != null
+                    ? true
+                    : r.status != null
+                      ? false
+                      : x.metricsFresh,
+                lastSeen:
+                  r.cpu != null || r.ramTotal != null || r.ramUsed != null ? Date.now() : x.lastSeen
               }
             : x
         )
       })
     } else {
       const r = await api.ssh.probe(deviceId)
-      get().updateMetrics(deviceId, r.ok ? r : { status: 'offline' })
+      get().updateMetrics(deviceId, r)
     }
   }
 }))

@@ -81,7 +81,7 @@ async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
   if (eps.length === 1) return firstAlive(eps)
 
   const reach = await Promise.all(eps.map(async (ep) => ({ ep, r: await tcpAlive(ep.conn.host, ep.conn.port, 2500) })))
-  const open = reach.filter((x) => x.r.up).map((x) => x.ep)
+  const open = reach.filter((x) => x.r.status === 'online').map((x) => x.ep)
   // Ровно один эндпоинт отдал SSH-баннер — этого достаточно: одновременно две ОС на одной
   // железке не работают. Второе SSH-подключение ради `echo` стоило бы ещё ~2с на ровном месте.
   if (open.length === 1) return { ...open[0], family: await resolveFamily(open[0]) }
@@ -211,6 +211,9 @@ function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }
     netTx: n(o.netTx),
     diskR: n(o.diskR),
     diskW: n(o.diskW),
+    diskIoAvailable:
+      typeof o.diskR === 'number' && Number.isFinite(o.diskR) &&
+      typeof o.diskW === 'number' && Number.isFinite(o.diskW),
     disk: o.diskPct ?? undefined,
     uptime: n(o.uptimeSec),
     tempCpu: o.tempCpu ?? undefined,

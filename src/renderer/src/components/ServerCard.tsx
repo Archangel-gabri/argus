@@ -136,6 +136,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
   const ramPct = s.ram.total ? (s.ram.used / s.ram.total) * 100 : 0
   // live bars stay lit for online + degraded; muted for down/unknown/maintenance/reboot
   const dim = s.status !== 'online' && s.status !== 'degraded'
+  const metricsKnown = Boolean(s.metricsKnown)
   const ssh = isSshCapable(s.kind)
 
   return (
@@ -245,10 +246,28 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
       </div>
 
       {ssh ? (
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <Bar label="CPU" value={pct(s.cpu)} percent={s.cpu} muted={dim} />
-          <Bar label="RAM" value={`${s.ram.used}/${s.ram.total} GB`} percent={ramPct} muted={dim} />
-        </div>
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <Bar
+              label="CPU"
+              value={metricsKnown ? pct(s.cpu) : '—'}
+              percent={metricsKnown ? s.cpu : 0}
+              muted={dim || !metricsKnown}
+            />
+            <Bar
+              label="RAM"
+              value={metricsKnown ? `${s.ram.used}/${s.ram.total} GB` : '—'}
+              percent={metricsKnown ? ramPct : 0}
+              muted={dim || !metricsKnown}
+            />
+          </div>
+          {metricsKnown && s.lastSeen != null && (dim || !s.metricsFresh || Date.now() - s.lastSeen > 60_000) && (
+            <div className="mt-1.5 text-[10px] text-slate-500">
+              Последний снимок{' '}
+              {new Date(s.lastSeen).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          )}
+        </>
       ) : (
         <div className="mt-3 truncate rounded-lg border border-border/70 bg-bg/40 px-3 py-2 text-xs text-slate-400">
           <span className="mr-2 rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">

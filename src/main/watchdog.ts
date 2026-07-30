@@ -38,7 +38,8 @@ function check(): void {
     id: d.id,
     name: d.name,
     status: d.status,
-    disk: d.disk ?? null,
+    // Старый диск остаётся в UI с отметкой времени, но сторож не будит по устаревшему замеру.
+    disk: d.metricsFresh ? (d.disk ?? null) : null,
     lastSeen: d.lastSeen ?? null
   }))
   const subscriptions = listSubscriptions().map((s) => ({

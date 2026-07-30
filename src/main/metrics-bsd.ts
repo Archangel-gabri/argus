@@ -214,10 +214,11 @@ export function parseFreeBsd(out: string): LiveMetrics {
     swapTotal: round1(swapTotal),
     netRx: rate(n1.rx, n2.rx),
     netTx: rate(n1.tx, n2.tx),
-    // Дисковый ввод-вывод на BSD требует отдельного замера iostat — пока честно нули,
-    // а не выдуманные значения.
+    // Дисковый ввод-вывод на BSD требует отдельного замера iostat. Числовые поля остаются
+    // ради стабильного wire-контракта, но UI обязан смотреть на флаг, а не выдавать 0 за замер.
     diskR: 0,
     diskW: 0,
+    diskIoAvailable: false,
     disk: root,
     uptime: parseBoot(s.UP ?? []),
     tempCpu,
@@ -279,6 +280,7 @@ export function parseDarwin(out: string): LiveMetrics {
     netTx: rate(n1.tx, n2.tx),
     diskR: 0,
     diskW: 0,
+    diskIoAvailable: false,
     disk: root,
     uptime: parseBoot(s.UP ?? []),
     // Датчика температуры без прав root на macOS нет; на Apple Silicon нет и SMC-пути.

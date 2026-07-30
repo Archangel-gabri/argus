@@ -112,6 +112,10 @@ describe('parseFreeBsd', () => {
     expect(m.top).toHaveLength(2)
     expect(m.top[0].cmd).toBe('nginx')
   })
+
+  it('не выдаёт неподдерживаемый disk I/O за измеренный ноль', () => {
+    expect(m.diskIoAvailable).toBe(false)
+  })
 })
 
 // ── macOS ──────────────────────────────────────────────────────────────────────────────────────
@@ -197,5 +201,9 @@ describe('parseDarwin', () => {
 
   it('топ процессов', () => {
     expect(m.top[0]?.cmd).toBe('WindowServer')
+  })
+
+  it('не выдаёт неподдерживаемый disk I/O за измеренный ноль', () => {
+    expect(m.diskIoAvailable).toBe(false)
   })
 })

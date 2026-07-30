@@ -54,7 +54,10 @@ export async function resolveConn(deviceId: string): Promise<DeviceConn | null> 
   // терминал, файлы, порты и экран — этот же штраф платили все они.
   // Стало: отсев по SSH-баннеру (~2.5с максимум) + гонка за первым ответившим.
   const reach = await Promise.all(
-    eps.map(async (ep) => ({ ep, up: (await tcpAlive(ep.conn.host, ep.conn.port, 2500)).up }))
+    eps.map(async (ep) => ({
+      ep,
+      up: (await tcpAlive(ep.conn.host, ep.conn.port, 2500)).status === 'online'
+    }))
   )
   const open = reach.filter((r) => r.up).map((r) => r.ep)
   // Ровно один живой sshd — дальше проверять нечего, две ОС разом не работают.
@@ -321,7 +324,7 @@ function cleanup(id: string): void {
 
 export interface ProbeResult {
   ok: boolean
-  status: 'online' | 'offline'
+  status: 'online' | 'offline' | 'unknown'
   cpu?: number
   ramUsed?: number
   ramTotal?: number

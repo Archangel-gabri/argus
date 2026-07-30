@@ -11,9 +11,10 @@
 // стоит те же один round-trip, но подделать его туннель не может.
 import net from 'node:net'
 import { getOsEndpoints, getDeviceConn, listDevices } from './vault'
+import { consumeSshBanner, type Reachability } from '../shared/reachability'
 
 export interface Reach {
-  up: boolean
+  status: Reachability
   ms: number
 }
 
@@ -21,21 +22,27 @@ export interface Reach {
 export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<Reach> {
   const t0 = Date.now()
   return new Promise((resolve) => {
-    if (!host || host.includes('x.x')) return resolve({ up: false, ms: 0 })
+    if (!host || host.includes('x.x')) return resolve({ status: 'unknown', ms: 0 })
     const sock = new net.Socket()
     let done = false
-    const finish = (up: boolean): void => {
+    let banner = ''
+    const finish = (status: Reachability): void => {
       if (done) return
       done = true
       sock.destroy()
-      resolve({ up, ms: Date.now() - t0 })
+      resolve({ status, ms: Date.now() - t0 })
     }
     sock.setTimeout(timeoutMs)
-    // Коннект сам по себе НИЧЕГО не доказывает — ждём данные.
-    sock.once('data', (buf: Buffer) => finish(buf.toString('latin1', 0, 4) === 'SSH-'))
-    sock.once('timeout', () => finish(false))
-    sock.once('error', () => finish(false))
-    sock.once('close', () => finish(false))
+    // Коннект сам по себе НИЧЕГО не доказывает — ждём баннер. `data` не обязан содержать
+    // целые четыре байта: в живом TCP поймано `SS` + `H-2.0...`.
+    sock.on('data', (buf: Buffer) => {
+      const next = consumeSshBanner(banner, buf.toString('latin1'))
+      banner = next.text
+      if (next.verdict !== null) finish(next.verdict ? 'online' : 'offline')
+    })
+    sock.once('timeout', () => finish('offline'))
+    sock.once('error', () => finish('offline'))
+    sock.once('close', () => finish('offline'))
     sock.connect({ host, port: port || 22 })
   })
 }
@@ -44,16 +51,18 @@ export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<
 export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<Reach> {
   const eps = getOsEndpoints(deviceId)
   const conns = eps.length ? eps.map((e) => e.conn) : [getDeviceConn(deviceId)].filter((c) => c !== null)
-  if (!conns.length) return { up: false, ms: 0 }
+  if (!conns.length) return { status: 'unknown', ms: 0 }
   // Хост за бастионом напрямую недостижим по определению: прямая TCP-проба всегда промахнётся
   // и пометила бы устройство мёртвым. Такие проверяем только полным опросом, который умеет
   // ходить туннелем, — а здесь честно говорим «не знаю», не роняя статус.
-  if (conns.some((c) => c.jump)) return { up: true, ms: 0 }
+  if (conns.some((c) => c.jump)) return { status: 'unknown', ms: 0 }
   const results = await Promise.all(conns.map((c) => tcpAlive(c.host, c.port, timeoutMs)))
-  const alive = results.filter((r) => r.up)
+  const alive = results.filter((r) => r.status === 'online')
   return alive.length
-    ? { up: true, ms: Math.min(...alive.map((r) => r.ms)) }
-    : { up: false, ms: Math.max(...results.map((r) => r.ms)) }
+    ? { status: 'online', ms: Math.min(...alive.map((r) => r.ms)) }
+    : results.every((r) => r.status === 'unknown')
+      ? { status: 'unknown', ms: 0 }
+      : { status: 'offline', ms: Math.max(...results.map((r) => r.ms)) }
 }
 
 /** Разом по всему парку — параллельно. Именно это зовём сразу после входа в приложение. */

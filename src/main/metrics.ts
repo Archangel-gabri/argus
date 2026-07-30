@@ -199,6 +199,7 @@ export function parseProbeV2(out: string): LiveMetrics {
     netTx: Math.max(0, Math.round((n2.tx - n1.tx) / SAMPLE_SEC)),
     diskR: Math.max(0, Math.round((d2.r - d1.r) / SAMPLE_SEC)),
     diskW: Math.max(0, Math.round((d2.w - d1.w) / SAMPLE_SEC)),
+    diskIoAvailable: true,
     disk: root,
     uptime: s.UP ? Math.floor(num((s.UP[0] ?? '').trim().split(/\s+/)[0])) : undefined,
     tempCpu: parseTemp(s.TEMP ?? []),

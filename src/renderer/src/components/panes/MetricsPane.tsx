@@ -132,6 +132,7 @@ function TopTable({ top }: { top: LiveMetrics['top'] }): React.JSX.Element {
 export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Element {
   const [live, setLive] = useState<LiveMetrics | null>(null)
   const [liveOk, setLiveOk] = useState<boolean | null>(null)
+  const [liveIssue, setLiveIssue] = useState<'unavailable' | 'unreachable' | null>(null)
   const cpuBuf = useRef<number[]>([])
   const rxBuf = useRef<number[]>([])
   const txBuf = useRef<number[]>([])
@@ -156,17 +157,27 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
         if (!alive) return
         setLiveOk(r.ok)
         if (r.ok && r.metrics) {
+          setLiveIssue(null)
           const m = r.metrics
           setLive(m)
           cpuBuf.current = [...cpuBuf.current, m.cpu].slice(-40)
           rxBuf.current = [...rxBuf.current, m.netRx].slice(-40)
           txBuf.current = [...txBuf.current, m.netTx].slice(-40)
           force((n) => n + 1)
+        } else {
+          // Старый снимок не должен оставаться рядом с красным «офлайн» без времени:
+          // похоже на свежие данные. Текущий live-блок очищаем, история ниже остаётся.
+          setLive(null)
+          setLiveIssue(r.state === 'unavailable' ? 'unavailable' : 'unreachable')
         }
       } catch {
         // Отказ IPC (например, хранилище успело закрыться по авто-локу) НЕ должен убивать цикл:
         // без finally следующий тик не планировался и вкладка навсегда застывала на «собираю…».
-        if (alive) setLiveOk(false)
+        if (alive) {
+          setLiveOk(false)
+          setLive(null)
+          setLiveIssue('unreachable')
+        }
       } finally {
         // Между опросами всегда есть пауза: быстрый хост опрашивается раз в 3с, медленный — реже,
         // но не чаще чем раз в секунду после ответа.
@@ -194,8 +205,11 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
   }, [device.id])
   const hist = rows.map((r) => ({
     t: new Date(r.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-    cpu: r.cpu ?? 0,
-    ram: r.ramTotal ? Math.round(((r.ramUsed ?? 0) / r.ramTotal) * 100) : 0
+    cpu: r.cpu,
+    ram:
+      r.ramTotal != null && r.ramTotal > 0 && r.ramUsed != null
+        ? Math.round((r.ramUsed / r.ramTotal) * 100)
+        : null
   }))
 
   const ramPct = live && live.ramTotal ? (live.ramUsed / live.ramTotal) * 100 : 0
@@ -216,7 +230,13 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
             )}
           />
           <span className="text-[11px] text-slate-400">
-            {liveOk === true ? 'live' : liveOk === false ? 'офлайн' : 'сбор…'}
+            {liveOk === true
+              ? 'в реальном времени'
+              : liveIssue === 'unavailable'
+                ? 'не поддерживается'
+                : liveOk === false
+                  ? 'нет ответа'
+                  : 'сбор…'}
           </span>
         </span>
       </div>
@@ -264,7 +284,14 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
             {live.swapTotal > 0 && (
               <StatCard icon={Layers} label="Swap" value={`${live.swapUsed}/${live.swapTotal} GB`} pct={swapPct} tone="text-violet-400" barClass="bg-violet-400" />
             )}
-            <StatCard icon={HardDrive} label="Диск I/O" value={`R ${fmtBps(live.diskR)}`} sub={`W ${fmtBps(live.diskW)}`} />
+            {live.diskIoAvailable !== false && (
+              <StatCard
+                icon={HardDrive}
+                label="Диск I/O"
+                value={`R ${fmtBps(live.diskR)}`}
+                sub={`W ${fmtBps(live.diskW)}`}
+              />
+            )}
           </div>
 
           {live.cores.length > 0 && <CoreGrid cores={live.cores} />}
@@ -273,7 +300,11 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
         </>
       ) : (
         <div className="flex items-center justify-center rounded-lg border border-border bg-surface/40 p-6 text-center text-sm text-slate-500">
-          {liveOk === false ? 'Нет связи с хостом' : 'Собираю первый снимок…'}
+          {liveIssue === 'unavailable'
+            ? 'Хост отвечает, но live-метрики недоступны'
+            : liveIssue === 'unreachable'
+              ? 'Не удалось проверить хост'
+              : 'Собираю первый снимок…'}
         </div>
       )}
 

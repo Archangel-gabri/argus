@@ -28,7 +28,7 @@ export type VaultResult = { ok: boolean; error?: string; state: VaultState }
 export type DeviceResult = { ok: boolean; error?: string; device?: DeviceDTO }
 export type ProbeResult = {
   ok: boolean
-  status: 'online' | 'offline'
+  status: 'online' | 'offline' | 'unknown'
   cpu?: number
   ramUsed?: number
   ramTotal?: number
@@ -54,8 +54,8 @@ export interface ArgusApi {
   }
   devices: {
     list: () => Promise<DeviceDTO[]>
-    /** Быстрая TCP-живость по всему парку: id → { up, ms }. Мс вместо секунд. */
-    liveness: () => Promise<Record<string, { up: boolean; ms: number }>>
+    /** Быстрая SSH-живость; unknown = из этой точки измерить нельзя. */
+    liveness: () => Promise<Record<string, { status: 'online' | 'offline' | 'unknown'; ms: number }>>
     /** Диалог выбора своей картинки устройства → data-URL. */
     pickIcon: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
     create: (input: DeviceInput) => Promise<DeviceResult>
@@ -135,7 +135,13 @@ export interface ArgusApi {
     history: (deviceId: string, limit?: number) => Promise<MetricSnapshot[]>
     live: (
       deviceId: string
-    ) => Promise<{ ok: boolean; family: string; os: string; metrics: LiveMetrics | null }>
+    ) => Promise<{
+      ok: boolean
+      state: 'live' | 'unavailable' | 'unreachable'
+      family: string
+      os: string
+      metrics: LiveMetrics | null
+    }>
   }
   ai: {
     list: () => Promise<AiAccount[]>
@@ -226,6 +232,7 @@ export interface ArgusApi {
     metrics: (deviceId: string) => Promise<{
       current: string
       family: 'linux' | 'windows' | 'off'
+      status: 'online' | 'offline' | 'unknown'
       cpu?: number
       ramUsed?: number
       ramTotal?: number

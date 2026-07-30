@@ -6,6 +6,13 @@ import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
 import { prepareVaultInitialization, type VaultMeta } from './vault-init'
+import {
+  METRIC_SNAPSHOT_INSERT,
+  snapshotStatus,
+  snapshotValues,
+  type SnapshotInput
+} from './metric-snapshot'
+import { initialStatus } from '../shared/reachability'
 import type {
   AuthType,
   AltBoot,
@@ -14,7 +21,6 @@ import type {
   DeviceRow,
   DeviceDTO,
   DeviceInput,
-  Status,
   VaultStatus,
   Snippet,
   Subscription,
@@ -79,7 +85,7 @@ function migrate(d: Database.Database): void {
     country TEXT DEFAULT '',
     flag TEXT DEFAULT '',
     os TEXT DEFAULT '',
-    status TEXT DEFAULT 'online',
+    status TEXT DEFAULT 'unknown',
     cpu REAL DEFAULT 0,
     ram_used REAL DEFAULT 0,
     ram_total REAL DEFAULT 0,
@@ -205,8 +211,15 @@ function migrate(d: Database.Database): void {
     cpu REAL,
     ram_used REAL,
     ram_total REAL,
+    disk REAL,
     status TEXT
   )`)
+  // Дисковая тревога раньше имела правило, но не имела данных: snapshot отбрасывал disk.
+  try {
+    d.exec('ALTER TABLE metric_snapshots ADD COLUMN disk REAL')
+  } catch {
+    /* column already exists */
+  }
   d.exec('CREATE INDEX IF NOT EXISTS idx_snap_dev ON metric_snapshots (device_id, ts)')
   d.exec(`CREATE TABLE IF NOT EXISTS ai_accounts (
     id TEXT PRIMARY KEY,
@@ -550,7 +563,9 @@ function toDTO(r: DeviceRow): DeviceDTO {
     mac: r.mac,
     icon: r.icon ?? null,
     bootEntry: r.boot_entry ?? null,
-    hasScreenSecret: Boolean(r.screen_password)
+    hasScreenSecret: Boolean(r.screen_password),
+    metricsKnown: false,
+    metricsFresh: false
   }
 }
 
@@ -621,21 +636,72 @@ export function getAgentCert(id: string): string | null {
 }
 
 /** Последний снапшот по каждому устройству — одним запросом (для мгновенной отрисовки). */
-function latestStates(): Map<string, { ts: number; cpu: number | null; ramUsed: number | null; ramTotal: number | null; status: string }> {
-  const rows = requireDb()
+function latestStates(): Map<
+  string,
+  {
+    statusTs: number
+    metricTs: number | null
+    cpu: number | null
+    ramUsed: number | null
+    ramTotal: number | null
+    disk: number | null
+    status: string
+    metricsFresh: boolean
+  }
+> {
+  const d = requireDb()
+  const statusRows = d
     .prepare(
-      `SELECT s.device_id AS id, s.ts, s.cpu, s.ram_used AS ramUsed, s.ram_total AS ramTotal, s.status
+      `SELECT s.device_id AS id, s.ts, s.status
          FROM metric_snapshots s
          JOIN (SELECT device_id, MAX(ts) AS mts FROM metric_snapshots GROUP BY device_id) m
            ON m.device_id = s.device_id AND m.mts = s.ts`
     )
-    .all() as Array<{ id: string; ts: number; cpu: number | null; ramUsed: number | null; ramTotal: number | null; status: string }>
-  return new Map(rows.map((r) => [r.id, r]))
+    .all() as Array<{
+      id: string
+      ts: number
+      status: string
+    }>
+  const metricRows = d
+    .prepare(
+      `SELECT s.device_id AS id, s.ts, s.cpu, s.ram_used AS ramUsed, s.ram_total AS ramTotal,
+              s.disk
+         FROM metric_snapshots s
+         JOIN (
+           SELECT device_id, MAX(ts) AS mts
+             FROM metric_snapshots
+            WHERE cpu IS NOT NULL OR ram_used IS NOT NULL OR ram_total IS NOT NULL OR disk IS NOT NULL
+            GROUP BY device_id
+         ) m ON m.device_id = s.device_id AND m.mts = s.ts`
+    )
+    .all() as Array<{
+      id: string
+      ts: number
+      cpu: number | null
+      ramUsed: number | null
+      ramTotal: number | null
+      disk: number | null
+    }>
+  const metrics = new Map(metricRows.map((r) => [r.id, r]))
+  return new Map(
+    statusRows.map((state) => {
+      const metric = metrics.get(state.id)
+      return [
+        state.id,
+        {
+          statusTs: state.ts,
+          metricTs: metric?.ts ?? null,
+          cpu: metric?.cpu ?? null,
+          ramUsed: metric?.ramUsed ?? null,
+          ramTotal: metric?.ramTotal ?? null,
+          disk: metric?.disk ?? null,
+          status: state.status,
+          metricsFresh: metric?.ts === state.ts
+        }
+      ]
+    })
+  )
 }
-
-// Снапшоты ПК пишутся со status = семейство ОС ('windows'/'linux'/'off'), а не Status.
-const snapStatus = (s: string): Status | null =>
-  s === 'off' ? 'offline' : s === 'windows' || s === 'linux' ? 'online' : (s as Status) || null
 
 /** Устройства + ПОСЛЕДНЕЕ ИЗВЕСТНОЕ состояние из снапшотов. Без этого после входа рисовалась
  *  пустая сетка («0 online», нули) до конца первого опроса — по замеру это 70 секунд. */
@@ -648,10 +714,13 @@ export function listDevices(): DeviceDTO[] {
     if (!s) return dto
     return {
       ...dto,
-      status: snapStatus(s.status) ?? dto.status,
+      status: snapshotStatus(s.status) ?? dto.status,
       cpu: s.cpu ?? dto.cpu,
       ram: { used: s.ramUsed ?? dto.ram.used, total: s.ramTotal ?? dto.ram.total },
-      lastSeen: s.ts
+      disk: s.disk,
+      metricsKnown: s.cpu !== null || s.ramUsed !== null || s.ramTotal !== null,
+      metricsFresh: s.metricsFresh,
+      lastSeen: s.metricTs
     }
   })
 }
@@ -673,7 +742,8 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     country: input.country ?? '',
     flag: input.flag || '🖥️',
     os: input.os ?? '',
-    status: input.status ?? 'online',
+    // Наличие IP/секрета не доказывает, что машина сейчас отвечает.
+    status: initialStatus(input.status),
     cpu: input.cpu ?? 0,
     ram_used: input.ram?.used ?? 0,
     ram_total: input.ram?.total ?? 0,
@@ -1041,12 +1111,10 @@ const SNAP_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000
 /** Append a metric sample; обрезаем по возрасту (60 дней) и числу (5000) на устройство. */
 export function recordSnapshot(
   deviceId: string,
-  m: { cpu?: number; ramUsed?: number; ramTotal?: number; status?: string }
+  m: SnapshotInput
 ): void {
   const d = requireDb()
-  d.prepare(
-    'INSERT INTO metric_snapshots (device_id, ts, cpu, ram_used, ram_total, status) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(deviceId, Date.now(), m.cpu ?? null, m.ramUsed ?? null, m.ramTotal ?? null, m.status ?? 'unknown')
+  d.prepare(METRIC_SNAPSHOT_INSERT).run(...snapshotValues(deviceId, Date.now(), m))
   d.prepare('DELETE FROM metric_snapshots WHERE device_id = ? AND ts < ?').run(deviceId, Date.now() - SNAP_MAX_AGE_MS)
   d.prepare(
     `DELETE FROM metric_snapshots WHERE device_id = ? AND rowid NOT IN
@@ -1057,7 +1125,7 @@ export function recordSnapshot(
 export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
   const rows = requireDb()
     .prepare(
-      'SELECT ts, cpu, ram_used as ramUsed, ram_total as ramTotal, status FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT ?'
+      'SELECT ts, cpu, ram_used as ramUsed, ram_total as ramTotal, disk, status FROM metric_snapshots WHERE device_id = ? ORDER BY ts DESC LIMIT ?'
     )
     .all(deviceId, limit) as MetricSnapshot[]
   return rows.reverse()

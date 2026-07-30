@@ -81,7 +81,7 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
 
     // Место на диске. У выключенной машины показания устаревшие — тревожить по ним значит
     // сообщать о вчерашней погоде.
-    if (d.status !== 'offline' && typeof d.disk === 'number') {
+    if ((d.status === 'online' || d.status === 'degraded') && typeof d.disk === 'number') {
       if (d.disk >= DISK_CRITICAL) {
         out.push({
           key: `disk:${d.id}`,
