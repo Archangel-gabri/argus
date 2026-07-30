@@ -154,6 +154,16 @@ export interface ArgusApi {
     list: (deviceId: string) => Promise<ForwardInfo[]>
     close: (id: string) => void
   }
+  alerts: {
+    list: () => Promise<Array<{
+      key: string
+      kind: string
+      title: string
+      body: string
+      severity: 'warning' | 'critical'
+      deviceId?: string
+    }>>
+  }
   ports: {
     list: (deviceId: string) => Promise<{ ok: boolean; ports: ListeningPort[]; error?: string }>
   }

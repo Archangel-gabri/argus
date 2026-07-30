@@ -5,6 +5,7 @@ import { useDevices } from '@/store/devices'
 import { useUI } from '@/store/ui'
 import { ServerCard } from '@/components/ServerCard'
 import { InsightsPanel } from '@/components/InsightsPanel'
+import { AlertStrip } from '@/components/AlertStrip'
 import { DeviceDialog } from '@/components/DeviceDialog'
 import type { DeviceKind } from '@/types'
 
@@ -51,11 +52,13 @@ export function DevicesView(): React.JSX.Element {
   return (
     <div className="flex h-full">
       <section className="flex-1 overflow-y-auto px-8 py-7">
+        {/* Тревоги сторожа — над списком: открыл и сразу видишь, что не так, не обходя карточки. */}
+        <AlertStrip />
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold text-white">Fleet</h1>
+            <h1 className="text-2xl font-semibold text-white">Парк</h1>
             <p className="mt-1 text-sm text-slate-500">
-              {devices.length} устройств · {onlineCount} online
+              {devices.length} устройств · {onlineCount} на связи
             </p>
           </div>
           <div className="flex items-center gap-2">

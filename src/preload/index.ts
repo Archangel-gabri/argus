@@ -109,6 +109,9 @@ const api = {
     list: (deviceId: string) => ipcRenderer.invoke('forward:list', deviceId),
     close: (id: string) => ipcRenderer.send('forward:close', id)
   },
+  alerts: {
+    list: () => ipcRenderer.invoke('alerts:list')
+  },
   ports: {
     list: (deviceId: string) => ipcRenderer.invoke('ports:list', deviceId)
   },

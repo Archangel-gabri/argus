@@ -12,6 +12,7 @@ import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
 import * as geo from './geo'
 import * as ports from './ports'
+import * as watchdog from './watchdog'
 import * as hardware from './hardware'
 import * as screen from './screen'
 import * as agent from './agent'
@@ -342,6 +343,10 @@ export function registerIpc(): void {
 
   // Список слушающих портов сервера (для вкладки «Порты» + one-click туннель)
   ipcMain.handle('ports:list', (_e, deviceId: unknown) => ports.listListening(asString(deviceId)))
+
+  // Тревоги сторожа. Уведомление системы легко пропустить или закрыть не глядя, поэтому то же
+  // самое должно быть видно и в самом приложении.
+  ipcMain.handle('alerts:list', () => watchdog.currentAlerts())
 
   // Сводка комплектующих: из кэша (быстро) + пересбор по кнопке
   ipcMain.handle('hw:get', (_e, deviceId: unknown) => hardware.getHardware(asString(deviceId)))
