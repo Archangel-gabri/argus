@@ -36,7 +36,13 @@ export type ScreenAccess =
   | { state: 'no-session' }
   /** Команда прошла, но замок остался: рабочая среда не слушает logind. */
   | { state: 'refused'; sessionId: string; detail?: string }
-  /** Этой системе такой способ не подходит (Windows, нет loginctl, машина не в сети). */
+  /**
+   * Экран заперт, и снять замок нечем. Это НЕ то же самое, что «не поддерживается»: смотреть
+   * можно, но не агентом — на Windows экран блокировки живёт на защищённом рабочем столе, и
+   * обычный процесс его не видит. Значит нужен запасной путь.
+   */
+  | { state: 'locked-no-unlock'; reason: string }
+  /** Этой системе такой способ не подходит (нет loginctl, машина не в сети). */
   | { state: 'unsupported'; reason: string }
 
 /**
@@ -198,13 +204,13 @@ export async function ensureScreenUnlocked(deviceId: string): Promise<ScreenAcce
     // Windows не даёт снять блокировку без пароля: экран блокировки живёт на защищённом
     // рабочем столе, и обычному процессу он недоступен — ни показать, ни разблокировать.
     const r = await execOnce(deviceId, WINDOWS_LOCK_CMD)
-    const locked = /LOCKED=yes/i.test(r.output)
-    return {
-      state: 'unsupported',
-      reason: locked
-        ? 'экран Windows заперт, а снять блокировку без пароля нельзя — нужен запасной путь (RDP)'
-        : 'Windows: блокировкой управляет сама система'
+    if (/LOCKED=yes/i.test(r.output)) {
+      return {
+        state: 'locked-no-unlock',
+        reason: 'экран Windows заперт: агент видит только рабочий стол пользователя, а экран блокировки живёт на защищённом'
+      }
     }
+    return { state: 'unsupported', reason: 'Windows: блокировкой управляет сама система' }
   }
 
   const listed = await execOnce(deviceId, LIST_SESSIONS_CMD)

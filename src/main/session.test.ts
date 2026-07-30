@@ -8,7 +8,7 @@
 //   • залипший старый сеанс остаётся в состоянии online и живой картинки не даёт.
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
-import { parseSessions, pickGraphical, unlockCmd, LIST_SESSIONS_CMD } from './session'
+import { parseSessions, pickGraphical, unlockCmd, LIST_SESSIONS_CMD, WINDOWS_LOCK_CMD } from './session'
 
 // Ровно то, что печатает LIST_SESSIONS_CMD на стенде.
 const LIVE = `SESSION=1
@@ -199,5 +199,23 @@ describe('команды для удалённой оболочки', () => {
     // kscreen-doctor (задокументированный способ KDE на Wayland) на живой машине падает
     // с core dump — ронять чужой инструмент ради необязательного улучшения нельзя.
     expect(cmd).not.toContain('kscreen-doctor')
+  })
+})
+
+describe('состояние экрана Windows', () => {
+  // На Windows экран блокировки живёт на защищённом рабочем столе: агент видит только
+  // рабочий стол пользователя, поэтому при блокировке он показал бы застывшую картинку.
+  // Признак блокировки — работающий LogonUI.exe, он же её и рисует.
+  it('команда ищет LogonUI и отвечает однозначно', () => {
+    expect(WINDOWS_LOCK_CMD).toContain('LogonUI.exe')
+    expect(WINDOWS_LOCK_CMD).toContain('LOCKED=yes')
+    expect(WINDOWS_LOCK_CMD).toContain('LOCKED=no')
+  })
+
+  it('команда не падает, когда процесса нет', () => {
+    // tasklist с фильтром без совпадений печатает информационную строку и возвращает 0,
+    // поэтому решение принимает find, а не код возврата tasklist.
+    expect(WINDOWS_LOCK_CMD).toContain('find')
+    expect(WINDOWS_LOCK_CMD).toContain('2>nul')
   })
 })

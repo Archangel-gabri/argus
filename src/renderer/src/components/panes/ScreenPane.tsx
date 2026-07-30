@@ -61,6 +61,9 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
     setInstalling(false)
     setSelftest(r.selftest ?? null)
     if (!r.ok) setErr(r.error ?? `не удалось установить агент${r.step ? ` (шаг: ${r.step})` : ''}`)
+    // Оговорка при успешной установке — не ошибка, но и молчать о ней нельзя: человек иначе
+    // выясняет опытным путём, почему курсор не двигается.
+    else if (r.warning) setErr(r.warning)
     await checkAgent()
   }
 

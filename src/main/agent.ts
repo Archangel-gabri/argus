@@ -152,6 +152,11 @@ export interface ProvisionResult {
   status?: AgentStatus
   /** Отчёт самотеста агента: что реально работает на этой машине. */
   selftest?: string
+  /**
+   * Установка удалась, но с оговоркой — например, смотреть можно, а управлять нельзя.
+   * Отдельно от error намеренно: это не отказ, и показывать его как отказ было бы неправдой.
+   */
+  warning?: string
 }
 
 /**
@@ -265,11 +270,21 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
   const status = await agentHTTP(conn.host, token, pem, 6000)
   const selftest = (st.output || '').trim()
   const captureOK = /захват: РАБОТАЕТ/.test(selftest)
+  // Управление мышью и клавиатурой есть не везде: на macOS инъекция ввода требует cgo, а агент
+  // собирается без него сознательно — ради одного файла на платформу. Сказать об этом надо
+  // СРАЗУ после установки, а не оставлять человека выяснять опытным путём, почему курсор
+  // не двигается. Просмотр при этом работает полностью.
+  const controlOK = /управление: есть/.test(selftest)
 
   return {
     ok: status.running && captureOK,
     status,
     selftest,
+    // Отсутствие управления — не ошибка установки, поэтому это предупреждение, а не error.
+    warning:
+      status.running && captureOK && !controlOK
+        ? 'Смотреть можно, управлять — нет: на этой системе агент не может вводить мышь и клавиатуру.'
+        : undefined,
     error: status.running
       ? captureOK
         ? undefined
