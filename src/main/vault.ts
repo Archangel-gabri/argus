@@ -5,6 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
+import { prepareVaultInitialization, type VaultMeta } from './vault-init'
 import type {
   AuthType,
   AltBoot,
@@ -25,7 +26,7 @@ import type {
   AiAccountInput
 } from './types'
 
-type Meta = { salt: string; version: number; createdAt: number }
+type Meta = VaultMeta
 
 let db: Database.Database | null = null
 
@@ -358,20 +359,29 @@ function seedInto(d: Database.Database): void {
 export async function initialize(password: string): Promise<void> {
   if (isInitialized()) throw new Error('Vault already initialized')
   if (!password || password.length < 6) throw new Error('Master password must be at least 6 characters')
-  const salt = randomBytes(16)
-  const keyHex = await deriveKeyHex(password, salt)
+  const pendingPath = metaPath() + '.new'
+
+  // Сначала на диск уходит ВОССТАНАВЛИВАЕМАЯ соль, и только затем создаётся база. Раньше
+  // порядок был обратным: crash между migrate() и writeFile(meta) оставлял зашифрованный
+  // файл без соли — ключ к нему был потерян навсегда.
+  const meta = prepareVaultInitialization(dbPath(), metaPath())
+
+  const keyHex = await deriveKeyHex(password, Buffer.from(meta.salt, 'hex'))
   const d = openEncrypted(keyHex)
-  migrate(d)
-  // Соль публикуется СРАЗУ после создания схемы и ДО заполнения.
-  //
-  // Порядок здесь не косметика. Файл базы уже создан и зашифрован этим ключом, а признаком
-  // «хранилище существует» служит meta.json. Если упасть между этими двумя шагами, на диске
-  // остаётся база, ключ от которой нигде не записан: следующий запуск считает хранилище
-  // несозданным, берёт НОВУЮ соль — и не может открыть старый файл. Хранилище окирпичено
-  // ещё до того, как в него что-то положили.
-  const meta: Meta = { salt: salt.toString('hex'), version: 1, createdAt: Date.now() }
-  writeFileSync(metaPath(), JSON.stringify(meta), { mode: 0o600 })
-  db = d
+  try {
+    migrate(d)
+    // Публикация атомарна. До неё initialize можно безопасно повторить с тем же паролем;
+    // после неё обычный unlock видит полностью созданную схему.
+    renameSync(pendingPath, metaPath())
+    db = d
+  } catch (e) {
+    try {
+      d.close()
+    } catch {
+      /* ignore */
+    }
+    throw e
+  }
   // Заполнение своим парком — удобство, а не обязанность. Кривой fleet.local.json не повод
   // терять хранилище: пустое рабочее лучше сломанного.
   try {
@@ -413,7 +423,6 @@ export async function unlock(password: string): Promise<void> {
       // человек до бесконечности перенабирал правильный пароль, а дело было не в нём.
       keyWasCorrect = true
       migrate(d) // idempotent — keeps schema current
-      db = d
       if (cand.fromNew) {
         // rekey прошёл, rename — нет: финализируем публикацию новой соли.
         renameSync(newMetaPath, metaPath())
@@ -425,6 +434,9 @@ export async function unlock(password: string): Promise<void> {
           /* ignore */
         }
       }
+      // Глобальное состояние меняем ПОСЛЕ файловой финализации. Если rename/unlink упадёт,
+      // catch закроет только локальный d, а vaultStatus не соврёт «unlocked» закрытым handle.
+      db = d
       return
     } catch (e) {
       // Первую такую ошибку и запоминаем: она относится к сработавшему ключу,
