@@ -16,12 +16,33 @@ export interface AgentHello {
   codec: string
 }
 
+/** Сообщение агента о смене ступени качества. */
+export interface AgentQuality {
+  type: 'quality'
+  /** 0 = частота не ограничивается. */
+  fps: number
+  bitrate: number
+  comment: string
+  seq: number
+}
+
 export interface AgentClientHandlers {
   onHello?: (h: AgentHello) => void
   onFrame?: () => void
+  onQuality?: (q: AgentQuality) => void
   onError?: (message: string) => void
   onClose?: () => void
 }
+
+/**
+ * Заголовок двоичного кадра (13 байт):
+ *   байт 0      флаги: бит 0 — кадр ключевой
+ *   байты 1..4  порядковый номер, big-endian
+ *   байты 5..12 метка времени захвата в микросекундах, big-endian
+ * Номер нужен, чтобы отличить потерю в сети от сброса кадра на сервере; метка избавляет от
+ * выдумывания временных меток исходя из «наверное, 60 кадров в секунду».
+ */
+const FRAME_HEADER = 13
 
 const BTN = { 0: 1, 1: 4, 2: 2 } as const // DOM button → маска агента (лево/средняя/право)
 
@@ -30,9 +51,16 @@ export class AgentClient {
   private decoder: VideoDecoder | null = null
   private ctx: CanvasRenderingContext2D | null = null
   private gotKey = false
-  private ts = 0
   private closed = false
   private detach: Array<() => void> = []
+  /** Кадров получено за текущее окно наблюдения — это и есть то, что уходит агенту. */
+  private rxFrames = 0
+  private lastSeq = 0
+  /** Пропуски в нумерации за окно — прямое измерение потерь, не зависящее от счётчиков агента. */
+  private lostFrames = 0
+  private statsTimer: ReturnType<typeof setInterval> | null = null
+  /** Фактическая частота за последнее окно — её показывает окно экрана. */
+  liveFps = 0
 
   constructor(
     private url: string,
@@ -82,6 +110,11 @@ export class AgentClient {
       const hello = msg as unknown as AgentHello
       this.h.onHello?.(hello)
       this.setupDecoder(hello.codec || 'avc1.42E01F')
+      this.startStats()
+      return
+    }
+    if (msg.type === 'quality') {
+      this.h.onQuality?.(msg as unknown as AgentQuality)
     }
   }
 
@@ -99,22 +132,63 @@ export class AgentClient {
   }
 
   private onBinary(buf: Uint8Array): void {
-    if (!this.decoder || buf.length < 2) return
-    const isKey = buf[0] === 1
+    if (!this.decoder || buf.length <= FRAME_HEADER) return
+    const isKey = (buf[0] & 1) === 1
     // До первого ключевого кадра декодировать нечего — иначе посыплются ошибки на весь лог.
     if (!this.gotKey && !isKey) return
     this.gotKey = true
+
+    const view = new DataView(buf.buffer, buf.byteOffset, FRAME_HEADER)
+    const seq = view.getUint32(1)
+    // Разрыв нумерации = кадры, которых мы не увидели. Это прямое измерение потерь: агент
+    // считает, сколько отправил, но только клиент знает, сколько до него доехало.
+    if (this.lastSeq && seq > this.lastSeq + 1) this.lostFrames += seq - this.lastSeq - 1
+    this.lastSeq = seq
+    // Метка времени приходит от агента в микросекундах — ровно то, что ждёт EncodedVideoChunk.
+    // Раньше здесь стоял счётчик «плюс 1/60 секунды на кадр», и при любой другой частоте
+    // временная шкала расходилась с действительностью.
+    const timestamp = Number(view.getBigUint64(5))
+    this.rxFrames++
+
     try {
       this.decoder.decode(
         new EncodedVideoChunk({
           type: isKey ? 'key' : 'delta',
-          timestamp: (this.ts += 1000000 / 60),
-          data: buf.subarray(1)
+          timestamp,
+          data: buf.subarray(FRAME_HEADER)
         })
       )
     } catch (e) {
       this.h.onError?.(`кадр не принят декодером: ${(e as Error).message}`)
     }
+  }
+
+  /**
+   * Раз в секунду отправляем агенту наблюдения: сколько кадров дошло и насколько отстаёт
+   * декодер. Решение о ступени принимает агент — только он знает, сколько отправил, и только
+   * он может тронуть кодировщик. Клиент, который решал бы сам, неизбежно врал бы про потери.
+   */
+  private startStats(): void {
+    if (this.statsTimer) return
+    this.statsTimer = setInterval(() => {
+      if (this.ws?.readyState !== WebSocket.OPEN) return
+      const rx = this.rxFrames
+      const lost = this.lostFrames
+      this.rxFrames = 0
+      this.lostFrames = 0
+      this.liveFps = rx
+      this.send({
+        type: 'stats',
+        stats: {
+          rxFrames: rx,
+          // decodeQueueSize — сколько кадров ждёт декодирования. Растёт, когда клиент не
+          // успевает: это и есть сигнал «сбавь».
+          decodeQueue: this.decoder?.decodeQueueSize ?? 0,
+          lost,
+          windowMs: 1000
+        }
+      })
+    }, 1000)
   }
 
   private draw(frame: VideoFrame): void {
@@ -192,6 +266,8 @@ export class AgentClient {
     this.detach.forEach((f) => f())
     this.detach = []
     try {
+      if (this.statsTimer) clearInterval(this.statsTimer)
+      this.statsTimer = null
       this.decoder?.close()
     } catch {
       /* уже закрыт */

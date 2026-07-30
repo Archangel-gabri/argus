@@ -30,6 +30,28 @@ type Hello struct {
 	Codec string `json:"codec"`
 }
 
+// frameHeaderLen — длина заголовка двоичного кадра:
+//
+//	байт 0      флаги: бит 0 — кадр ключевой
+//	байты 1..4  порядковый номер, uint32 big-endian
+//	байты 5..12 метка времени захвата в микросекундах от начала сеанса, uint64 big-endian
+//	дальше      сам кадр в формате Annex-B
+//
+// Номер и метка появились не для красоты: без номера «клиент получил меньше, чем сервер
+// отправил» неотличимо от «сервер сам сбросил кадр», а без метки клиент вынужден выдумывать
+// временные метки исходя из «наверное, 60 кадров в секунду».
+const frameHeaderLen = 13
+
+// QualityApplied — сервер сообщает клиенту, что сменил ступень качества.
+type QualityApplied struct {
+	Type    string `json:"type"` // "quality"
+	FPS     int    `json:"fps"`  // 0 = не ограничиваем
+	Bitrate int    `json:"bitrate"`
+	Comment string `json:"comment"`
+	// Seq — с какого кадра настройка вступает в силу.
+	Seq uint32 `json:"seq"`
+}
+
 // Fatal — поток не поднялся или умер: клиенту нужен внятный текст, а не тишина.
 type Fatal struct {
 	Type   string `json:"type"` // "fatal"
@@ -56,6 +78,10 @@ type InputMsg struct {
 	// Клавиша: код в стиле DOM KeyboardEvent.code (KeyA, Enter, ShiftLeft…), down=нажатие.
 	Code string `json:"code,omitempty"`
 	Down bool   `json:"down,omitempty"`
+
+	// Stats — наблюдения клиента за последнее окно (type = "stats"). Решение по ним принимает
+	// сервер: только он знает, сколько отправил, и только он может тронуть кодировщик.
+	Stats clientStats `json:"stats,omitempty"`
 }
 
 const (

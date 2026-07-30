@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/binary"
 	"encoding/json"
 	"log"
 	"net"
@@ -173,7 +174,22 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Ввод от клиента.
+	// Состояние сеанса объявлено ДО чтения ввода: обработчик наблюдений клиента обращается
+	// и к подстройке, и к отправке, поэтому они должны существовать раньше него.
+	st := NewStreamer(s.fps, s.w, s.h)
+	sentHello := false
+	var seq uint32
+	started := time.Now()
+	gov := &qualityGovernor{}
+	sendJSON := func(v any) {
+		b, _ := json.Marshal(v)
+		select {
+		case out <- b:
+		default:
+		}
+	}
+
+	// Ввод от клиента и его наблюдения за потоком.
 	go func() {
 		defer cancel()
 		for {
@@ -195,19 +211,24 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				inj.Wheel(m.Delta)
 			case "key":
 				inj.Key(m.Code, m.Down)
+			case "stats":
+				// Решение о ступени принимает СЕРВЕР: только он видит собственную очередь
+				// отправки и только он может тронуть кодировщик. Клиент лишь наблюдает.
+				tier, changed := gov.decide(m.Stats, time.Now())
+				if !changed {
+					continue
+				}
+				if err := st.SetQuality(tier.kbps, tier.fps); err != nil {
+					// Вариант захвата без управления (ffmpeg) — это не ошибка сеанса,
+					// просто подстраивать нечего.
+					continue
+				}
+				log.Printf("ступень качества: %s (%d к/с, %d кбит/с)", tier.comment, tier.fps, tier.kbps)
+				sendJSON(QualityApplied{Type: "quality", FPS: tier.fps, Bitrate: tier.kbps,
+					Comment: tier.comment, Seq: seq})
 			}
 		}
 	}()
-
-	st := NewStreamer(s.fps, s.w, s.h)
-	sentHello := false
-	sendJSON := func(v any) {
-		b, _ := json.Marshal(v)
-		select {
-		case out <- b:
-		default:
-		}
-	}
 
 	err = st.Run(ctx, func(au AU) {
 		if !sentHello {
@@ -227,13 +248,21 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 				Codec: st.Codec(),
 			})
 		}
+		// Заголовок кадра: флаги, порядковый номер, метка времени захвата.
+		// Номер нужен, чтобы отличить потерю в сети от сброса кадра на сервере: без него
+		// «клиент получил меньше, чем мы отправили» не значит ничего. Метка времени избавляет
+		// клиента от выдумывания собственных временных меток исходя из «наверное, 60 к/с».
+		seq++
 		flag := byte(0)
 		if au.IsKey {
 			flag = 1
 		}
-		msg := make([]byte, 0, len(au.Data)+1)
-		msg = append(msg, flag)
+		msg := make([]byte, frameHeaderLen, frameHeaderLen+len(au.Data))
+		msg[0] = flag
+		binary.BigEndian.PutUint32(msg[1:5], seq)
+		binary.BigEndian.PutUint64(msg[5:13], uint64(time.Since(started).Microseconds()))
 		msg = append(msg, au.Data...)
+		gov.note()
 		select {
 		case out <- msg:
 		default:
