@@ -8,6 +8,11 @@ import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
+import {
+  BOOT_READY_MARKER,
+  bootCommandSucceeded,
+  bootEntryListResult
+} from './pc-boot-policy'
 
 export type OsFamily = 'linux' | 'windows' | 'off'
 
@@ -511,14 +516,12 @@ export async function bootEntries(
   if (!ep) return { ok: false, os: '', entries: [], error: 'машина не в сети' }
   if (ep.family === 'linux') {
     const r = await execOnConn(ep.conn, 'efibootmgr 2>/dev/null || sudo -n efibootmgr 2>/dev/null', 10000)
-    if (!r.ok && !r.output.trim())
-      return { ok: false, os: ep.os, entries: [], error: r.error || 'efibootmgr недоступен (система загружена не через EFI?)' }
-    return { ok: true, os: ep.os, entries: parseEfibootmgr(r.output) }
+    const result = bootEntryListResult(r.ok, r.output, parseEfibootmgr(r.output), r.error)
+    return { ...result, os: ep.os }
   }
   const r = await execOnConn(ep.conn, BCDEDIT_FIRMWARE_CMD, 15000)
-  if (!r.ok && !r.output.trim())
-    return { ok: false, os: ep.os, entries: [], error: r.error || 'bcdedit недоступен (нужны права администратора)' }
-  return { ok: true, os: ep.os, entries: parseBcdedit(r.output) }
+  const result = bootEntryListResult(r.ok, r.output, parseBcdedit(r.output), r.error)
+  return { ...result, os: ep.os }
 }
 
 /** `Boot0001* Windows Boot Manager\tHD(1,GPT,…)` → { id: '0001', label: 'Windows Boot Manager' } */
@@ -573,8 +576,7 @@ export function parseBcdedit(out: string): BootEntry[] {
   return entries
 }
 
-/** Загрузить target-ОС (по метке) с той, что сейчас запущена. Linux → grub-reboot к записи
- *  (bootEntry или матч по ключевому слову из имени ОС); Windows → reboot (grub-дефолт = Linux). */
+/** Загрузить target-ОС только по точно назначенной ей записи. Угадывание по имени загружает не ту ОС. */
 export async function boot(
   deviceId: string,
   targetOs: string
@@ -590,20 +592,26 @@ export async function boot(
     // Номер EFI-записи (4 hex-цифры) — самый общий путь: работает с любым загрузчиком,
     // а не только с GRUB. На этой машине, например, стоит rEFInd, и grub-reboot там бесполезен.
     if (target?.bootEntry && /^[0-9A-Fa-f]{4}$/.test(target.bootEntry.trim())) {
-      cmd = `sudo -n efibootmgr --bootnext ${target.bootEntry.trim()} && sudo -n systemctl reboot`
+      cmd =
+        `sudo -n efibootmgr --bootnext ${target.bootEntry.trim()} && ` +
+        `printf '%s\\n' ${shq(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
     } else if (target?.bootEntry) {
       // bootEntry — строка из устройства: валидируем (без переносов/абсурдной длины) и
       // экранируем одинарными кавычками, чтобы исключить command injection.
       if (!/^[^\n\r]{1,200}$/.test(target.bootEntry)) {
         return { ok: false, os: ep.os, error: 'некорректный bootEntry' }
       }
-      cmd = `sudo -n grub-reboot ${shq(target.bootEntry)} && sudo -n systemctl reboot`
-    } else {
-      // kw — только буквы/цифры (инъекция невозможна), но для единообразия тоже экранируем.
-      const kw = (targetOs.split(/\s+/)[0] || targetOs).replace(/[^A-Za-z0-9]/g, '')
       cmd =
-        `e=$(awk -F"'" -v k=${shq(kw)} 'BEGIN{IGNORECASE=1} /menuentry / && index(tolower($0), tolower(k)){print $2; exit}' /boot/grub/grub.cfg 2>/dev/null); ` +
-        `if [ -n "$e" ]; then sudo -n grub-reboot "$e" && sudo -n systemctl reboot; else echo "grub entry not found"; fi`
+        `sudo -n grub-reboot ${shq(target.bootEntry)} && ` +
+        `printf '%s\\n' ${shq(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
+    } else {
+      return {
+        ok: false,
+        os: ep.os,
+        error:
+          `Для «${targetOs}» не назначена загрузочная запись. ` +
+          'Открой правку устройства, нажми «Спросить машину» и назначь запись именно этой ОС.'
+      }
     }
   } else {
     // Из Windows. Раньше здесь был просто `shutdown /r` в расчёте на то, что загрузчик по
@@ -632,11 +640,20 @@ export async function boot(
       `$ErrorActionPreference='Continue'; ` +
       `& bcdedit /set '{fwbootmgr}' bootsequence '${efiId}'; ` +
       `if ($LASTEXITCODE -ne 0) { Write-Output 'ARGUS_BCDEDIT_FAILED'; exit 1 }; ` +
+      `Write-Output '${BOOT_READY_MARKER}'; ` +
       `& shutdown.exe /r /t 0`
     cmd = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`
   }
   const r = await execOnConn(ep.conn, cmd, 10000)
   if (r.output.includes('ARGUS_BCDEDIT_FAILED'))
     return { ok: false, os: ep.os, output: r.output, error: 'не удалось выставить загрузочную запись — перезагрузка отменена' }
-  return { ok: r.ok || /closed|disconnect|ECONNRESET/i.test(r.error ?? ''), os: ep.os, output: r.output, error: r.error }
+  if (!bootCommandSucceeded(r.ok, r.output, r.error)) {
+    return {
+      ok: false,
+      os: ep.os,
+      output: r.output,
+      error: r.error || 'команда не подтвердила BootNext; перезагрузка не считается запущенной'
+    }
+  }
+  return { ok: true, os: ep.os, output: r.output }
 }

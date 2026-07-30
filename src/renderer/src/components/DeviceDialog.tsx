@@ -19,6 +19,12 @@ import { useDevices } from '@/store/devices'
 import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { shouldDismissOverlay, useOverlayA11y } from '@/lib/overlay'
+import {
+  assignBootEntry,
+  selectedBootEntry,
+  useStoredProbe,
+  type BootTarget
+} from '@/lib/device-dialog-policy'
 
 const CURRENCIES: readonly Currency[] = CURRENCY_CODES
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
@@ -37,14 +43,6 @@ const OS_LIST = [
 const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 const api = typeof window !== 'undefined' ? window.api : undefined
-
-// Похоже ли на ЗАВЕРШЁННЫЙ публичный адрес (полный IPv4 или домен). Приватные/Tailscale/CGNAT
-// не гео-запрашиваем — бесполезно и утекает внутренняя топология третьей стороне (ipwho.is).
-const ipLooksPublic = (s: string): boolean => {
-  const v = s.trim()
-  if (/^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.)/.test(v)) return false
-  return /^(\d{1,3}\.){3}\d{1,3}$/.test(v) || /^[a-z0-9-]+(\.[a-z0-9-]+)+\.[a-z]{2,}$/i.test(v)
-}
 
 interface FormFields {
   name: string
@@ -217,6 +215,7 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [bootList, setBootList] = useState<Array<{ id: string; label: string }> | null>(null)
   const [bootMsg, setBootMsg] = useState<string | null>(null)
   const [bootBusy, setBootBusy] = useState(false)
+  const [bootTarget, setBootTarget] = useState<BootTarget>('primary')
   const [assistText, setAssistText] = useState('')
   const [assisting, setAssisting] = useState(false)
   const [assistMsg, setAssistMsg] = useState<string | null>(null)
@@ -226,6 +225,8 @@ export function DeviceDialog(): React.JSX.Element | null {
   const dialogRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const baselineRef = useRef(JSON.stringify(EMPTY))
+  // Любой ответ, начатый в диалоге A, становится недействительным после перехода к B/close.
+  const generationRef = useRef(0)
 
   useOverlayA11y({
     open: dialog.mode !== 'closed',
@@ -235,10 +236,17 @@ export function DeviceDialog(): React.JSX.Element | null {
   })
 
   useEffect(() => {
+    generationRef.current += 1
     setError(null)
+    setBusy(false)
+    setProbing(false)
+    setBootBusy(false)
+    setAssisting(false)
+    setGeoing(false)
     setProbeMsg(null)
     setBootList(null)
     setBootMsg(null)
+    setBootTarget('primary')
     setAssistText('')
     setAssistMsg(null)
     setGeoMsg(null)
@@ -265,39 +273,54 @@ export function DeviceDialog(): React.JSX.Element | null {
 
   const loadKeyFile = async (file: File | undefined): Promise<void> => {
     if (!file) return
-    const text = await file.text()
-    setF((p) => ({ ...p, privateKey: text, authMethod: 'key' }))
+    const generation = generationRef.current
+    try {
+      const text = await file.text()
+      if (generation === generationRef.current)
+        setF((p) => ({ ...p, privateKey: text, authMethod: 'key' }))
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setError(cause instanceof Error ? cause.message : 'Не удалось прочитать файл ключа')
+    }
   }
 
   // ИИ-заполнение: вставленный текст → локальная Ollama → мёржим непустые поля (превью, юзер правит).
   const assist = async (): Promise<void> => {
     if (!api || !assistText.trim()) return
+    const generation = generationRef.current
     setAssisting(true)
     setAssistMsg(null)
-    const r = await api.assist.parseDevice(assistText)
-    setAssisting(false)
-    if (!r.ok || !r.fields) {
-      setAssistMsg(`✖ ${r.error ?? 'не удалось'}`)
-      return
+    try {
+      const r = await api.assist.parseDevice(assistText)
+      if (generation !== generationRef.current) return
+      if (!r.ok || !r.fields) {
+        setAssistMsg(`✖ ${r.error ?? 'не удалось'}`)
+        return
+      }
+      const x = r.fields
+      setF((p) => ({
+        ...p,
+        name: x.name ?? p.name,
+        provider: x.provider ?? p.provider,
+        kind: x.kind ?? p.kind,
+        ip: x.ip ?? p.ip,
+        port: x.port != null ? String(x.port) : p.port,
+        user: x.user ?? p.user,
+        os: x.os ?? p.os,
+        country: x.country ?? p.country,
+        flag: x.flag ?? p.flag,
+        consoleUrl: x.consoleUrl ?? p.consoleUrl,
+        amount: x.cost?.amount != null ? String(x.cost.amount) : p.amount,
+        currency: x.cost?.currency ?? p.currency
+      }))
+      const filled = Object.keys(x).length
+      setAssistMsg(`✓ заполнено полей: ${filled}${r.model ? ` · ${r.model}` : ''} — проверь и поправь`)
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setAssistMsg(`✖ ${cause instanceof Error ? cause.message : 'не удалось разобрать текст'}`)
+    } finally {
+      if (generation === generationRef.current) setAssisting(false)
     }
-    const x = r.fields
-    setF((p) => ({
-      ...p,
-      name: x.name ?? p.name,
-      provider: x.provider ?? p.provider,
-      kind: x.kind ?? p.kind,
-      ip: x.ip ?? p.ip,
-      port: x.port != null ? String(x.port) : p.port,
-      user: x.user ?? p.user,
-      os: x.os ?? p.os,
-      country: x.country ?? p.country,
-      flag: x.flag ?? p.flag,
-      consoleUrl: x.consoleUrl ?? p.consoleUrl,
-      amount: x.cost?.amount != null ? String(x.cost.amount) : p.amount,
-      currency: x.cost?.currency ?? p.currency
-    }))
-    const filled = Object.keys(x).length
-    setAssistMsg(`✓ заполнено полей: ${filled}${r.model ? ` · ${r.model}` : ''} — проверь и поправь`)
   }
 
   if (dialog.mode === 'closed') return null
@@ -309,48 +332,93 @@ export function DeviceDialog(): React.JSX.Element | null {
     (e: { target: { value: string } }): void =>
       setF((p) => ({ ...p, [k]: e.target.value }))
 
-  // Авто-гео по IP (скриптом, не ИИ): страна+город, флаг, хостер. По кнопке — перезаписывает
-  // пустые поля. Авто-по-blur срабатывает ТОЛЬКО при добавлении нового устройства с пустой
-  // страной и завершённым публичным адресом (см. onBlur ниже) — чтобы не слать реальные IP
-  // на ipwho.is при каждой правке уже заполненного устройства.
-  const geo = async (fillEmptyOnly = false): Promise<void> => {
+  // Гео у внешнего ipwho.is запрашивается только по явной кнопке пользователя: IP — часть
+  // приватной топологии, поэтому blur/открытие диалога не имеют права отправлять его наружу.
+  const geo = async (): Promise<void> => {
     if (!api || !f.ip.trim()) return
+    const generation = generationRef.current
     setGeoing(true)
     setGeoMsg(null)
-    const r = await api.net.ipLookup(f.ip.trim())
-    setGeoing(false)
-    if (!r.ok) {
-      if (!fillEmptyOnly) setGeoMsg(`✖ ${r.error ?? 'не удалось'}`)
-      return
+    try {
+      const r = await api.net.ipLookup(f.ip.trim())
+      if (generation !== generationRef.current) return
+      if (!r.ok) {
+        setGeoMsg(`✖ ${r.error ?? 'не удалось'}`)
+        return
+      }
+      const place = [r.country, r.city].filter(Boolean).join(' · ')
+      setF((p) => ({
+        ...p,
+        country: place || p.country,
+        flag: r.flag || p.flag,
+        provider: p.provider.trim() ? p.provider : r.provider ?? p.provider
+      }))
+      setGeoMsg(`✓ ${r.flag ?? ''} ${place}${r.provider ? ` · ${r.provider}` : ''}${r.asn ? ` · ${r.asn}` : ''}`)
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setGeoMsg(`✖ ${cause instanceof Error ? cause.message : 'гео-сервис не ответил'}`)
+    } finally {
+      if (generation === generationRef.current) setGeoing(false)
     }
-    const place = [r.country, r.city].filter(Boolean).join(' · ')
-    setF((p) => ({
-      ...p,
-      country: fillEmptyOnly && p.country.trim() ? p.country : place || p.country,
-      flag: fillEmptyOnly && p.flag.trim() ? p.flag : r.flag || p.flag,
-      provider: p.provider.trim() ? p.provider : r.provider ?? p.provider
-    }))
-    setGeoMsg(`✓ ${r.flag ?? ''} ${place}${r.provider ? ` · ${r.provider}` : ''}${r.asn ? ` · ${r.asn}` : ''}`)
   }
 
   const probe = async (): Promise<void> => {
     if (!api) return
+    const generation = generationRef.current
     setProbing(true)
     setProbeMsg(null)
-    const r = await api.ssh.probeHost({
-      host: f.ip.trim(),
-      port: parseInt(f.port, 10) || 22,
-      user: f.user.trim() || 'root',
-      password: f.authMethod === 'password' ? f.password : '',
-      privateKey: f.authMethod === 'key' ? f.privateKey || undefined : undefined,
-      passphrase: f.authMethod === 'key' ? f.passphrase || undefined : undefined
-    })
-    setProbing(false)
-    if (r.ok) {
-      setF((p) => ({ ...p, os: r.os || p.os, name: p.name || r.hostname || p.name, status: 'online' }))
-      setProbeMsg(`✓ ${r.os ?? 'ok'} · ${r.cores ?? '?'} ядер · ${r.ramTotal ?? '?'} ГБ RAM`)
-    } else {
-      setProbeMsg(`✖ ${r.error ?? 'не удалось'}`)
+    try {
+      if (
+        dialog.mode === 'edit' &&
+        f.authMethod === dialog.device.authType &&
+        useStoredProbe(true, dialog.device.hasSecret, f.password, f.privateKey)
+      ) {
+        const endpointUnchanged =
+          f.ip.trim() === dialog.device.ip &&
+          (parseInt(f.port, 10) || 22) === dialog.device.port &&
+          (f.user.trim() || 'root') === dialog.device.user &&
+          (f.jumpId || null) === dialog.device.jumpId
+        if (!endpointUnchanged) {
+          setProbeMsg('✖ адрес или маршрут изменён: сначала сохрани, затем Argus проверит его старым секретом')
+          return
+        }
+        // Секрет остаётся в main: renderer передаёт только id уже сохранённой записи.
+        const r = await api.pc.metrics(dialog.device.id)
+        if (generation !== generationRef.current) return
+        useDevices.getState().updateMetrics(dialog.device.id, r)
+        if (r.status !== 'online') {
+          setProbeMsg(
+            r.status === 'unknown'
+              ? '✖ один опрос не дал ответа — состояние неизвестно'
+              : '✖ хост не ответил на два опроса подряд'
+          )
+          return
+        }
+        setF((p) => ({ ...p, os: r.current || p.os, status: 'online' }))
+        setProbeMsg(`✓ ${r.current || 'хост отвечает'} · CPU ${r.cpu ?? '—'}% · RAM ${r.ramTotal ?? '—'} ГБ`)
+        return
+      }
+
+      const r = await api.ssh.probeHost({
+        host: f.ip.trim(),
+        port: parseInt(f.port, 10) || 22,
+        user: f.user.trim() || 'root',
+        password: f.authMethod === 'password' ? f.password : '',
+        privateKey: f.authMethod === 'key' ? f.privateKey || undefined : undefined,
+        passphrase: f.authMethod === 'key' ? f.passphrase || undefined : undefined
+      })
+      if (generation !== generationRef.current) return
+      if (r.ok) {
+        setF((p) => ({ ...p, os: r.os || p.os, name: p.name || r.hostname || p.name, status: 'online' }))
+        setProbeMsg(`✓ ${r.os ?? 'ok'} · ${r.cores ?? '?'} ядер · ${r.ramTotal ?? '?'} ГБ RAM`)
+      } else {
+        setProbeMsg(`✖ ${r.error ?? 'не удалось'}`)
+      }
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setProbeMsg(`✖ ${cause instanceof Error ? cause.message : 'SSH-проверка не завершилась'}`)
+    } finally {
+      if (generation === generationRef.current) setProbing(false)
     }
   }
 
@@ -361,16 +429,25 @@ export function DeviceDialog(): React.JSX.Element | null {
     // Спрашивать можно только у уже заведённого устройства: у нового ещё нет записи в хранилище,
     // а значит и адреса, по которому идти.
     if (!api || dialog.mode !== 'edit') return
+    const generation = generationRef.current
     setBootBusy(true)
     setBootMsg(null)
-    const r = await api.pc.bootEntries(dialog.device.id)
-    setBootBusy(false)
-    if (!r.ok) {
-      setBootMsg(`✖ ${r.error ?? 'не удалось прочитать'}`)
-      return
+    setBootList(null)
+    try {
+      const r = await api.pc.bootEntries(dialog.device.id)
+      if (generation !== generationRef.current) return
+      if (!r.ok) {
+        setBootMsg(`✖ ${r.error ?? 'не удалось прочитать'}`)
+        return
+      }
+      setBootList(r.entries)
+      setBootMsg(r.entries.length ? `найдено записей: ${r.entries.length} (прочитано в ${r.os})` : 'записей не найдено')
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setBootMsg(`✖ ${cause instanceof Error ? cause.message : 'не удалось прочитать записи'}`)
+    } finally {
+      if (generation === generationRef.current) setBootBusy(false)
     }
-    setBootList(r.entries)
-    setBootMsg(r.entries.length ? `найдено записей: ${r.entries.length} (прочитано в ${r.os})` : 'записей не найдено')
   }
 
   const submit = async (e: FormEvent): Promise<void> => {
@@ -379,6 +456,7 @@ export function DeviceDialog(): React.JSX.Element | null {
       setError('Укажи имя устройства')
       return
     }
+    const generation = generationRef.current
     setBusy(true)
     setError(null)
     const input: DeviceInput = {
@@ -419,10 +497,17 @@ export function DeviceDialog(): React.JSX.Element | null {
       bootEntry: f.bootEntry.trim() || null,
       icon: f.icon || null
     }
-    const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
-    setBusy(false)
-    if (r.ok) close()
-    else setError(r.error ?? 'Не удалось сохранить')
+    try {
+      const r = dialog.mode === 'edit' ? await update(dialog.device.id, input) : await create(input)
+      if (generation !== generationRef.current) return
+      if (r.ok) close()
+      else setError(r.error ?? 'Не удалось сохранить')
+    } catch (cause) {
+      if (generation === generationRef.current)
+        setError(cause instanceof Error ? cause.message : 'Не удалось сохранить')
+    } finally {
+      if (generation === generationRef.current) setBusy(false)
+    }
   }
 
   return (
@@ -541,15 +626,31 @@ export function DeviceDialog(): React.JSX.Element | null {
                 {bootMsg && <p className="text-[11px] text-slate-500">{bootMsg}</p>}
                 {bootList && bootList.length > 0 && (
                   <div className="space-y-1 rounded-md border border-border bg-bg/40 p-1.5">
+                    <label className="mb-1 flex items-center gap-2 px-1 text-[11px] text-slate-400">
+                      <span className="shrink-0">Назначить для</span>
+                      <select
+                        aria-label="Целевая ОС для загрузочной записи"
+                        value={bootTarget}
+                        onChange={(event) => setBootTarget(event.target.value as BootTarget)}
+                        className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1 text-[11px] text-slate-200"
+                      >
+                        <option value="primary">{f.os || 'основная ОС'}</option>
+                        {f.altOs.map((os, index) => (
+                          <option key={index} value={`alt:${index}`}>
+                            {os.os || `ОС ${index + 2}`}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     {bootList.map((b) => (
                       <button
                         key={b.id}
                         type="button"
-                        onClick={() => setF((p) => ({ ...p, bootEntry: b.id }))}
-                        aria-pressed={f.bootEntry === b.id}
+                        onClick={() => setF((p) => assignBootEntry(p, bootTarget, b.id))}
+                        aria-pressed={selectedBootEntry(f, bootTarget) === b.id}
                         className={cn(
                           'block w-full rounded px-2 py-1 text-left text-[11px] leading-snug hover:bg-white/5',
-                          f.bootEntry === b.id ? 'text-accent' : 'text-slate-300'
+                          selectedBootEntry(f, bootTarget) === b.id ? 'text-accent' : 'text-slate-300'
                         )}
                         title={`${b.id} — ${b.label}`}
                       >
@@ -568,9 +669,6 @@ export function DeviceDialog(): React.JSX.Element | null {
                 className={inputCls}
                 value={f.ip}
                 onChange={set('ip')}
-                onBlur={() => {
-                  if (!editing && !f.country.trim() && ipLooksPublic(f.ip)) void geo(true)
-                }}
                 placeholder="203.0.113.10"
               />
             </Field>
@@ -628,61 +726,89 @@ export function DeviceDialog(): React.JSX.Element | null {
               <Field label="Другие системы на этой машине" full hint="Для машин с несколькими ОС. Ключ берётся тот же, что у основной; порт — тоже, если не указать свой. Приложение само определит, какая система сейчас запущена.">
                 <div className="space-y-2">
                   {f.altOs.map((a, i) => (
-                    <div key={i} className="flex items-center gap-2">
+                    <div key={i} className="space-y-2 rounded-lg border border-border/70 bg-bg/30 p-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          aria-label={`ОС ${i + 2}`}
+                          className={cn(inputCls, 'flex-1')}
+                          value={a.os}
+                          list="os-list"
+                          placeholder="Windows 11"
+                          onChange={(e) =>
+                            setF((p) => ({
+                              ...p,
+                              altOs: p.altOs.map((x, j) => (j === i ? { ...x, os: e.target.value } : x))
+                            }))
+                          }
+                        />
+                        <input
+                          aria-label={`Адрес ОС ${i + 2}`}
+                          className={cn(inputCls, 'w-32')}
+                          value={a.ip}
+                          placeholder="IP/host"
+                          onChange={(e) =>
+                            setF((p) => ({
+                              ...p,
+                              altOs: p.altOs.map((x, j) => (j === i ? { ...x, ip: e.target.value } : x))
+                            }))
+                          }
+                        />
+                        <input
+                          aria-label={`Пользователь ОС ${i + 2}`}
+                          className={cn(inputCls, 'w-24')}
+                          value={a.user}
+                          placeholder="user"
+                          onChange={(e) =>
+                            setF((p) => ({
+                              ...p,
+                              altOs: p.altOs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x))
+                            }))
+                          }
+                        />
+                        {/* Своя служба SSH на Windows настраивается отдельно от Linux и совпадать
+                            по порту не обязана. Пусто — берётся порт основной записи. */}
+                        <input
+                          aria-label={`Порт SSH для ОС ${i + 2}`}
+                          className={cn(inputCls, 'w-16')}
+                          value={a.port ?? ''}
+                          inputMode="numeric"
+                          placeholder="порт"
+                          title="Порт SSH этой системы. Пусто — как у основной."
+                          onChange={(e) =>
+                            setF((p) => ({
+                              ...p,
+                              altOs: p.altOs.map((x, j) =>
+                                j === i ? { ...x, port: Number(e.target.value.replace(/\D/g, '')) || undefined } : x
+                              )
+                            }))
+                          }
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBootTarget('primary')
+                            setF((p) => ({ ...p, altOs: p.altOs.filter((_, j) => j !== i) }))
+                          }}
+                          className="shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
+                          aria-label="Удалить ОС"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                       <input
-                        aria-label={`ОС ${i + 2}`}
-                        className={cn(inputCls, 'flex-1')}
-                        value={a.os}
-                        list="os-list"
-                        placeholder="Windows 11"
-                        onChange={(e) =>
-                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, os: e.target.value } : x)) }))
-                        }
-                      />
-                      <input
-                        aria-label={`Адрес ОС ${i + 2}`}
-                        className={cn(inputCls, 'w-32')}
-                        value={a.ip}
-                        placeholder="IP/host"
-                        onChange={(e) =>
-                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, ip: e.target.value } : x)) }))
-                        }
-                      />
-                      <input
-                        aria-label={`Пользователь ОС ${i + 2}`}
-                        className={cn(inputCls, 'w-24')}
-                        value={a.user}
-                        placeholder="user"
-                        onChange={(e) =>
-                          setF((p) => ({ ...p, altOs: p.altOs.map((x, j) => (j === i ? { ...x, user: e.target.value } : x)) }))
-                        }
-                      />
-                      {/* Своя служба SSH на Windows настраивается отдельно от Linux и совпадать
-                          по порту не обязана. Пусто — берётся порт основной записи. */}
-                      <input
-                        aria-label={`Порт SSH для ОС ${i + 2}`}
-                        className={cn(inputCls, 'w-16')}
-                        value={a.port ?? ''}
-                        inputMode="numeric"
-                        placeholder="порт"
-                        title="Порт SSH этой системы. Пусто — как у основной."
-                        onChange={(e) =>
+                        aria-label={`Загрузочная запись для ОС ${i + 2}`}
+                        className={inputCls}
+                        value={a.bootEntry ?? ''}
+                        placeholder="EFI/GRUB-запись этой ОС (выбери из списка выше)"
+                        onChange={(event) =>
                           setF((p) => ({
                             ...p,
                             altOs: p.altOs.map((x, j) =>
-                              j === i ? { ...x, port: Number(e.target.value.replace(/\D/g, '')) || undefined } : x
+                              j === i ? { ...x, bootEntry: event.target.value } : x
                             )
                           }))
                         }
                       />
-                      <button
-                        type="button"
-                        onClick={() => setF((p) => ({ ...p, altOs: p.altOs.filter((_, j) => j !== i) }))}
-                        className="shrink-0 rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
-                        aria-label="Удалить ОС"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
                     </div>
                   ))}
                   <button
@@ -797,7 +923,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               </button>
               <button
                 type="button"
-                onClick={() => void geo(false)}
+                onClick={() => void geo()}
                 disabled={geoing || !f.ip.trim()}
                 className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover disabled:opacity-50"
               >

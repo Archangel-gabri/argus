@@ -7,6 +7,7 @@ import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
 import type { LiveMetrics } from './types'
 import { beginAccess, isAccessCurrent } from './access-epoch'
+import { parseProbeHostOutput } from './ssh-probe'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -472,11 +473,22 @@ export interface ProbeHostResult {
 
 // Agentless one-shot: OS + hostname + cores + loadavg + RAM. All read-only, no install.
 const PROBE_HOST_CMD =
-  `printf 'OS=%s\\n' "$(. /etc/os-release 2>/dev/null; echo $PRETTY_NAME)"; ` +
-  `printf 'HOST=%s\\n' "$(hostname 2>/dev/null)"; ` +
-  `printf 'CORES=%s\\n' "$(nproc 2>/dev/null)"; ` +
-  `printf 'LOAD=%s\\n' "$(cat /proc/loadavg 2>/dev/null | cut -d' ' -f1)"; ` +
-  `free -m 2>/dev/null | awk '/^Mem:/{printf "MEMTOTAL=%s\\nMEMUSED=%s\\n",$2,$3}'`
+  `OS=$([ ! -r /etc/os-release ] || . /etc/os-release; printf %s "$PRETTY_NAME"); [ -n "$OS" ] || OS=$(uname -srm 2>/dev/null); ` +
+  `printf 'ARGUS_OS=%s\\n' "$OS"; ` +
+  `printf 'ARGUS_HOST=%s\\n' "$(hostname 2>/dev/null)"; ` +
+  `printf 'ARGUS_CORES=%s\\n' "$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)"; ` +
+  `printf 'ARGUS_LOAD=%s\\n' "$(cat /proc/loadavg 2>/dev/null | cut -d' ' -f1)"; ` +
+  `free -m 2>/dev/null | awk '/^Mem:/{printf "ARGUS_MEMTOTAL=%s\\nARGUS_MEMUSED=%s\\n",$2,$3}'`
+
+const PROBE_HOST_WINDOWS_PS =
+  `$ErrorActionPreference='Stop'; ` +
+  `$os=Get-CimInstance Win32_OperatingSystem; ` +
+  `$o=[ordered]@{os=[string]$os.Caption;hostname=[string]$env:COMPUTERNAME;` +
+  `cores=[Environment]::ProcessorCount;ramTotalMb=[math]::Round([double]$os.TotalVisibleMemorySize/1024);` +
+  `ramFreeMb=[math]::Round([double]$os.FreePhysicalMemory/1024)}; ` +
+  `Write-Output ('ARGUS_WINDOWS='+($o|ConvertTo-Json -Compress))`
+const PROBE_HOST_WINDOWS_CMD =
+  `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(PROBE_HOST_WINDOWS_PS, 'utf16le').toString('base64')}`
 
 /** Probe a host with explicit creds (used before a device is saved — the "auto-fill" button). */
 export function probeHost(opts: {
@@ -493,9 +505,11 @@ export function probeHost(opts: {
   return new Promise<ProbeHostResult>((resolve) => {
     const client = new Client()
     let settled = false
+    let deadline: ReturnType<typeof setTimeout> | undefined
     const done = (r: ProbeHostResult): void => {
       if (!settled) {
         settled = true
+        if (deadline) clearTimeout(deadline)
         try {
           client.end()
         } catch {
@@ -504,35 +518,33 @@ export function probeHost(opts: {
         resolve(r)
       }
     }
+    deadline = setTimeout(() => done({ ok: false, error: 'SSH-проверка не завершилась за 25 секунд' }), 25000)
     client.on('ready', () => {
-      client.exec(PROBE_HOST_CMD, (err, stream) => {
-        if (err) {
-          done({ ok: false, error: err.message })
-          return
-        }
-        let out = ''
-        stream.on('data', (d: Buffer) => (out += d.toString()))
-        stream.on('close', () => {
-          const kv: Record<string, string> = {}
-          for (const line of out.split('\n')) {
-            const i = line.indexOf('=')
-            if (i > 0) kv[line.slice(0, i)] = line.slice(i + 1).trim()
+      const runProbe = (command: string, fallback?: () => void): void => {
+        client.exec(command, (err, stream) => {
+          if (err) {
+            if (fallback) fallback()
+            else done({ ok: false, error: err.message })
+            return
           }
-          const cores = parseInt(kv.CORES, 10) || 1
-          const load = parseFloat(kv.LOAD) || 0
-          const totalMb = parseFloat(kv.MEMTOTAL) || 0
-          const usedMb = parseFloat(kv.MEMUSED) || 0
-          done({
-            ok: true,
-            os: kv.OS || undefined,
-            hostname: kv.HOST || undefined,
-            cores,
-            cpu: Math.min(100, Math.round((load / cores) * 100)),
-            ramTotal: Math.round((totalMb / 1024) * 10) / 10,
-            ramUsed: Math.round((usedMb / 1024) * 10) / 10
+          let out = ''
+          stream.on('data', (d: Buffer) => (out += d.toString()))
+          stream.on('close', () => {
+            const parsed = parseProbeHostOutput(out)
+            if (parsed) {
+              done({ ok: true, ...parsed })
+              return
+            }
+            if (fallback) fallback()
+            else done({ ok: false, error: 'SSH-зонд не вернул подтверждённые сведения о системе' })
           })
         })
-      })
+      }
+
+      // OpenSSH на Unix принимает POSIX-команду, Windows OpenSSH — EncodedCommand PowerShell.
+      // Только маркерный ответ решает, какая ветка сработала: exit code и сам факт shell
+      // недостаточны и раньше превращали Windows-ошибку в успешные нулевые метрики.
+      runProbe(PROBE_HOST_CMD, () => runProbe(PROBE_HOST_WINDOWS_CMD))
     })
     client.on('error', (e) => done({ ok: false, error: e.message }))
     client.connect({
@@ -558,6 +570,7 @@ export function execOnConn(
   return new Promise((resolve) => {
     const client = new Client()
     let settled = false
+    let out = ''
     const done = (r: { ok: boolean; output: string; error?: string }): void => {
       if (!settled) {
         settled = true
@@ -575,7 +588,6 @@ export function execOnConn(
           done({ ok: false, output: '', error: err.message })
           return
         }
-        let out = ''
         stream.on('data', (d: Buffer) => (out += d.toString()))
         stream.stderr.on('data', (d: Buffer) => (out += d.toString()))
         // Читаем РЕАЛЬНЫЙ код возврата: раньше всегда ok:true, из-за чего упавший
@@ -592,7 +604,10 @@ export function execOnConn(
         })
       })
     })
-    client.on('error', (e) => done({ ok: false, output: '', error: e.message }))
+    // При reboot соединение может оборваться ПОСЛЕ того, как удалённая команда успела
+    // напечатать маркер принятого действия. Не теряем уже полученный stdout: вызывающий код
+    // отличит доказанный reboot-disconnect от ECONNRESET на рукопожатии.
+    client.on('error', (e) => done({ ok: false, output: out.trimEnd(), error: e.message }))
     // Через jump-бастион если задан (раньше exec/snippets/power игнорировали jump).
     establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, output: '', error: e.message }), readyTimeout)
   })
