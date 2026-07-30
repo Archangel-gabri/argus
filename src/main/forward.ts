@@ -12,8 +12,13 @@ interface Forward {
   remotePort: number
   client: Client
   server: net.Server
+  dispose: () => void
 }
 const forwards = new Map<string, Forward>()
+
+/** TCP-порт в SSH direct-tcpip и node:net — целое 1..65535. */
+export const isForwardPort = (port: number): boolean =>
+  Number.isInteger(port) && port >= 1 && port <= 65_535
 
 export interface ForwardInfo {
   id: string
@@ -30,6 +35,9 @@ export async function openLocalForward(
   remoteHost: string,
   remotePort: number
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if (!isForwardPort(localPort) || !isForwardPort(remotePort)) {
+    return { ok: false, error: 'Порты должны быть целыми числами от 1 до 65535' }
+  }
   const accessTicket = beginAccess()
   const conn = await resolveConn(deviceId)
   if (!isAccessCurrent(accessTicket)) return { ok: false, error: 'Argus заблокирован' }
@@ -40,64 +48,99 @@ export async function openLocalForward(
   return new Promise((resolve) => {
     const client = new Client()
     let settled = false
+    let server: net.Server | null = null
+    let forwardId: string | null = null
+    let closing = false
     const done = (r: { ok: boolean; id?: string; error?: string }): void => {
       if (!settled) {
         settled = true
         resolve(r)
       }
     }
-    client.on('ready', () => {
-      if (!isAccessCurrent(accessTicket)) {
-        client.end()
-        done({ ok: false, error: 'Argus заблокирован' })
-        return
+    const dispose = (endClient = true): void => {
+      if (closing) return
+      closing = true
+      if (forwardId) forwards.delete(forwardId)
+      try {
+        server?.close()
+      } catch {
+        /* listener ещё не успел запуститься или уже закрыт */
       }
-      const server = net.createServer((sock) => {
-        client.forwardOut('127.0.0.1', localPort, remoteHost, remotePort, (err, stream) => {
-          if (err) {
-            sock.destroy()
-            return
-          }
-          sock.pipe(stream).pipe(sock)
-        })
-      })
-      server.on('error', (e) => {
-        done({ ok: false, error: 'listen: ' + e.message })
+      if (endClient) {
         try {
           client.end()
         } catch {
-          /* ignore */
+          /* SSH уже закрыт */
+        }
+      }
+    }
+    const fail = (error: string): void => {
+      dispose()
+      done({ ok: false, error })
+    }
+    client.on('ready', () => {
+      if (!isAccessCurrent(accessTicket)) {
+        fail('Argus заблокирован')
+        return
+      }
+      server = net.createServer((sock) => {
+        try {
+          client.forwardOut('127.0.0.1', localPort, remoteHost, remotePort, (err, stream) => {
+            if (err) {
+              sock.destroy()
+              return
+            }
+            stream.on('error', () => sock.destroy())
+            sock.on('error', () => stream.destroy())
+            sock.pipe(stream).pipe(sock)
+          })
+        } catch {
+          // ssh2 бросает синхронно, если SSH уже закрылся. Не оставляем мёртвый listener.
+          sock.destroy()
+          dispose()
         }
       })
-      server.listen(localPort, '127.0.0.1', () => {
-        if (!isAccessCurrent(accessTicket)) {
-          server.close()
-          client.end()
-          done({ ok: false, error: 'Argus заблокирован' })
-          return
-        }
-        const id = randomUUID()
-        forwards.set(id, { id, deviceId, localPort, remoteHost, remotePort, client, server })
-        done({ ok: true, id })
+      server.on('error', (e) => {
+        fail('listen: ' + e.message)
       })
+      try {
+        server.listen(localPort, '127.0.0.1', () => {
+          if (closing) return
+          if (!isAccessCurrent(accessTicket)) {
+            fail('Argus заблокирован')
+            return
+          }
+          forwardId = randomUUID()
+          forwards.set(forwardId, {
+            id: forwardId,
+            deviceId,
+            localPort,
+            remoteHost,
+            remotePort,
+            client,
+            server: server!,
+            dispose
+          })
+          done({ ok: true, id: forwardId })
+        })
+      } catch (e) {
+        fail('listen: ' + (e as Error).message)
+      }
     })
-    client.on('error', (e) => done({ ok: false, error: e.message }))
+    client.on('error', (e) => fail(e.message))
+    client.on('close', () => {
+      const wasOpen = Boolean(forwardId)
+      dispose(false)
+      if (!wasOpen) done({ ok: false, error: 'Соединение SSH закрылось до запуска туннеля' })
+    })
     // Через jump-бастион если задан — иначе проброс портов не работал у jump-хостов.
-    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
+    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => fail(e.message))
   })
 }
 
 export function closeForward(id: string): void {
   const f = forwards.get(id)
-  if (f) {
-    try {
-      f.server.close()
-      f.client.end()
-    } catch {
-      /* ignore */
-    }
-    forwards.delete(id)
-  }
+  f?.dispose()
 }
 
 export function listForwards(deviceId?: string): ForwardInfo[] {

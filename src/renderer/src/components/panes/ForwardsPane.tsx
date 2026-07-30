@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Loader2, Trash2, ArrowRight, ArrowRightLeft, RefreshCw, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { browserUrlForForward, forwardedRemotePorts, isForwardPort } from '@/lib/forward-policy'
 import { Hint } from '@/components/ui/Hint'
 import type { DeviceDTO, ForwardInfo, ListeningPort } from '@/types'
 
@@ -21,9 +22,6 @@ const BIND_BADGE: Record<ListeningPort['bind'], { label: string; cls: string }> 
   wildcard: { label: 'открыт наружу', cls: 'text-amber-400 ring-amber-500/30' },
   other: { label: 'LAN', cls: 'text-sky-400 ring-sky-500/30' }
 }
-
-// URL для кликабельного открытия в браузере (http-сервисы за туннелем).
-const HTTP_PORTS = new Set([80, 443, 2053, 3000, 3300, 8080, 8006, 9000, 5601, 9090])
 
 export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Element {
   const [list, setList] = useState<ForwardInfo[]>([])
@@ -60,7 +58,8 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.id])
 
-  const activeLocal = new Set(list.map((f) => f.localPort))
+  const usedLocalPorts = new Set(list.map((f) => f.localPort))
+  const activeRemotePorts = forwardedRemotePorts(list)
 
   const openTunnel = async (localPort: number, remotePort: number): Promise<void> => {
     if (!api) return
@@ -73,10 +72,10 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
   }
 
   const add = async (): Promise<void> => {
-    const lp = parseInt(lport, 10)
-    const rp = parseInt(rport, 10)
-    if (!lp || !rp) {
-      setError('Укажи локальный и удалённый порт')
+    const lp = Number(lport)
+    const rp = Number(rport)
+    if (!isForwardPort(lp) || !isForwardPort(rp)) {
+      setError('Порты — целые числа от 1 до 65535')
       return
     }
     if (!api) return
@@ -119,7 +118,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
         ) : (
           <ul className="divide-y divide-border/50">
             {ports.map((p) => {
-              const open = activeLocal.has(p.port)
+              const open = activeRemotePorts.has(p.port)
               const badge = BIND_BADGE[p.bind]
               return (
                 <li key={`${p.proto}-${p.addr}-${p.port}`} className="group flex items-center gap-2.5 py-1.5 text-xs">
@@ -161,32 +160,35 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
           <p className="py-1 text-center text-xs text-slate-600">Нет активных туннелей.</p>
         ) : (
           <ul className="space-y-1">
-            {list.map((f) => (
-              <li key={f.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white/5">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                <span className="flex-1 truncate font-mono text-xs text-slate-300">
-                  localhost:{f.localPort} <span className="text-slate-600">→</span> {f.remoteHost}:{f.remotePort}
-                </span>
-                {HTTP_PORTS.has(f.localPort) && (
-                  <a
-                    href={`http://localhost:${f.localPort}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="shrink-0 rounded p-1 text-slate-400 hover:text-accent"
-                    title="Открыть в браузере"
+            {list.map((f) => {
+              const browserUrl = browserUrlForForward(f)
+              return (
+                <li key={f.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white/5">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                  <span className="flex-1 truncate font-mono text-xs text-slate-300">
+                    localhost:{f.localPort} <span className="text-slate-600">→</span> {f.remoteHost}:{f.remotePort}
+                  </span>
+                  {browserUrl && (
+                    <a
+                      href={browserUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 rounded p-1 text-slate-400 hover:text-accent"
+                      title="Открыть в браузере"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                  <button
+                    onClick={() => stop(f.id)}
+                    className="shrink-0 rounded p-1 text-slate-400 opacity-0 hover:text-rose-400 group-hover:opacity-100"
+                    title="Остановить"
                   >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                )}
-                <button
-                  onClick={() => stop(f.id)}
-                  className="shrink-0 rounded p-1 text-slate-400 opacity-0 hover:text-rose-400 group-hover:opacity-100"
-                  title="Остановить"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </li>
-            ))}
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -237,7 +239,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
             <button
               key={p.port}
               onClick={() => openTunnel(p.port, p.port)}
-              disabled={busy || activeLocal.has(p.port)}
+              disabled={busy || usedLocalPorts.has(p.port)}
               className="rounded-full border border-border px-2.5 py-1 text-[11px] text-slate-300 transition hover:bg-white/5 disabled:opacity-40"
               title={`Туннель localhost:${p.port} → сервер:${p.port}`}
             >
