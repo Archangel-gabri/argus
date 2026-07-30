@@ -435,7 +435,11 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
 
       {/* Состояние поверх экрана: подключение, переподключение, ошибка. */}
       {phase !== 'connected' && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg/80 px-8 text-center">
+        <div
+          role={phase === 'error' ? 'alert' : 'status'}
+          aria-live={phase === 'error' ? 'assertive' : 'polite'}
+          className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-bg/80 px-8 text-center"
+        >
           {busy ? (
             <>
               <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
@@ -449,7 +453,7 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
           {err && <span className="max-w-lg text-xs leading-relaxed text-rose-300">{err}</span>}
           {phase === 'error' && (
             <button
-              tabIndex={-1}
+              autoFocus
               onClick={retryNow}
               className="pointer-events-auto mt-1 rounded-lg bg-accent px-3 py-1.5 text-sm font-bold text-bg hover:bg-accent-hover"
             >

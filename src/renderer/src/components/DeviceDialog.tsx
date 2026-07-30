@@ -1,4 +1,15 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactElement,
+  type ReactNode
+} from 'react'
 import { X, Loader2, Sparkles, Upload, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { Hint } from '@/components/ui/Hint'
@@ -7,6 +18,7 @@ import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { AuthType, Currency, Status, DeviceInput, DeviceKind } from '@/types'
 import { CURRENCY_CODES } from '@/types'
+import { shouldDismissOverlay, useOverlayA11y } from '@/lib/overlay'
 
 const CURRENCIES: readonly Currency[] = CURRENCY_CODES
 const KINDS: Array<{ id: DeviceKind; label: string }> = [
@@ -88,16 +100,33 @@ function Field({
   full?: boolean
   children: ReactNode
 }): React.JSX.Element {
+  const labelId = useId()
+  const childList = Children.toArray(children)
+  const child = childList.length === 1 ? childList[0] : null
+  const isNativeControl =
+    isValidElement(child) &&
+    typeof child.type === 'string' &&
+    (child.type === 'input' || child.type === 'select' || child.type === 'textarea')
+  const content = isNativeControl
+    ? cloneElement(child as ReactElement<{ 'aria-labelledby'?: string }>, { 'aria-labelledby': labelId })
+    : (
+        <div role="group" aria-labelledby={labelId}>
+          {children}
+        </div>
+      )
+
   return (
-    <label className={cn('block', full && 'col-span-2')}>
+    <div className={cn('block', full && 'col-span-2')}>
       <span className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+        <span id={labelId} className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          {label}
+        </span>
         {/* Подсказка через свой компонент, а не через атрибут `title`: тот рисуется системой
             мимо палитры, появляется с задержкой около секунды и не открывается с клавиатуры. */}
-        {hint && <Hint side="left">{hint}</Hint>}
+        {hint && <Hint side="left" label={`Подсказка: ${label}`}>{hint}</Hint>}
       </span>
-      {children}
-    </label>
+      {content}
+    </div>
   )
 }
 
@@ -121,6 +150,8 @@ function IconPicker({
         type="button"
         onClick={() => onPick('')}
         title="Авто — по типу и роли устройства"
+        aria-label="Авто — по типу и роли"
+        aria-pressed={value === ''}
         className={cn(
           'h-11 w-11 overflow-hidden rounded-lg ring-1 transition-colors',
           value === '' ? 'ring-2 ring-accent' : 'ring-border hover:ring-slate-500'
@@ -134,6 +165,8 @@ function IconPicker({
           type="button"
           onClick={() => onPick(ill.key)}
           title={ill.label}
+          aria-label={ill.label}
+          aria-pressed={value === ill.key}
           className={cn(
             'h-11 w-11 overflow-hidden rounded-lg ring-1 transition-colors',
             value === ill.key ? 'ring-2 ring-accent' : 'ring-border hover:ring-slate-500'
@@ -146,6 +179,8 @@ function IconPicker({
         <button
           type="button"
           title="Своя картинка"
+          aria-label="Своя картинка"
+          aria-pressed
           className="h-11 w-11 overflow-hidden rounded-lg ring-2 ring-accent"
           onClick={() => onPick(custom)}
         >
@@ -188,12 +223,28 @@ export function DeviceDialog(): React.JSX.Element | null {
   const [geoing, setGeoing] = useState(false)
   const [geoMsg, setGeoMsg] = useState<string | null>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
+  const baselineRef = useRef(JSON.stringify(EMPTY))
+
+  useOverlayA11y({
+    open: dialog.mode !== 'closed',
+    onEscape: close,
+    containerRef: dialogRef,
+    initialFocusRef: nameRef
+  })
 
   useEffect(() => {
     setError(null)
+    setProbeMsg(null)
+    setBootList(null)
+    setBootMsg(null)
+    setAssistText('')
+    setAssistMsg(null)
+    setGeoMsg(null)
     if (dialog.mode === 'edit') {
       const d = dialog.device
-      setF({
+      const next: FormFields = {
         name: d.name, provider: d.provider, kind: d.kind, ip: d.ip, port: String(d.port), user: d.user, os: d.os,
         country: d.country, flag: d.flag, status: d.status,
         amount: d.cost.amount ? String(d.cost.amount) : '', currency: d.cost.currency,
@@ -201,10 +252,13 @@ export function DeviceDialog(): React.JSX.Element | null {
         password: '', privateKey: '', passphrase: '', jumpId: d.jumpId ?? '',
         altOs: d.altOs.map((a) => ({ os: a.os, ip: a.ip, user: a.user, bootEntry: a.bootEntry, port: a.port })), mac: d.mac ?? '',
         role: d.role ?? '', notes: d.notes ?? '', bootEntry: d.bootEntry ?? '', icon: d.icon ?? ''
-      })
+      }
+      baselineRef.current = JSON.stringify(next)
+      setF(next)
     } else {
       // Закрыли диалог — стираем поля. Раньше набранные пароль/ключ оставались в состоянии
       // React до конца сессии.
+      baselineRef.current = JSON.stringify(EMPTY)
       setF(EMPTY)
     }
   }, [dialog])
@@ -248,6 +302,7 @@ export function DeviceDialog(): React.JSX.Element | null {
 
   if (dialog.mode === 'closed') return null
   const editing = dialog.mode === 'edit'
+  const dirty = JSON.stringify(f) !== baselineRef.current || assistText.trim().length > 0
 
   const set =
     (k: keyof FormFields) =>
@@ -371,13 +426,24 @@ export function DeviceDialog(): React.JSX.Element | null {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={close}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && shouldDismissOverlay('backdrop', dirty)) close()
+      }}
+    >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="device-dialog-title"
         className="w-full max-w-lg rounded-2xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-base font-semibold text-white">{editing ? 'Правка устройства' : 'Новое устройство'}</h2>
+          <h2 id="device-dialog-title" className="text-base font-semibold text-white">
+            {editing ? 'Правка устройства' : 'Новое устройство'}
+          </h2>
           <button
             onClick={close}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
@@ -397,6 +463,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                 <Hint>Разбор идёт локально, текст никуда не уходит.</Hint>
               </div>
               <textarea
+                aria-label="Текст для локального заполнения"
                 value={assistText}
                 onChange={(e) => setAssistText(e.target.value)}
                 placeholder="ssh user@host -p 2222, конфиг, письмо хостера — разберётся в поля"
@@ -419,7 +486,7 @@ export function DeviceDialog(): React.JSX.Element | null {
           )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Имя" full hint="Как называть в списке.">
-              <input className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" autoFocus />
+              <input ref={nameRef} className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" />
             </Field>
             <Field label="Хостер / владелец" hint="Для логотипа и группировки расходов.">
               <input className={inputCls} value={f.provider} onChange={set('provider')} placeholder="Hetzner" />
@@ -453,7 +520,13 @@ export function DeviceDialog(): React.JSX.Element | null {
             >
               <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
-                  <input className={cn(inputCls, 'flex-1')} value={f.bootEntry} onChange={set('bootEntry')} placeholder="0002" />
+                  <input
+                    aria-label="Загрузочная запись"
+                    className={cn(inputCls, 'flex-1')}
+                    value={f.bootEntry}
+                    onChange={set('bootEntry')}
+                    placeholder="0002"
+                  />
                   {editing && (
                     <button
                       type="button"
@@ -473,6 +546,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                         key={b.id}
                         type="button"
                         onClick={() => setF((p) => ({ ...p, bootEntry: b.id }))}
+                        aria-pressed={f.bootEntry === b.id}
                         className={cn(
                           'block w-full rounded px-2 py-1 text-left text-[11px] leading-snug hover:bg-white/5',
                           f.bootEntry === b.id ? 'text-accent' : 'text-slate-300'
@@ -556,6 +630,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                   {f.altOs.map((a, i) => (
                     <div key={i} className="flex items-center gap-2">
                       <input
+                        aria-label={`ОС ${i + 2}`}
                         className={cn(inputCls, 'flex-1')}
                         value={a.os}
                         list="os-list"
@@ -565,6 +640,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                         }
                       />
                       <input
+                        aria-label={`Адрес ОС ${i + 2}`}
                         className={cn(inputCls, 'w-32')}
                         value={a.ip}
                         placeholder="IP/host"
@@ -573,6 +649,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                         }
                       />
                       <input
+                        aria-label={`Пользователь ОС ${i + 2}`}
                         className={cn(inputCls, 'w-24')}
                         value={a.user}
                         placeholder="user"
@@ -583,6 +660,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                       {/* Своя служба SSH на Windows настраивается отдельно от Linux и совпадать
                           по порту не обязана. Пусто — берётся порт основной записи. */}
                       <input
+                        aria-label={`Порт SSH для ОС ${i + 2}`}
                         className={cn(inputCls, 'w-16')}
                         value={a.port ?? ''}
                         inputMode="numeric"
@@ -632,6 +710,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                     key={m}
                     type="button"
                     onClick={() => setF((p) => ({ ...p, authMethod: m }))}
+                    aria-pressed={f.authMethod === m}
                     className={cn(
                       'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                       f.authMethod === m ? 'bg-accent text-bg' : 'text-slate-400 hover:text-slate-200'
@@ -661,6 +740,7 @@ export function DeviceDialog(): React.JSX.Element | null {
               <>
                 <Field label={editing ? 'Приватный ключ (пусто = оставить текущий)' : 'Приватный ключ (PEM / OpenSSH)'} full>
                   <textarea
+                    aria-label="Приватный SSH-ключ"
                     className={cn(inputCls, 'h-24 resize-y font-mono text-[11px] leading-tight')}
                     value={f.privateKey}
                     onChange={set('privateKey')}

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, FileDown, Radar, Loader2 } from 'lucide-react'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { ParsedHost } from '@/types'
+import { useOverlayA11y } from '@/lib/overlay'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -15,8 +16,17 @@ export function SshImportDialog(): React.JSX.Element | null {
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [added, setAdded] = useState<number | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   const isTailscale = source === 'tailscale'
+
+  useOverlayA11y({
+    open: source !== false,
+    onEscape: () => setSource(false),
+    containerRef: dialogRef,
+    initialFocusRef: closeRef
+  })
 
   useEffect(() => {
     if (source === false) return
@@ -52,15 +62,20 @@ export function SshImportDialog(): React.JSX.Element | null {
       onMouseDown={() => setSource(false)}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ssh-import-title"
         className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-white">
+          <h2 id="ssh-import-title" className="flex items-center gap-2 text-base font-semibold text-white">
             {isTailscale ? <Radar className="h-4 w-4 text-accent" /> : <FileDown className="h-4 w-4 text-accent" />}
             {isTailscale ? 'Обнаружение Tailscale' : 'Импорт ~/.ssh/config'}
           </h2>
           <button
+            ref={closeRef}
             onClick={() => setSource(false)}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             aria-label="Закрыть"
@@ -77,7 +92,7 @@ export function SshImportDialog(): React.JSX.Element | null {
               <Loader2 className="h-4 w-4 animate-spin" /> {isTailscale ? 'Опрашиваю тайнет…' : 'Читаю ~/.ssh/config…'}
             </div>
           ) : added != null ? (
-            <p className="text-sm text-slate-200">
+            <p role="status" aria-live="polite" className="text-sm text-slate-200">
               Добавлено серверов: <span className="font-semibold text-accent">{added}</span>.
             </p>
           ) : hosts.length === 0 ? (

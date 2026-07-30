@@ -15,12 +15,15 @@ import { cn } from '../../lib/cn'
 export function Hint({
   children,
   side = 'right',
-  className
+  className,
+  label = 'Подсказка'
 }: {
   children: ReactNode
   /** С какой стороны раскрывать. У правого края формы попап уходил бы за пределы окна. */
   side?: 'left' | 'right'
   className?: string
+  /** Контекстное имя для screen reader, например «Подсказка: MAC-адрес». */
+  label?: string
 }): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const id = useId()
@@ -30,13 +33,13 @@ export function Hint({
       <span
         // Кружок именно такой, как был у прежних подсказок: форма устройства не должна
         // визуально переехать из-за смены механики.
-        className="flex h-4 w-4 cursor-help items-center justify-center rounded-full text-[10px] font-bold text-slate-500 ring-1 ring-border hover:text-slate-300 hover:ring-slate-500"
+        className="flex h-4 w-4 cursor-help items-center justify-center rounded-full text-[10px] font-bold text-slate-500 ring-1 ring-border hover:text-slate-300 hover:ring-slate-500 focus-visible:text-slate-300 focus-visible:outline-none focus-visible:ring-slate-400"
         // Открываем и по наведению, и по фокусу: с клавиатуры подсказка тоже должна работать.
         tabIndex={0}
         role="button"
         aria-describedby={open ? id : undefined}
         aria-expanded={open}
-        aria-label="Подсказка"
+        aria-label={label}
         onMouseEnter={() => setOpen(true)}
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}

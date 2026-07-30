@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Command } from 'cmdk'
 import {
   Search,
@@ -23,6 +23,7 @@ import { useVault } from '@/store/vault'
 import { useSubs } from '@/store/subs'
 import { useAi } from '@/store/ai'
 import { useWallets } from '@/store/wallets'
+import { useOverlayA11y } from '@/lib/overlay'
 
 const VIEWS: { id: ViewId; label: string; icon: LucideIcon }[] = [
   { id: 'devices', label: 'Парк', icon: Server },
@@ -76,14 +77,21 @@ export function CommandPalette(): React.JSX.Element | null {
   const subs = useSubs((s) => s.subs)
   const aiAccounts = useAi((s) => s.accounts)
   const wallets = useWallets((s) => s.wallets)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useOverlayA11y({
+    open,
+    onEscape: () => setPalette(false),
+    containerRef: rootRef,
+    initialFocusRef: inputRef
+  })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
         setPalette(!open)
-      } else if (e.key === 'Escape' && open) {
-        setPalette(false)
       }
     }
     document.addEventListener('keydown', onKey)
@@ -103,6 +111,10 @@ export function CommandPalette(): React.JSX.Element | null {
       onMouseDown={() => setPalette(false)}
     >
       <Command
+        ref={rootRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Палитра команд"
         label="Палитра команд"
         className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
@@ -110,7 +122,7 @@ export function CommandPalette(): React.JSX.Element | null {
         <div className="flex items-center gap-2 border-b border-border px-4">
           <Search className="h-4 w-4 shrink-0 text-slate-500" />
           <Command.Input
-            autoFocus
+            ref={inputRef}
             placeholder="Найти сервер, вкладку, команду…"
             className="w-full bg-transparent py-3 text-sm text-slate-200 outline-none placeholder:text-slate-500"
           />

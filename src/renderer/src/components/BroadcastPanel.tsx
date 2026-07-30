@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Play, Save, Loader2, Trash2, Terminal as TermIcon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import type { Snippet } from '@/types'
+import { useOverlayA11y } from '@/lib/overlay'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -24,6 +25,15 @@ export function BroadcastPanel(): React.JSX.Element | null {
   const [snips, setSnips] = useState<Snippet[]>([])
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<Result[]>([])
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const commandRef = useRef<HTMLTextAreaElement>(null)
+
+  useOverlayA11y({
+    open,
+    onEscape: () => setOpen(false),
+    containerRef: dialogRef,
+    initialFocusRef: commandRef
+  })
 
   const eligible = devices.filter((d) => d.hasSecret && !d.ip.includes('x.x'))
 
@@ -68,14 +78,22 @@ export function BroadcastPanel(): React.JSX.Element | null {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onMouseDown={() => setOpen(false)}>
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="broadcast-title"
         className="flex h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-white">
+          <h2 id="broadcast-title" className="flex items-center gap-2 text-base font-semibold text-white">
             <TermIcon className="h-4 w-4 text-accent" /> Выполнить на многих
           </h2>
-          <button onClick={() => setOpen(false)} className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200">
+          <button
+            onClick={() => setOpen(false)}
+            className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
+            aria-label="Закрыть"
+          >
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -93,6 +111,8 @@ export function BroadcastPanel(): React.JSX.Element | null {
               </button>
             </div>
             <textarea
+              ref={commandRef}
+              aria-label="Команда для выбранных хостов"
               value={cmd}
               onChange={(e) => setCmd(e.target.value)}
               rows={2}
@@ -108,7 +128,8 @@ export function BroadcastPanel(): React.JSX.Element | null {
                     </button>
                     <button
                       onClick={() => delSnippet(s.id)}
-                      className="text-slate-600 opacity-0 hover:text-rose-400 group-hover:opacity-100"
+                      className="text-slate-600 opacity-0 hover:text-rose-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                      aria-label={`Удалить сниппет «${s.name}»`}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -148,7 +169,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
           </div>
 
           {results.length > 0 && (
-            <div className="space-y-2">
+            <div role="status" aria-live="polite" className="space-y-2">
               <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">Результат</span>
               {results.map((r) => (
                 <div key={r.id} className="rounded-lg border border-border bg-bg/40">
@@ -166,7 +187,9 @@ export function BroadcastPanel(): React.JSX.Element | null {
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-5 py-3">
-          <span className="text-xs text-slate-500">{running ? 'Выполняю…' : `${chosen.length} хостов`}</span>
+          <span aria-live="polite" className="text-xs text-slate-500">
+            {running ? 'Выполняю…' : `${chosen.length} хостов`}
+          </span>
           <button
             onClick={run}
             disabled={running || !cmd.trim() || chosen.length === 0}

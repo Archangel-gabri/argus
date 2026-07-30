@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { X, LayoutDashboard, TerminalSquare, FolderOpen, Network, Activity, MonitorPlay } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type DrawerTab } from '@/store/ui'
@@ -11,6 +11,7 @@ import { ForwardsPane } from '@/components/panes/ForwardsPane'
 import { MetricsPane } from '@/components/panes/MetricsPane'
 import { ScreenPane } from '@/components/panes/ScreenPane'
 import type { DeviceDTO } from '@/types'
+import { useOverlayA11y } from '@/lib/overlay'
 
 const TABS: Array<{ id: DrawerTab; label: string; icon: typeof TerminalSquare }> = [
   { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
@@ -60,7 +61,14 @@ function DrawerBody({ activeTab, device }: { activeTab: DrawerTab; device: Devic
   return (
     <>
       {visited.map((tab) => (
-        <div key={tab} className={cn('h-full', tab === activeTab ? 'block' : 'hidden')}>
+        <div
+          key={tab}
+          id={`device-panel-${tab}`}
+          role="tabpanel"
+          aria-labelledby={`device-tab-${tab}`}
+          hidden={tab !== activeTab}
+          className={cn('h-full', tab === activeTab ? 'block' : 'hidden')}
+        >
           {paneFor(tab, device)}
         </div>
       ))}
@@ -73,6 +81,15 @@ export function DeviceDrawer(): React.JSX.Element | null {
   const close = useUI((s) => s.closeDetail)
   const setTab = useUI((s) => s.setDetailTab)
   const devices = useDevices((s) => s.devices)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+
+  useOverlayA11y({
+    open: detail !== null,
+    onEscape: close,
+    containerRef: panelRef,
+    initialFocusRef: closeRef
+  })
 
   const deviceId = detail?.device.id
 
@@ -95,15 +112,6 @@ export function DeviceDrawer(): React.JSX.Element | null {
     if (!devices.some((d) => d.id === deviceId)) close()
   }, [loaded, devices, deviceId, detail, close])
 
-  useEffect(() => {
-    if (!detail) return
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') close()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [detail, close])
-
   if (!detail || !live) return null
 
   const sshCapable = isSshCapable(live.kind)
@@ -119,17 +127,24 @@ export function DeviceDrawer(): React.JSX.Element | null {
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onMouseDown={close}>
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="device-drawer-title"
         className="flex h-full w-full max-w-[760px] flex-col border-l border-border bg-surface shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <div className="min-w-0">
-            <div className="truncate text-base font-semibold text-white">{live.name}</div>
+            <h2 id="device-drawer-title" className="truncate text-base font-semibold text-white">
+              {live.name}
+            </h2>
             <div className="truncate font-mono text-xs text-slate-500">
               {sshCapable ? endpointLabel(live) : live.os || live.provider}
             </div>
           </div>
           <button
+            ref={closeRef}
             onClick={close}
             className="rounded-md p-1.5 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             aria-label="Закрыть"
@@ -138,13 +153,17 @@ export function DeviceDrawer(): React.JSX.Element | null {
           </button>
         </div>
 
-        <div className="flex items-center gap-1 border-b border-border px-3 py-2">
+        <div role="tablist" aria-label="Разделы устройства" className="flex items-center gap-1 border-b border-border px-3 py-2">
           {tabs.map((t) => {
             const Icon = t.icon
             const active = activeTab === t.id
             return (
               <button
                 key={t.id}
+                id={`device-tab-${t.id}`}
+                role="tab"
+                aria-selected={active}
+                aria-controls={`device-panel-${t.id}`}
                 onClick={() => setTab(t.id)}
                 className={cn(
                   'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',

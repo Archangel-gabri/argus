@@ -27,6 +27,7 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.E
   return (
     <button
       onClick={() => setView(item.id)}
+      aria-current={active ? 'page' : undefined}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
         active ? 'bg-card text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
@@ -77,6 +78,7 @@ export function Sidebar(): React.JSX.Element {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
           <input
+            aria-label="Поиск по парку"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Поиск…"
