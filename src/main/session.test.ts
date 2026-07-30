@@ -8,10 +8,21 @@
 //   • залипший старый сеанс остаётся в состоянии online и живой картинки не даёт.
 import { execFileSync } from 'node:child_process'
 import { describe, it, expect } from 'vitest'
-import { parseSessions, pickGraphical, unlockCmd, LIST_SESSIONS_CMD, WINDOWS_LOCK_CMD } from './session'
+import {
+  interpretUnlockResult,
+  interpretWindowsLockProbe,
+  parseSessions,
+  pickGraphical,
+  selectGraphical,
+  unlockCmd,
+  LIST_SESSIONS_CMD,
+  WINDOWS_LOCK_CMD
+} from './session'
 
 // Ровно то, что печатает LIST_SESSIONS_CMD на стенде.
-const LIVE = `SESSION=1
+const LIVE = `OWNER_UID=1000
+SESSION=1
+User=1000
 Type=unspecified
 Class=manager
 Active=yes
@@ -21,6 +32,7 @@ Remote=no
 Seat=
 Desktop=
 SESSION=15
+User=1000
 Type=tty
 Class=user
 Active=no
@@ -30,6 +42,7 @@ Remote=yes
 Seat=
 Desktop=
 SESSION=2
+User=1000
 Type=wayland
 Class=user
 Active=yes
@@ -51,6 +64,8 @@ describe('parseSessions', () => {
     expect(gui).toMatchObject({
       type: 'wayland',
       klass: 'user',
+      userUid: '1000',
+      ownerUid: '1000',
       active: true,
       state: 'active',
       locked: true,
@@ -82,6 +97,20 @@ describe('parseSessions', () => {
     const r = parseSessions('SESSION=7\nType=x11\nCanLock=yes\nIdleHint=no\nClass=user')
     expect(r).toHaveLength(1)
     expect(r[0].type).toBe('x11')
+  })
+
+  it('отсутствующий LockedHint остаётся неизвестным, а не превращается в «экран открыт»', () => {
+    const [r] = parseSessions(`OWNER_UID=1000
+SESSION=7
+User=1000
+Type=x11
+Class=user
+Active=yes
+State=active
+Remote=no
+Seat=seat0`)
+    expect(r.locked).toBeNull()
+    expect(selectGraphical([r])).toMatchObject({ kind: 'unknown' })
   })
 })
 
@@ -123,23 +152,84 @@ Seat=`)
   })
 
   it('из двух графических берёт активный, а не залипший', () => {
-    const two = parseSessions(`SESSION=3
+    const two = parseSessions(`OWNER_UID=1000
+SESSION=3
+User=1000
 Type=wayland
 Class=user
 Active=no
 State=online
+LockedHint=no
+Remote=no
 Seat=seat0
 SESSION=9
+User=1000
 Type=wayland
 Class=user
 Active=yes
 State=active
+LockedHint=no
+Remote=no
 Seat=seat0`)
     expect(pickGraphical(two)?.id).toBe('9')
   })
 
   it('никто не вошёл — null, и это отличается от ошибки', () => {
     expect(pickGraphical([])).toBeNull()
+  })
+
+  it('не выбирает активный графический сеанс другого UID', () => {
+    const other = parseSessions(`OWNER_UID=1000
+SESSION=8
+User=1001
+Type=wayland
+Class=user
+Active=yes
+State=active
+LockedHint=no
+Remote=no
+Seat=seat0`)
+    expect(selectGraphical(other)).toMatchObject({ kind: 'unknown' })
+    expect(pickGraphical(other)).toBeNull()
+  })
+
+  it('не угадывает между двумя равноценными активными сеансами владельца', () => {
+    const tied = parseSessions(`OWNER_UID=1000
+SESSION=8
+User=1000
+Type=wayland
+Class=user
+Active=yes
+State=active
+LockedHint=no
+Remote=no
+Seat=seat0
+SESSION=9
+User=1000
+Type=x11
+Class=user-light
+Active=yes
+State=active
+LockedHint=no
+Remote=no
+Seat=seat1`)
+    expect(selectGraphical(tied)).toMatchObject({ kind: 'ambiguous', count: 2 })
+    expect(pickGraphical(tied)).toBeNull()
+  })
+
+  it('не принимает online-сеанс за экран, который сейчас находится на физической консоли', () => {
+    const background = parseSessions(`OWNER_UID=1000
+SESSION=8
+User=1000
+Type=wayland
+Class=user
+Active=no
+State=online
+LockedHint=no
+Remote=no
+Seat=seat0`)
+    expect(selectGraphical(background)).toMatchObject({ kind: 'unknown' })
+    expect(pickGraphical(background)).toBeNull()
   })
 })
 
@@ -171,6 +261,8 @@ describe('команды для удалённой оболочки', () => {
     // чужое значение, потому что состав вывода зависит от версии systemd.
     expect(LIST_SESSIONS_CMD).not.toContain('--value')
     expect(LIST_SESSIONS_CMD).toContain('-p LockedHint')
+    expect(LIST_SESSIONS_CMD).toContain('-p User')
+    expect(LIST_SESSIONS_CMD).toContain('OWNER_UID=')
   })
 
   it('снятие замка — только для одного сеанса, никогда для всех', () => {
@@ -186,6 +278,13 @@ describe('команды для удалённой оболочки', () => {
     // проигнорировать (например, Sway по умолчанию). Поэтому опрашиваем LockedHint.
     expect(unlockCmd('2')).toContain('LockedHint --value')
     expect(unlockCmd('2')).toContain('LOCKED=')
+  })
+
+  it('не считает пустой LockedHint или упавший unlock успехом', () => {
+    expect(interpretUnlockResult({ ok: true, output: 'UNLOCK_CALL_FAILED\nLOCKED=' })).toMatchObject({ ok: false })
+    expect(interpretUnlockResult({ ok: true, output: 'LOCKED=yes' })).toMatchObject({ ok: false })
+    expect(interpretUnlockResult({ ok: true, output: 'LOCKED=' })).toMatchObject({ ok: false })
+    expect(interpretUnlockResult({ ok: true, output: 'LOCKED=no' })).toEqual({ ok: true })
   })
 
   it('номер сеанса экранируется', () => {
@@ -217,5 +316,16 @@ describe('состояние экрана Windows', () => {
     // поэтому решение принимает find, а не код возврата tasklist.
     expect(WINDOWS_LOCK_CMD).toContain('find')
     expect(WINDOWS_LOCK_CMD).toContain('2>nul')
+  })
+
+  it('открывает агент только после однозначного LOCKED=no', () => {
+    expect(interpretWindowsLockProbe({ ok: true, output: 'LOCKED=no' })).toMatchObject({ state: 'already' })
+    expect(interpretWindowsLockProbe({ ok: true, output: 'LOCKED=yes' })).toMatchObject({ state: 'locked-no-unlock' })
+    expect(interpretWindowsLockProbe({ ok: false, output: '', error: 'exit 1' })).toMatchObject({
+      state: 'locked-no-unlock'
+    })
+    expect(interpretWindowsLockProbe({ ok: true, output: 'INFO: unknown' })).toMatchObject({
+      state: 'locked-no-unlock'
+    })
   })
 })

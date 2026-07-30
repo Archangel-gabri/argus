@@ -15,26 +15,26 @@ import { whichOs } from './pc'
 import { createScreenWindow } from './windows'
 import { listDevices, getScreenPassword, setScreenPassword, isUnlocked } from './vault'
 import { agentEndpoint, agentStatus } from './agent'
-import { ensureScreenUnlocked } from './session'
+import { ensureScreenUnlocked, type ScreenAccess } from './session'
 import type { ScreenPreflight } from './types'
 import { beginAccess, isAccessCurrent } from './access-epoch'
 
 // Linux: тип графической сессии (wayland/x11/headless), GPU, наличие NVENC/VAAPI, установлен ли агент.
-const LINUX_PREFLIGHT = [
+export const LINUX_PREFLIGHT = [
   `U=$(id -u)`,
   `echo @@SESSION; { [ -e "/run/user/$U/wayland-0" ] && echo wayland; } || { [ -e /tmp/.X11-unix/X0 ] && echo x11; } || echo headless`,
   `echo @@GPU; nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1; lspci 2>/dev/null | grep -Ei 'vga|3d|display' | sed 's/^[0-9a-f:.]* //' | head -1`,
   `echo @@NVENC; command -v nvidia-smi >/dev/null 2>&1 && echo yes || echo no`,
   `echo @@VAAPI; { ls /dev/dri/renderD128 >/dev/null 2>&1 && echo yes; } || echo no`,
-  `echo @@AGENT; { [ -x "$HOME/.argus/argus-screen-agent" ] && echo yes; } || echo no`,
+  `echo @@AGENT; { [ -x "$HOME/.argus/argus-agent" ] && echo yes; } || echo no`,
   `echo @@END`
 ].join('; ')
 
-const WIN_PREFLIGHT_PS =
+export const WIN_PREFLIGHT_PS =
   `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$ErrorActionPreference='SilentlyContinue';` +
   `$gpu=(Get-CimInstance Win32_VideoController|Select-Object -First 1).Name;` +
   `$nv=[bool](Get-Command nvidia-smi.exe -EA 0);` +
-  `$agent=Test-Path "$env:LOCALAPPDATA\\Argus\\argus-screen-agent.exe";` +
+  `$agent=Test-Path "$env:LOCALAPPDATA\\Argus\\argus-agent.exe";` +
   `[ordered]@{os='windows';sessionType='windows';gpu=$gpu;nvenc=$nv;agentInstalled=$agent}|ConvertTo-Json -Compress`
 const winPreflightCmd = (): string =>
   `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_PREFLIGHT_PS, 'utf16le').toString('base64')}`
@@ -144,6 +144,17 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 /** Устройства, на которых RDP уже включали в этом запуске приложения (операция идемпотентная). */
 const rdpReady = new Set<string>()
 
+/** Не кэшировать попытку: только exit=0 доказывает, что повторный enable можно пропустить. */
+export function rememberRdpEnableResult(
+  ready: Set<string>,
+  deviceId: string,
+  result: { ok: boolean }
+): boolean {
+  if (!result.ok) return false
+  ready.add(deviceId)
+  return true
+}
+
 /** TCP-жив ли порт (для проверки guacd). */
 function tcpAlive(host: string, port: number, ms = 1500): Promise<boolean> {
   return new Promise((resolve) => {
@@ -198,6 +209,38 @@ export interface ScreenStartResult {
   error?: string
 }
 
+export type AgentScreenDecision =
+  | { action: 'open' }
+  | { action: 'fallback'; reason: string }
+  | { action: 'reject'; error: string }
+
+/**
+ * Физический экран открываем только после доказанного состояния. macOS — отдельная ветка:
+ * logind там нет, а захват/разрешение проверяет сам агент в Aqua-сеансе.
+ */
+export function decideAgentScreenAccess(agentOs: string | undefined, access: ScreenAccess): AgentScreenDecision {
+  if (agentOs === 'darwin') return { action: 'open' }
+  switch (access.state) {
+    case 'already':
+    case 'unlocked':
+      return { action: 'open' }
+    case 'locked-no-unlock':
+      return { action: 'fallback', reason: access.reason }
+    case 'no-session':
+      return {
+        action: 'reject',
+        error: 'В систему никто не вошёл — показывать нечего. Экран приветствия удалённо не транслируется; включи автовход на машине.'
+      }
+    case 'refused':
+      return {
+        action: 'reject',
+        error: `Экран остаётся заперт${access.detail ? `: ${access.detail}` : ''}. Агент не открываю, чтобы не показывать застывшую картинку.`
+      }
+    case 'unsupported':
+      return { action: 'reject', error: `Не удалось подтвердить состояние физического экрана: ${access.reason}` }
+  }
+}
+
 /** Запустить встроенный RDP-сеанс (Windows): включить RDP по SSH, поднять мост, вернуть WS-порт+токен. */
 export async function screenStart(
   deviceId: string,
@@ -214,15 +257,19 @@ export async function screenStart(
   // resolveConn — ещё одна проба живости, ensureGuacd — локальный докер.
   // Само включение RDP делаем ОДИН раз за запуск приложения: операция идемпотентная, и повторять
   // её при каждом открытии — это лишние ~8с на ровном месте.
-  const [, conn, guacd] = await Promise.all([
+  const [rdp, conn, guacd] = await Promise.all([
     rdpReady.has(deviceId)
-      ? Promise.resolve(undefined)
+      ? Promise.resolve<{ ok: boolean; output: string; error?: string }>({ ok: true, output: '' })
       : execOnce(deviceId, winRdpEnableCmd())
-          .then(() => rdpReady.add(deviceId))
-          .catch(() => undefined),
+          .then((result) => {
+            rememberRdpEnableResult(rdpReady, deviceId, result)
+            return result
+          })
+          .catch((e: unknown) => ({ ok: false, output: '', error: e instanceof Error ? e.message : String(e) })),
     resolveConn(deviceId), // живой Windows-эндпоинт (host = Tailscale 100.x)
     ensureGuacd()
   ])
+  if (!rdp.ok) return { ok: false, error: `не удалось включить RDP: ${rdp.error || rdp.output || 'причина неизвестна'}` }
   if (!conn) return { ok: false, error: 'не удалось определить адрес ПК' }
   if (!guacd) return { ok: false, error: 'guacd не запущен (Docker). Запусти: docker start argus-guacd' }
   const wsPort = await ensureGuacServer()
@@ -315,29 +362,18 @@ export async function screenOpen(
       // неработающим: сеанс поднимался автовходом, но экран был заперт хранителем, и
       // транслировать было нечего. Отдельного вопроса пользователю нет — нажатие «Экран»
       // и есть решение хозяина машины (на самой машине агент показывает уведомление).
-      const access = await ensureScreenUnlocked(deviceId)
-      if (access.state === 'no-session') {
-        return {
-          ok: false,
-          error:
-            'В систему никто не вошёл — показывать нечего. Экран приветствия удалённо не транслируется; включи автовход на машине.'
-        }
-      }
-      if (access.state === 'refused') {
-        // Не отказ: картинка может пойти и с замком на экране, просто пользоваться ей нельзя.
-        // Врать «всё хорошо» нельзя, но и запрещать смотреть — тоже.
-        console.warn(
-          `[screen] замок не снялся (${access.detail ?? 'без подробностей'}) — среда могла не услышать logind`
-        )
-      }
-      // Заперто, и снять замок нечем (Windows): агент видит только рабочий стол пользователя,
-      // а экран блокировки живёт на защищённом — картинка была бы застывшей или чёрной.
-      // Поэтому агента не открываем вовсе и отдаём управление запасному пути: RDP умеет экран
-      // входа, потому что заводит СВОЙ сеанс, а не показывает монитор.
-      if (access.state !== 'locked-no-unlock') {
+      const access: ScreenAccess =
+        st.os === 'darwin'
+          ? { state: 'unsupported', reason: 'macOS не использует logind' }
+          : await ensureScreenUnlocked(deviceId)
+      const decision = decideAgentScreenAccess(st.os, access)
+      if (decision.action === 'reject') return { ok: false, error: decision.error }
+      if (decision.action === 'open') {
         return openWindow({ deviceId, mode: 'agent', url: ag.url, token: ag.token, wsPort: 0 })
       }
-      console.warn(`[screen] ${access.reason} — иду запасным путём`)
+      // Заперто или Windows probe не дал однозначного ответа: агент не должен fail-open.
+      // RDP безопасен здесь тем, что открывает отдельный сеанс и не читает защищённый desktop.
+      console.warn(`[screen] ${decision.reason} — иду запасным путём`)
     }
   }
 

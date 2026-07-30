@@ -45,16 +45,75 @@ function binaryFor(family: string, arch: string): string | null {
   return fs.existsSync(p) ? p : null
 }
 
-/** Пути на целевой машине. Namespace .argus / %LOCALAPPDATA%\Argus — чтобы ничего не засорять. */
-function targetPaths(family: string): { dir: string; bin: string; token: string } {
-  if (family === 'windows') {
-    return {
-      dir: '%LOCALAPPDATA%\\Argus',
-      bin: '%LOCALAPPDATA%\\Argus\\argus-agent.exe',
-      token: '%LOCALAPPDATA%\\Argus\\agent.token'
-    }
+export interface DarwinTargetPaths {
+  dir: string
+  bin: string
+  token: string
+  cert: string
+}
+
+/** На macOS явно переопределяем Go-default и держим все файлы агента в одном каталоге. */
+export function darwinTargetPaths(home: string): DarwinTargetPaths {
+  if (!home.startsWith('/') || /[\r\n]/.test(home)) throw new Error('домашний каталог macOS должен быть абсолютным')
+  const dir = path.posix.join(home, '.argus')
+  return {
+    dir,
+    bin: path.posix.join(dir, 'argus-agent'),
+    token: path.posix.join(dir, 'agent.token'),
+    cert: path.posix.join(dir, 'agent.crt')
   }
-  return { dir: '$HOME/.argus', bin: '$HOME/.argus/argus-agent', token: '$HOME/.argus/agent.token' }
+}
+
+const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+const xmlText = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+const DARWIN_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
+
+/** LaunchAgent обязан содержать абсолютные пути: launchd не разворачивает ни `~`, ни `$HOME`. */
+export function buildDarwinLaunchAgent(p: DarwinTargetPaths): string {
+  const bin = xmlText(p.bin)
+  const token = xmlText(p.token)
+  const dir = xmlText(p.dir)
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.argus.agent</string>
+<key>LimitLoadToSessionType</key><string>Aqua</string>
+<key>ProgramArguments</key><array>
+<string>${bin}</string><string>--addr</string><string>0.0.0.0:${AGENT_PORT}</string>
+<string>--token-file</string><string>${token}</string><string>--cert-dir</string><string>${dir}</string>
+</array>
+<key>WorkingDirectory</key><string>${dir}</string>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>${xmlText(path.posix.dirname(p.dir))}</string><key>PATH</key><string>${DARWIN_PATH}</string></dict>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+</dict></plist>`
+}
+
+/** Атомарно публикуем plist и работаем с современным gui/<uid> bootstrap-domain. */
+export function buildDarwinInstallCommand(p: DarwinTargetPaths, uid: string): string {
+  if (!/^\d+$/.test(uid)) throw new Error('UID macOS не распознан')
+  const launchDir = path.posix.join(path.posix.dirname(p.dir), 'Library', 'LaunchAgents')
+  const plistPath = path.posix.join(launchDir, 'com.argus.agent.plist')
+  const tmpPath = `${plistPath}.new`
+  const domain = `gui/${uid}`
+  const job = `${domain}/com.argus.agent`
+  return [
+    `mkdir -p ${shellQuote(launchDir)}`,
+    `cat > ${shellQuote(tmpPath)} <<'PLIST'\n${buildDarwinLaunchAgent(p)}\nPLIST`,
+    `chmod 600 ${shellQuote(tmpPath)} && mv -f ${shellQuote(tmpPath)} ${shellQuote(plistPath)}`,
+    `launchctl bootout ${shellQuote(job)} >/dev/null 2>&1 || true`,
+    `launchctl bootstrap ${shellQuote(domain)} ${shellQuote(plistPath)}`,
+    `launchctl kickstart -k ${shellQuote(job)}`,
+    `launchctl print ${shellQuote(job)} >/dev/null`,
+    'echo ok'
+  ].join('\n')
+}
+
+/** Selftest идёт в bootstrap GUI-пользователя, а не в отдельном SSH StandardIO-сеансе. */
+export function buildDarwinSelftestCommand(p: DarwinTargetPaths, uid: string): string {
+  if (!/^\d+$/.test(uid)) throw new Error('UID macOS не распознан')
+  const home = path.posix.dirname(p.dir)
+  return `launchctl asuser ${shellQuote(uid)} /usr/bin/env ${shellQuote(`HOME=${home}`)} ${shellQuote(`PATH=${DARWIN_PATH}`)} ${shellQuote(p.bin)} --selftest 2>&1`
 }
 
 /** Отпечаток SHA-256 от DER сертификата — единый формат для всех сторон (нижний hex). */
@@ -200,7 +259,6 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
   const bin = binaryFor(family, arch)
   if (!bin) return { ok: false, step: 'бинарь', error: `нет собранного агента под ${family}/${arch}` }
 
-  const p = targetPaths(family)
   const token = getAgentToken(deviceId) || crypto.randomBytes(32).toString('hex')
 
   // 1. Каталог
@@ -238,21 +296,23 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
         )
       : await execOnce(
           deviceId,
-          `"$HOME/.argus/argus-agent" --fingerprint >/dev/null 2>&1; cat "$HOME/.argus/agent.crt"`
+          `"$HOME/.argus/argus-agent" --token-file "$HOME/.argus/agent.token" --cert-dir "$HOME/.argus" --fingerprint >/dev/null 2>&1; cat "$HOME/.argus/agent.crt"`
         )
   const pem = (certRead.output || '').trim()
   if (!/BEGIN CERTIFICATE/.test(pem))
     return { ok: false, step: 'сертификат', error: 'агент не отдал сертификат: ' + (certRead.error || pem).slice(0, 200) }
 
   // 5. Автозапуск
-  const svc = await installService(deviceId, family, p)
+  const svc = await installService(deviceId, family)
   if (!svc.ok) return { ok: false, step: 'автозапуск', error: svc.error }
 
   // 5. Самотест — единственный честный критерий «работает»
   const st =
     family === 'windows'
       ? await execOnce(deviceId, psCmd(`& "$env:LOCALAPPDATA\\Argus\\argus-agent.exe" --selftest 2>&1 | Out-String`))
-      : await execOnce(deviceId, `"$HOME/.argus/argus-agent" --selftest 2>&1`)
+      : family === 'darwin' && svc.darwin
+        ? await execOnce(deviceId, buildDarwinSelftestCommand(svc.darwin.paths, svc.darwin.uid))
+        : await execOnce(deviceId, `"$HOME/.argus/argus-agent" --selftest 2>&1`)
 
   setAgentToken(deviceId, token)
   setAgentCert(deviceId, pem)
@@ -369,12 +429,70 @@ async function checkCanRun(deviceId: string, family: string): Promise<{ ok: bool
   return { ok: false, error: `агент не запускается на машине: ${detail || 'причина неизвестна'}` }
 }
 
+interface DarwinContext {
+  paths: DarwinTargetPaths
+  uid: string
+}
+
+interface InstallServiceResult {
+  ok: boolean
+  error?: string
+  darwin?: DarwinContext
+}
+
+async function readDarwinContext(deviceId: string): Promise<DarwinContext | { error: string }> {
+  const r = await execOnce(deviceId, `printf '%s\\n%s\\n' "$HOME" "$(id -u)"`)
+  if (!r.ok) return { error: r.output || r.error || 'не удалось определить GUI-пользователя macOS' }
+  const [home = '', uid = ''] = r.output.split(/\r?\n/)
+  try {
+    return { paths: darwinTargetPaths(home.trim()), uid: uid.trim() }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+const linuxUnit = `[Unit]
+Description=Argus screen agent
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.argus/argus-agent --addr 0.0.0.0:${AGENT_PORT}
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`
+
+/**
+ * Linger — часть критерия установки, а не внешняя рекомендация: без него user-unit проходит
+ * immediate health, но исчезает после logout/reboot. Пытаемся включить без второго вопроса и
+ * затем обязательно перечитываем факт у logind.
+ */
+export function buildLinuxInstallCommand(): string {
+  return [
+    'LINGER=$(loginctl show-user "$USER" -P Linger 2>/dev/null || true)',
+    'if [ "$LINGER" != yes ]; then',
+    '  sudo -n loginctl enable-linger "$USER" >/dev/null 2>&1 || true',
+    '  LINGER=$(loginctl show-user "$USER" -P Linger 2>/dev/null || true)',
+    'fi',
+    '[ "$LINGER" = yes ] || { echo LINGER_NOT_ENABLED; exit 1; }',
+    'mkdir -p "$HOME/.config/systemd/user"',
+    `cat > "$HOME/.config/systemd/user/argus-agent.service" <<'UNIT'\n${linuxUnit}UNIT`,
+    'systemctl --user daemon-reload',
+    'systemctl --user enable argus-agent.service',
+    'systemctl --user restart argus-agent.service',
+    // uinput остаётся best-effort и проверяется самотестом: просмотр не должен падать вместе с вводом.
+    `{ sudo -n sh -c 'modprobe uinput; usermod -aG input '"$USER"'; printf %s "KERNEL==\\"uinput\\", GROUP=\\"input\\", MODE=\\"0660\\"\\n" > /etc/udev/rules.d/99-argus-uinput.rules; udevadm control --reload-rules; udevadm trigger' >/dev/null 2>&1 || true; }`,
+    'echo ok'
+  ].join('\n')
+}
+
 /** Автозапуск: systemd --user на Linux, launchd на macOS, планировщик задач на Windows. */
 async function installService(
   deviceId: string,
-  family: string,
-  p: { bin: string; token: string }
-): Promise<{ ok: boolean; error?: string }> {
+  family: string
+): Promise<InstallServiceResult> {
   if (family === 'windows') {
     // Задача в планировщике с триггером на вход в систему: процесс живёт в ИНТЕРАКТИВНОЙ сессии
     // пользователя. Служба здесь не годится — она попадает в сессию 0, где нет рабочего стола,
@@ -398,49 +516,21 @@ async function installService(
   }
 
   if (family === 'darwin') {
-    const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>com.argus.agent</string>
-<key>ProgramArguments</key><array><string>${p.bin.replace('$HOME', '~')}</string><string>--addr</string><string>0.0.0.0:${AGENT_PORT}</string></array>
-<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-</dict></plist>`
-    const cmd =
-      `mkdir -p "$HOME/Library/LaunchAgents" && cat > "$HOME/Library/LaunchAgents/com.argus.agent.plist" <<'PLIST'\n${plist}\nPLIST\n` +
-      `launchctl unload "$HOME/Library/LaunchAgents/com.argus.agent.plist" 2>/dev/null; ` +
-      `launchctl load "$HOME/Library/LaunchAgents/com.argus.agent.plist" && echo ok`
-    const r = await execOnce(deviceId, cmd)
-    return r.ok ? { ok: true } : { ok: false, error: r.error || r.output }
+    const context = await readDarwinContext(deviceId)
+    if ('error' in context) return { ok: false, error: context.error }
+    const r = await execOnce(deviceId, buildDarwinInstallCommand(context.paths, context.uid))
+    return r.ok ? { ok: true, darwin: context } : { ok: false, error: r.output || r.error }
   }
 
-  // Linux: пользовательский юнит systemd. Плюс права на /dev/uinput — без них не будет
-  // управления (просмотр останется). Правило ставим best-effort: sudo может не быть.
-  const unit = `[Unit]
-Description=Argus screen agent
-After=graphical-session.target
-
-[Service]
-ExecStart=%h/.argus/argus-agent --addr 0.0.0.0:${AGENT_PORT}
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-`
-  const cmd =
-    `mkdir -p "$HOME/.config/systemd/user" && cat > "$HOME/.config/systemd/user/argus-agent.service" <<'UNIT'\n${unit}UNIT\n` +
-    // ВАЖНО: именно restart, а не только enable --now. При повторной установке служба уже
-    // запущена, и `enable --now` для неё ничего не делает — в памяти остаётся СТАРЫЙ агент
-    // со старым сертификатом, хотя файл на диске уже новый. Ровно на этом установка потом
-    // падала с «сертификат ещё не действителен»: часы починили, файл заменили, а отвечал
-    // по-прежнему старый процесс.
-    `systemctl --user daemon-reload && systemctl --user enable argus-agent.service && ` +
-    `systemctl --user restart argus-agent.service && ` +
-    // uinput: группа input + правило udev. Без sudo просто пропускаем — агент скажет об этом сам.
-    `{ sudo -n sh -c 'modprobe uinput; usermod -aG input '"$USER"'; printf %s "KERNEL==\\"uinput\\", GROUP=\\"input\\", MODE=\\"0660\\"\\n" > /etc/udev/rules.d/99-argus-uinput.rules; udevadm control --reload-rules; udevadm trigger' >/dev/null 2>&1 || true; }; ` +
-    `echo ok`
-  const r = await execOnce(deviceId, cmd)
-  return r.ok ? { ok: true } : { ok: false, error: r.error || r.output }
+  const r = await execOnce(deviceId, buildLinuxInstallCommand())
+  if (r.ok) return { ok: true }
+  if (/LINGER_NOT_ENABLED/.test(r.output)) {
+    return {
+      ok: false,
+      error: 'не удалось включить linger: без него агент остановится после выхода пользователя. Нужен passwordless sudo для loginctl enable-linger.'
+    }
+  }
+  return { ok: false, error: r.output || r.error }
 }
 
 /** Заливка файла в каталог агента по SFTP (переиспользуем ssh-соединение устройства). */

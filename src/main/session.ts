@@ -17,12 +17,16 @@ import { whichOs } from './pc'
 /** Один сеанс logind в том виде, в каком его описывает `loginctl show-session`. */
 export type RemoteSession = {
   id: string
+  /** UID владельца SSH-подключения и UID самого сеанса. Оба нужны: root не должен снять чужой замок. */
+  ownerUid: string
+  userUid: string
   type: string // wayland | x11 | tty | unspecified
   klass: string // user | greeter | manager
-  active: boolean
+  active: boolean | null
   state: string // active | online | closing
-  locked: boolean
-  remote: boolean
+  /** null означает «logind не отдал факт»; неизвестность нельзя принимать за открытый экран. */
+  locked: boolean | null
+  remote: boolean | null
   seat: string
   desktop: string
 }
@@ -59,9 +63,10 @@ export type ScreenAccess =
 // поэтому ниже добавлена проверка синтаксиса самой оболочкой.
 export const LIST_SESSIONS_CMD = [
   'command -v loginctl >/dev/null 2>&1 || { echo NO_LOGINCTL; exit 0; }',
+  'echo "OWNER_UID=$(id -u)"',
   "for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do",
   '  echo "SESSION=$s"',
-  '  loginctl show-session "$s" -p Type -p Class -p Active -p State -p LockedHint -p Remote -p Seat -p Desktop 2>/dev/null',
+  '  loginctl show-session "$s" -p User -p Type -p Class -p Active -p State -p LockedHint -p Remote -p Seat -p Desktop 2>/dev/null',
   'done'
 ].join('\n')
 
@@ -109,19 +114,27 @@ export function parseSessions(out: string): RemoteSession[] {
   if (/^\s*NO_LOGINCTL\s*$/m.test(out)) return []
   const list: RemoteSession[] = []
   let cur: RemoteSession | null = null
+  let ownerUid = ''
   for (const raw of out.split(/\r?\n/)) {
     const line = raw.trim()
     if (!line) continue
+    const owner = /^OWNER_UID=(\d+)$/.exec(line)
+    if (owner) {
+      ownerUid = owner[1]
+      continue
+    }
     const sess = /^SESSION=(.+)$/.exec(line)
     if (sess) {
       cur = {
         id: sess[1].trim(),
+        ownerUid,
+        userUid: '',
         type: '',
         klass: '',
-        active: false,
+        active: null,
         state: '',
-        locked: false,
-        remote: false,
+        locked: null,
+        remote: null,
         seat: '',
         desktop: ''
       }
@@ -133,6 +146,9 @@ export function parseSessions(out: string): RemoteSession[] {
     if (!kv) continue
     const [, key, value] = kv
     switch (key) {
+      case 'User':
+        cur.userUid = value.trim()
+        break
       case 'Type':
         cur.type = value.trim().toLowerCase()
         break
@@ -140,16 +156,16 @@ export function parseSessions(out: string): RemoteSession[] {
         cur.klass = value.trim().toLowerCase()
         break
       case 'Active':
-        cur.active = value.trim() === 'yes'
+        cur.active = value.trim() === 'yes' ? true : value.trim() === 'no' ? false : null
         break
       case 'State':
         cur.state = value.trim().toLowerCase()
         break
       case 'LockedHint':
-        cur.locked = value.trim() === 'yes'
+        cur.locked = value.trim() === 'yes' ? true : value.trim() === 'no' ? false : null
         break
       case 'Remote':
-        cur.remote = value.trim() === 'yes'
+        cur.remote = value.trim() === 'yes' ? true : value.trim() === 'no' ? false : null
         break
       case 'Seat':
         cur.seat = value.trim()
@@ -160,6 +176,45 @@ export function parseSessions(out: string): RemoteSession[] {
     }
   }
   return list.filter((s) => s.id !== '')
+}
+
+export type GraphicalSelection =
+  | { kind: 'selected'; session: RemoteSession }
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; count: number }
+  | { kind: 'unknown'; detail: string }
+
+const displayClasses = new Set(['user', 'user-early', 'user-light', 'user-early-light'])
+
+/**
+ * Выбор физического рабочего стола — fail closed: каждое критичное поле должно быть известно,
+ * сеанс должен принадлежать SSH-пользователю и быть единственным активным кандидатом.
+ */
+export function selectGraphical(list: RemoteSession[]): GraphicalSelection {
+  const plausible = list.filter(
+    (s) =>
+      displayClasses.has(s.klass) &&
+      (s.type === 'wayland' || s.type === 'x11' || s.type === 'mir') &&
+      s.seat !== ''
+  )
+  if (plausible.length === 0) return { kind: 'none' }
+
+  const ownedLocal = plausible.filter(
+    (s) => s.ownerUid !== '' && s.userUid !== '' && s.ownerUid === s.userUid && s.remote === false
+  )
+  if (ownedLocal.length === 0) {
+    return { kind: 'unknown', detail: 'графический сеанс не принадлежит SSH-пользователю или его UID неизвестен' }
+  }
+
+  const active = ownedLocal.filter((s) => s.active === true && s.state === 'active')
+  if (active.length === 0) {
+    return { kind: 'unknown', detail: 'графический сеанс есть, но ни один не подтверждён как активный' }
+  }
+  if (active.length > 1) return { kind: 'ambiguous', count: active.length }
+  if (active[0].locked === null) {
+    return { kind: 'unknown', detail: 'logind не сообщил состояние блокировки экрана' }
+  }
+  return { kind: 'selected', session: active[0] }
 }
 
 /**
@@ -178,17 +233,37 @@ export function parseSessions(out: string): RemoteSession[] {
  * старые сеансы остаются в online/closing и живой картинки не дадут.
  */
 export function pickGraphical(list: RemoteSession[]): RemoteSession | null {
-  const graphical = list.filter(
-    (s) =>
-      s.klass === 'user' &&
-      (s.type === 'wayland' || s.type === 'x11' || s.type === 'mir') &&
-      s.seat !== '' &&
-      !s.remote
-  )
-  if (graphical.length === 0) return null
-  const rank = (s: RemoteSession): number =>
-    (s.active ? 0 : 2) + (s.state === 'active' ? 0 : 1)
-  return [...graphical].sort((a, b) => rank(a) - rank(b))[0]
+  const selected = selectGraphical(list)
+  return selected.kind === 'selected' ? selected.session : null
+}
+
+type ExecResult = { ok: boolean; output: string; error?: string }
+
+/** Успех разблокировки доказывает только точное `LOCKED=no`; пустой/иной ответ — неизвестность. */
+export function interpretUnlockResult(r: ExecResult): { ok: true } | { ok: false; detail: string } {
+  if (!r.ok) return { ok: false, detail: r.error || 'команда разблокировки завершилась ошибкой' }
+  if (/^UNLOCK_CALL_FAILED$/m.test(r.output)) {
+    return { ok: false, detail: 'logind отказался послать сигнал разблокировки' }
+  }
+  const state = /^LOCKED=(yes|no)$/m.exec(r.output)?.[1]
+  if (state === 'no') return { ok: true }
+  if (state === 'yes') return { ok: false, detail: 'рабочая среда не сняла замок по сигналу logind' }
+  return { ok: false, detail: 'logind не подтвердил состояние экрана после разблокировки' }
+}
+
+/** Windows fail closed: любой сбой/неизвестный ответ отправляет в безопасный RDP fallback. */
+export function interpretWindowsLockProbe(r: ExecResult): ScreenAccess {
+  if (r.ok && /^LOCKED=no$/im.test(r.output)) return { state: 'already', sessionId: 'windows-console' }
+  if (r.ok && /^LOCKED=yes$/im.test(r.output)) {
+    return {
+      state: 'locked-no-unlock',
+      reason: 'экран Windows заперт: агент видит только рабочий стол пользователя, а экран блокировки живёт на защищённом'
+    }
+  }
+  return {
+    state: 'locked-no-unlock',
+    reason: `не удалось надёжно проверить блокировку Windows (${r.error || 'ответ не распознан'}) — агент не открываю`
+  }
 }
 
 /**
@@ -204,13 +279,7 @@ export async function ensureScreenUnlocked(deviceId: string): Promise<ScreenAcce
     // Windows не даёт снять блокировку без пароля: экран блокировки живёт на защищённом
     // рабочем столе, и обычному процессу он недоступен — ни показать, ни разблокировать.
     const r = await execOnce(deviceId, WINDOWS_LOCK_CMD)
-    if (/LOCKED=yes/i.test(r.output)) {
-      return {
-        state: 'locked-no-unlock',
-        reason: 'экран Windows заперт: агент видит только рабочий стол пользователя, а экран блокировки живёт на защищённом'
-      }
-    }
-    return { state: 'unsupported', reason: 'Windows: блокировкой управляет сама система' }
+    return interpretWindowsLockProbe(r)
   }
 
   const listed = await execOnce(deviceId, LIST_SESSIONS_CMD)
@@ -218,20 +287,25 @@ export async function ensureScreenUnlocked(deviceId: string): Promise<ScreenAcce
   if (/NO_LOGINCTL/.test(listed.output))
     return { state: 'unsupported', reason: 'в системе нет loginctl — состоянием экрана управлять нечем' }
 
-  const target = pickGraphical(parseSessions(listed.output))
-  if (!target) return { state: 'no-session' }
+  const selected = selectGraphical(parseSessions(listed.output))
+  if (selected.kind === 'none') return { state: 'no-session' }
+  if (selected.kind === 'ambiguous') {
+    return { state: 'unsupported', reason: `найдено несколько активных графических сеансов (${selected.count}) — не угадываю нужный` }
+  }
+  if (selected.kind === 'unknown') return { state: 'unsupported', reason: selected.detail }
+  const target = selected.session
   if (!target.locked) return { state: 'already', sessionId: target.id }
 
   // Снятие замка вынесено во ВТОРОЙ вызов намеренно: выбор сеанса — это логика, которую надо
   // проверять тестами, а не прятать в строку для удалённой оболочки. Соединение SSH к этому
   // моменту уже установлено и переиспользуется, так что второй вызов стоит недорого.
   const un = await execOnce(deviceId, unlockCmd(target.id))
-  const still = /LOCKED=yes/.test(un.output)
-  if (!un.ok || still) {
+  const verdict = interpretUnlockResult(un)
+  if (!verdict.ok) {
     return {
       state: 'refused',
       sessionId: target.id,
-      detail: un.error || (still ? 'рабочая среда не сняла замок по сигналу logind' : undefined)
+      detail: verdict.detail
     }
   }
   return { state: 'unlocked', sessionId: target.id }
