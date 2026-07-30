@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { CheckCircle2, XCircle, AlertTriangle, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
 import { money } from '@/lib/format'
+import { aiSummary, providerChangeError } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
 import type { AiAccount, AiCheck } from '@/types'
 
@@ -45,9 +46,17 @@ function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React
         <AlertTriangle className="h-3.5 w-3.5" /> квота
       </span>
     )
+  if (check.status === 'error' && check.detail?.startsWith('Автопроверка'))
+    return <span className="text-xs text-slate-500">не проверяется</span>
+  if (check.status === 'error' && check.detail?.startsWith('Сеть:'))
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-amber-400">
+        <AlertTriangle className="h-3.5 w-3.5" /> сеть
+      </span>
+    )
   return (
-    <span className="inline-flex items-center gap-1 text-xs text-rose-400">
-      <XCircle className="h-3.5 w-3.5" /> {check.status === 'error' ? 'ошибка' : 'неверный'}
+    <span className={`inline-flex items-center gap-1 text-xs ${check.status === 'error' ? 'text-slate-500' : 'text-rose-400'}`}>
+      <XCircle className="h-3.5 w-3.5" /> {check.status === 'error' ? 'неизвестно' : 'неверный'}
     </span>
   )
 }
@@ -60,15 +69,29 @@ function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose
   const [key, setKey] = useState('')
   const [plan, setPlan] = useState(initial?.plan ?? '')
   const [busy, setBusy] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
+    setFormError(null)
+    if (initial) {
+      const providerError = providerChangeError(initial.provider, provider, key)
+      if (providerError) {
+        setFormError(providerError)
+        return
+      }
+    }
     setBusy(true)
-    const input = { provider, label: label.trim() || undefined, apiKey: key.trim() || undefined, plan: plan.trim() || undefined }
-    if (initial) await update(initial.id, input)
-    else await add(input)
-    setBusy(false)
-    onClose()
+    try {
+      const input = { provider, label: label.trim() || undefined, apiKey: key.trim() || undefined, plan: plan.trim() || undefined }
+      const ok = initial ? await update(initial.id, input) : await add(input)
+      if (ok) onClose()
+      else setFormError(useAi.getState().error ?? 'Не удалось сохранить аккаунт')
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Не удалось сохранить аккаунт')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -112,6 +135,11 @@ function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose
             {busy && <Loader2 className="h-4 w-4 animate-spin" />} {initial ? 'Сохранить' : 'Добавить'}
           </button>
         </div>
+        {formError && (
+          <div className="col-span-2 text-xs text-rose-400" role="alert">
+            {formError}
+          </div>
+        )}
       </form>
     </Card>
   )
@@ -121,6 +149,9 @@ export function AIAccountsView(): React.JSX.Element {
   const accounts = useAi((s) => s.accounts)
   const checks = useAi((s) => s.checks)
   const checking = useAi((s) => s.checking)
+  const loaded = useAi((s) => s.loaded)
+  const loading = useAi((s) => s.loading)
+  const error = useAi((s) => s.error)
   const load = useAi((s) => s.load)
   const check = useAi((s) => s.check)
   const remove = useAi((s) => s.remove)
@@ -131,8 +162,7 @@ export function AIAccountsView(): React.JSX.Element {
     load()
   }, [load])
 
-  const validCount = accounts.filter((a) => checks[a.id]?.status === 'valid').length
-  const totalCredit = accounts.reduce((s, a) => s + (checks[a.id]?.remaining ?? 0), 0)
+  const summary = aiSummary(accounts, checks)
 
   return (
     <Page>
@@ -158,12 +188,20 @@ export function AIAccountsView(): React.JSX.Element {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Аккаунтов" value={String(accounts.length)} />
-        <StatTile label="Ключи валидны" value={`${validCount}/${accounts.length}`} hint="по последней проверке" />
-        <StatTile label="Остаток" value={money(totalCredit)} hint="OpenRouter" />
+        <StatTile label="Аккаунтов" value={loaded ? String(accounts.length) : '—'} />
+        <StatTile label="Ключи работают" value={summary.workingKeys ?? '—'} hint="по известным проверкам" />
+        <StatTile label="Остаток" value={summary.totalCredit == null ? '—' : money(summary.totalCredit)} hint="OpenRouter" />
       </div>
 
       <div className="mt-6">
+        {error && (
+          <div className="mb-4 flex items-center justify-between rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-xs text-rose-300" role="alert">
+            <span>{error}</span>
+            <button onClick={() => void load(true)} disabled={loading} className="rounded-md px-2 py-1 font-medium hover:bg-white/5 disabled:opacity-50">
+              Повторить
+            </button>
+          </div>
+        )}
         {(adding || editing) && (
           <AccountForm
             initial={editing}
@@ -174,7 +212,15 @@ export function AIAccountsView(): React.JSX.Element {
           />
         )}
 
-        {accounts.length === 0 ? (
+        {!loaded && error ? (
+          <div className="w-full rounded-xl border border-rose-500/20 py-16 text-center text-sm text-slate-500">
+            Список аккаунтов не загружен
+          </div>
+        ) : !loaded || loading ? (
+          <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-border py-16 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Загружаю аккаунты…
+          </div>
+        ) : accounts.length === 0 ? (
           <button
             onClick={() => setAdding(true)}
             className="w-full rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500 transition-colors hover:border-accent/40 hover:text-slate-300"

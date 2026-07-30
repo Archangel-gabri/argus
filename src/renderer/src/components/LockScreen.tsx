@@ -2,7 +2,13 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useVault } from '@/store/vault'
-import { checkStrength, MIN_PASSWORD_SCORE, type ZxcvbnResult } from '@/lib/password-strength'
+import {
+  checkStrength,
+  formatCrackTime,
+  masterPasswordPolicyError,
+  MIN_PASSWORD_SCORE,
+  type ZxcvbnResult
+} from '@/lib/password-strength'
 import wordmark from '@/assets/brand/argus-wordmark.png'
 
 // Гейтим по СКОРУ (crack-time), не по составу пароля (MASTER-PLAN C0.3).
@@ -63,9 +69,9 @@ export function LockScreen(): React.JSX.Element {
     }
     if (setup) {
       // Авторитетная проверка на сабмите (не полагаемся на async-состояние индикатора).
-      const finalScore = (await checkStrength(pw)).score
-      if (finalScore < MIN_PASSWORD_SCORE) {
-        setLocalError('Пароль слишком слабый — возьми passphrase из 3-4 слов')
+      const policyError = await masterPasswordPolicyError(pw)
+      if (policyError) {
+        setLocalError(policyError)
         return
       }
     }
@@ -118,7 +124,7 @@ export function LockScreen(): React.JSX.Element {
                   <div className="mt-1 flex items-center justify-between text-[11px]">
                     <span className={STRENGTH[score].text}>{STRENGTH[score].label}</span>
                     <span className="text-slate-600">
-                      взлом ≈ {strength.crackTimes.offlineSlowHashingXPerSecond.display}
+                      взлом ≈ {formatCrackTime(strength.crackTimes.offlineSlowHashingXPerSecond.seconds)}
                     </span>
                   </div>
                 </div>

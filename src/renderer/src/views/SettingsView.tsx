@@ -4,7 +4,7 @@ import { Page, PageHeader, Card } from '@/components/ui/Page'
 import { Hint } from '@/components/ui/Hint'
 import { useVault } from '@/store/vault'
 import { loadPrefs, savePrefs, type Prefs } from '@/lib/prefs'
-import { checkStrength, MIN_PASSWORD_SCORE } from '@/lib/password-strength'
+import { masterPasswordPolicyError } from '@/lib/password-strength'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -40,22 +40,26 @@ function ChangePassword(): React.JSX.Element {
     }
     if (!api) return
     setBusy(true)
-    // Тот же zxcvbn-гейт, что на онбординге — нельзя ослабить мастер-пароль до слабого.
-    const score = (await checkStrength(next)).score
-    if (score < MIN_PASSWORD_SCORE) {
+    try {
+      // Тот же общий гейт, что на онбординге и в main IPC: renderer не может его ослабить.
+      const policyError = await masterPasswordPolicyError(next)
+      if (policyError) {
+        setMsg({ ok: false, text: policyError })
+        return
+      }
+      const r = await api.vault.changePassword(cur, next)
+      if (r.ok) {
+        setMsg({ ok: true, text: 'Мастер-пароль изменён (SQLCipher rekey выполнен).' })
+        setCur('')
+        setNext('')
+        setConfirm('')
+      } else {
+        setMsg({ ok: false, text: r.error ?? 'Не удалось' })
+      }
+    } catch (error) {
+      setMsg({ ok: false, text: error instanceof Error ? error.message : 'Не удалось' })
+    } finally {
       setBusy(false)
-      setMsg({ ok: false, text: 'Новый пароль слишком слабый — возьми passphrase из 3-4 слов' })
-      return
-    }
-    const r = await api.vault.changePassword(cur, next)
-    setBusy(false)
-    if (r.ok) {
-      setMsg({ ok: true, text: 'Мастер-пароль изменён (SQLCipher rekey выполнен).' })
-      setCur('')
-      setNext('')
-      setConfirm('')
-    } else {
-      setMsg({ ok: false, text: r.error ?? 'Не удалось' })
     }
   }
 

@@ -20,6 +20,7 @@ import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
 import type { DeviceInput, VaultState, SubscriptionInput, WalletInput, AiAccountInput } from './types'
 import { nextReachability, type Reachability } from '../shared/reachability'
+import { masterPasswordPolicyError } from '../shared/password-strength'
 
 /** Inspect the OS keyring backend (Linux: kwallet/gnome-keyring/basic_text). */
 function keyringInfo(): { backend: string; canRemember: boolean } {
@@ -64,7 +65,10 @@ export function registerIpc(): void {
 
   ipcMain.handle('vault:initialize', async (_e, password: unknown) => {
     try {
-      await vault.initialize(asString(password))
+      const value = asString(password)
+      const policyError = await masterPasswordPolicyError(value)
+      if (policyError) return { ok: false, error: policyError, state: state() }
+      await vault.initialize(value)
       return { ok: true, state: state() }
     } catch (err) {
       return { ok: false, error: (err as Error).message, state: state() }
@@ -87,7 +91,10 @@ export function registerIpc(): void {
 
   ipcMain.handle('vault:changePassword', async (_e, current: unknown, next: unknown) => {
     try {
-      await vault.changePassword(asString(current), asString(next))
+      const nextValue = asString(next)
+      const policyError = await masterPasswordPolicyError(nextValue)
+      if (policyError) return { ok: false, error: policyError }
+      await vault.changePassword(asString(current), nextValue)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
