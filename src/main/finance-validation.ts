@@ -7,6 +7,15 @@ const CATEGORIES = ['AI', 'Media', 'Dev', 'Hosting', 'Other'] as const
 /** Только для однократной миграции старых notes; новая логика на текст не гадает. */
 export const legacyManualRenewal = (notes: string | null | undefined): boolean => /ручн/i.test(notes ?? '')
 
+/** Безопасное описание чужого значения для сообщения об ошибке: объект не должен
+ *  превратиться в бесполезное «[object Object]» именно там, где нужна ясность. */
+export function describeValue(v: unknown): string {
+  if (typeof v === 'string') return v.slice(0, 40)
+  if (v === null) return 'null'
+  if (typeof v === 'object') return Array.isArray(v) ? 'список' : 'объект'
+  return String(v).slice(0, 40)
+}
+
 export function objectOf(input: unknown, label: string): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(`${label}: ожидался объект`)
   return input as Record<string, unknown>
@@ -100,7 +109,7 @@ export function parseDeviceCost(input: unknown): { amount: number; currency: Cur
 
   const currency = value.currency ?? 'USD'
   if (typeof currency !== 'string' || !(CURRENCY_CODES as readonly string[]).includes(currency))
-    throw new Error(`Валюта не поддерживается: ${String(currency).slice(0, 20)}`)
+    throw new Error(`Валюта не поддерживается: ${describeValue(currency)}`)
 
   return { amount, currency: currency as Currency }
 }

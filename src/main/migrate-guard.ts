@@ -14,7 +14,16 @@
  * Здесь ожидаемая ошибка называется по имени, а всё остальное летит наверх.
  */
 export function isDuplicateColumnError(e: unknown): boolean {
-  const msg = e instanceof Error ? e.message : String(e ?? '')
+  // Бросить в JS можно что угодно. Объект без toString дал бы «[object Object]», и признак
+  // «колонка уже есть» перестал бы находиться — то есть миграция падала бы на ровном месте.
+  const msg =
+    e instanceof Error
+      ? e.message
+      : typeof e === 'string'
+        ? e
+        : e && typeof e === 'object' && 'message' in e
+          ? String((e as { message: unknown }).message)
+          : ''
   return /duplicate column name/i.test(msg)
 }
 

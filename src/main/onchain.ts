@@ -1,29 +1,68 @@
 import type { WalletBalance } from './types'
+import { resilient, classifyResponse, CircuitOpenError } from './resilience'
 
 // Keyless, public-endpoint balance lookups. Works from RU (no geofenced exchange APIs).
 // Сетевой сбой никогда не становится нулём: нулевой баланс можно показать только
 // после успешного ответа RPC.
 
-const RPC_TIMEOUT_MS = 10_000
+// Таймаут ОДНОЙ попытки и потолок на весь поход, включая повторы и паузы.
+//
+// Числа подобраны так, чтобы появление повторов НЕ УДЛИНИЛО худший случай. Раньше зависшая
+// служба стоила ровно 10 секунд. Сейчас: попытка 5с → пауза 0.5с → попытка 5с → бюджет
+// исчерпан, отказ на 10.5 секунде. То есть человек ждёт столько же, а вот быстрый отказ
+// (429 или пятисотка приходят мгновенно) успевает получить все три попытки.
+const RPC_TIMEOUT_MS = 5_000
+const RPC_BUDGET_MS = 11_000
 
 class RpcTimeoutError extends Error {}
 
+/**
+ * Один поход в публичный RPC — с повторами и размыкателем цепи.
+ *
+ * Все эти службы бесплатные и публичные: временный отказ и лимит запросов у них норма, а не
+ * исключение. Раньше любая заминка означала «баланс не показан», и владелец видел пустое место
+ * там, где были деньги.
+ *
+ * Повтор здесь безопасен по построению: каждый вызов — ЧТЕНИЕ, ничего не создаёт и не списывает.
+ * Если однажды появится вызов, который что-то меняет, заворачивать его сюда нельзя.
+ *
+ * Размыкатель у каждой службы свой: лежащий CoinGecko не должен лишать нас балансов из
+ * blockstream. И разомкнутая цепь бросает — она НИКОГДА не подставляет ноль вместо неизвестности.
+ */
 async function fetchJson(url: string, init: RequestInit = {}): Promise<unknown> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+  const service = serviceOf(url)
+  return resilient(
+    service,
+    async () => {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+      try {
+        const response = await fetch(url, { ...init, signal: controller.signal })
+        // Классификация решает, повторять ли: 429 и пятисотки — да, 400/404 — нет.
+        const failure = classifyResponse(response.status, response.headers?.get('retry-after'))
+        if (failure) throw failure
+        try {
+          return await response.json()
+        } catch {
+          throw new Error('Ответ RPC не разобран — баланс неизвестен')
+        }
+      } catch (error) {
+        if (controller.signal.aborted) throw new RpcTimeoutError('Тайм-аут RPC — баланс неизвестен')
+        throw error
+      } finally {
+        clearTimeout(timer)
+      }
+    },
+    { attempts: 3, baseDelayMs: 500, budgetMs: RPC_BUDGET_MS, threshold: 4, cooldownMs: 60_000 }
+  )
+}
+
+/** Имя службы для размыкателя — по хосту: у каждой свой запас прочности и свои лимиты. */
+function serviceOf(url: string): string {
   try {
-    const response = await fetch(url, { ...init, signal: controller.signal })
-    if (!response.ok) throw new Error(`HTTP ${response.status} — баланс неизвестен`)
-    try {
-      return await response.json()
-    } catch {
-      throw new Error('Ответ RPC не разобран — баланс неизвестен')
-    }
-  } catch (error) {
-    if (controller.signal.aborted) throw new RpcTimeoutError('Тайм-аут RPC — баланс неизвестен')
-    throw error
-  } finally {
-    clearTimeout(timer)
+    return new URL(url).host
+  } catch {
+    return 'неизвестная-служба'
   }
 }
 
@@ -96,7 +135,16 @@ export async function walletBalance(chain: string, address: string): Promise<Wal
     return { status: 'ok', native, symbol, usd: native * usdPrice, updatedAt }
   } catch (error) {
     // priceRequest уже имеет catch внутри, поэтому не оставит unhandled rejection.
-    const message = error instanceof Error && error.message ? error.message : 'Ошибка RPC — баланс неизвестен'
+    //
+    // Разомкнутую цепь называем своими словами. Иначе владелец видит «ошибка RPC» и думает на
+    // свой кошелёк или на свою сеть, тогда как на самом деле лежит чужая служба и мы намеренно
+    // перестали её дёргать. Баланс при этом остаётся null — нулём он не станет никогда.
+    const message =
+      error instanceof CircuitOpenError
+        ? `${error.service} не отвечает — баланс неизвестен, попробуем позже`
+        : error instanceof Error && error.message
+          ? error.message
+          : 'Ошибка RPC — баланс неизвестен'
     return { status: 'error', native: null, symbol, usd: null, error: message, updatedAt: Date.now() }
   }
 }

@@ -24,15 +24,39 @@ describe('on-chain баланс: неизвестное не равно нулю
   })
 
   it('не разбирает HTTP 503 как пустой кошелёк', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(priceResponse()).mockResolvedValueOnce(new Response('', { status: 503 }))
+    // Мок отвечает по АДРЕСУ и всегда одинаково: лежащая служба отдаёт 503 на каждый запрос,
+    // а не один раз. Одноразовый мок ломался бы о повторы — и ломался бы неверно, показывая
+    // ошибку раскладки теста вместо поведения кода.
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url.includes('coingecko') ? priceResponse() : new Response('', { status: 503 }))
+    )
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(walletBalance('BTC', 'bc1qexample000000000000000000000000000000000')).resolves.toMatchObject({
-      status: 'error',
-      native: null,
-      usd: null,
-      error: 'HTTP 503 — баланс неизвестен'
-    })
+    const result = await walletBalance('BTC', 'bc1qexample000000000000000000000000000000000')
+    expect(result).toMatchObject({ status: 'error', native: null, usd: null })
+    expect(result.error).toMatch(/503/)
+  })
+
+  it('пятисотку ПОВТОРЯЕТ, а отказ по нашему запросу — нет', async () => {
+    // Разделение принципиально: временный отказ службы стоит повторить, а неверный адрес
+    // не станет верным от того, что мы спросим ещё раз, — и лимит от лишних попыток только
+    // продлится.
+    const transient = vi.fn((url: string) =>
+      Promise.resolve(url.includes('coingecko') ? priceResponse() : new Response('', { status: 503 }))
+    )
+    vi.stubGlobal('fetch', transient)
+    await walletBalance('BTC', 'bc1qexample000000000000000000000000000000000')
+    const transientCalls = transient.mock.calls.filter(([u]) => !String(u).includes('coingecko')).length
+    expect(transientCalls).toBeGreaterThan(1)
+
+    vi.unstubAllGlobals()
+    const permanent = vi.fn((url: string) =>
+      Promise.resolve(url.includes('coingecko') ? priceResponse() : new Response('', { status: 404 }))
+    )
+    vi.stubGlobal('fetch', permanent)
+    await walletBalance('BTC', 'bc1qanother00000000000000000000000000000000')
+    const permanentCalls = permanent.mock.calls.filter(([u]) => !String(u).includes('coingecko')).length
+    expect(permanentCalls).toBe(1)
   })
 
   it('прерывает зависший RPC и возвращает явную ошибку', async () => {
@@ -48,7 +72,9 @@ describe('on-chain баланс: неизвестное не равно нулю
     )
 
     const pending = walletBalance('TON', 'EQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
-    await vi.advanceTimersByTimeAsync(10_000)
+    // Повтор зависшей службы укладывается в общий бюджет: попытка 5с → пауза → попытка 5с →
+    // бюджет исчерпан. Худший случай остался прежним (~10.5с), но крутить часы надо дальше.
+    await vi.advanceTimersByTimeAsync(15_000)
 
     await expect(pending).resolves.toMatchObject({
       status: 'error',

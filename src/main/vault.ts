@@ -72,13 +72,34 @@ export function vaultStatus(): VaultStatus {
   return isInitialized() ? 'locked' : 'uninitialized'
 }
 
+/**
+ * Открыть зашифрованную базу.
+ *
+ * Соединение закрывается ЗДЕСЬ, если настройка не удалась. Это не перестраховка: неверный
+ * ключ обнаруживается на `journal_mode` — то есть уже ПОСЛЕ того, как `new Database()` завёл
+ * дескриптор файла. Пока бросок происходил из середины функции, значение наружу не
+ * возвращалось, и закрывать вызывающему было нечего: handle просто терялся.
+ *
+ * Измерено: тридцать неверных паролей подряд — тридцать утёкших дескрипторов. На автолоке с
+ * ошибочным вводом или на переборе это упирается в лимит открытых файлов, после чего начинают
+ * падать SSH, диалоги и сам vault — с ошибками, никак не похожими на причину.
+ */
 function openEncrypted(keyHex: string): Database.Database {
   const d = new Database(dbPath())
-  d.pragma(`cipher='sqlcipher'`)
-  d.pragma(`key="x'${keyHex}'"`)
-  d.pragma('journal_mode = WAL')
-  d.pragma('foreign_keys = ON')
-  return d
+  try {
+    d.pragma(`cipher='sqlcipher'`)
+    d.pragma(`key="x'${keyHex}'"`)
+    d.pragma('journal_mode = WAL')
+    d.pragma('foreign_keys = ON')
+    return d
+  } catch (e) {
+    try {
+      d.close()
+    } catch {
+      /* уже закрыт — важно лишь то, что дескриптор не остался висеть */
+    }
+    throw e
+  }
 }
 
 function migrate(d: Database.Database): void {
@@ -808,7 +829,13 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   const d = requireDb()
   const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
   if (!cur) throw new Error('Device not found')
-  const cost = input.cost ?? { amount: cur.cost_amount, currency: cur.cost_currency, usd: cur.cost_usd }
+  // Правка проходит ТУ ЖЕ проверку, что и создание. Раньше её здесь не было вовсе: форма
+  // редактирования принимала отрицательную сумму и неизвестную валюту, а те через курс 1
+  // попадали в общий расход. Дыра ровно в том месте, куда чаще всего и заходят — менять цену
+  // приходится чаще, чем заводить сервер.
+  const cost = input.cost
+    ? parseDeviceCost(input.cost)
+    : { amount: cur.cost_amount, currency: cur.cost_currency as Currency }
   const authType: AuthType =
     input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : cur.auth_type)
   // Секреты по ВЫБРАННОМУ методу: пустое поле на правке = оставить текущий секрет ЭТОГО метода,

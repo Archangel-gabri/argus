@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assignBootEntry, selectedBootEntry, useStoredProbe } from './device-dialog-policy'
+import { assignBootEntry, selectedBootEntry, probesWithStoredSecret } from './device-dialog-policy'
 
 describe('назначение загрузочной записи', () => {
   const fields = {
@@ -24,13 +24,13 @@ describe('назначение загрузочной записи', () => {
 
 describe('повторная SSH-проба', () => {
   it('использует сохранённый main-only secret при пустых edit-полях', () => {
-    expect(useStoredProbe(true, true, '', '')).toBe(true)
+    expect(probesWithStoredSecret(true, true, '', '')).toBe(true)
   })
 
   it('проверяет новый ввод явно и не подменяет его старым секретом', () => {
-    expect(useStoredProbe(true, true, 'new password', '')).toBe(false)
-    expect(useStoredProbe(true, true, '', 'new key')).toBe(false)
-    expect(useStoredProbe(false, true, '', '')).toBe(false)
-    expect(useStoredProbe(true, false, '', '')).toBe(false)
+    expect(probesWithStoredSecret(true, true, 'new password', '')).toBe(false)
+    expect(probesWithStoredSecret(true, true, '', 'new key')).toBe(false)
+    expect(probesWithStoredSecret(false, true, '', '')).toBe(false)
+    expect(probesWithStoredSecret(true, false, '', '')).toBe(false)
   })
 })

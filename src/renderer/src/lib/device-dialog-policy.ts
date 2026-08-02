@@ -22,8 +22,14 @@ export function selectedBootEntry(fields: BootFields, target: BootTarget): strin
   return fields.altOs[index]?.bootEntry ?? ''
 }
 
-/** Пустые поля при edit означают «оставить зашифрованный secret в main», а не «secret отсутствует». */
-export function useStoredProbe(
+/**
+ * Пустые поля при правке означают «оставить зашифрованный секрет в main», а не «секрета нет».
+ *
+ * Имя намеренно НЕ начинается с `use`: это чистая функция, а не хук. Прежнее имя
+ * (`useStoredProbe`) в React-коде читалось как обещание хука — и правило react-hooks честно
+ * ругалось на её вызов внутри обычной функции. Имя должно говорить правду о природе значения.
+ */
+export function probesWithStoredSecret(
   editing: boolean,
   hasStoredSecret: boolean,
   typedPassword: string,

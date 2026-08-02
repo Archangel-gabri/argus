@@ -167,6 +167,7 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore — contextIsolation is on; this branch is a safety fallback only
+  // @ts-expect-error — contextIsolation включён; эта ветка только страховочная.
+  // Именно expect-error, а не ignore: ignore молчит, даже когда подавлять уже нечего.
   window.api = api
 }

@@ -27,3 +27,5 @@ agent/argus-agent.exe
 # Playwright
 test-results/
 playwright-report/
+
+coverage/

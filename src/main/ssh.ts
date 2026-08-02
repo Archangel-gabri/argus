@@ -454,6 +454,18 @@ export function probe(deviceId: string): Promise<ProbeResult> {
   return singleFlight(`probe:${deviceId}`, () => probeNow(deviceId))
 }
 
+/**
+ * Потолок на весь опрос одной машины.
+ *
+ * Заметно меньше, чем у произвольной команды: зонд — это фиксированный набор быстрых чтений
+ * (/proc, df, sensors), и если он не уложился, дело не в объёме работы. Полный проход по парку
+ * идёт раз в 30 секунд, поэтому один медленный хост не должен съедать весь интервал.
+ *
+ * Статус при истечении — `unknown`, а НЕ `offline`: мы не узнали ничего о машине, а не узнали,
+ * что она выключена. Разница ровно та, из-за которой в проекте вообще появилось «не знаю».
+ */
+const PROBE_DEADLINE_MS = 20_000
+
 function probeNow(deviceId: string): Promise<ProbeResult> {
   const conn = getDeviceConn(deviceId)
   if (!conn || isPlaceholderHost(conn.host) || !hasCredential(conn)) {
@@ -462,9 +474,23 @@ function probeNow(deviceId: string): Promise<ProbeResult> {
   return new Promise<ProbeResult>((resolve) => {
     const client = new Client()
     let settled = false
+    // Дедлайн на ВЫПОЛНЕНИЕ, а не только на рукопожатие.
+    //
+    // Тот же дефект, что чинили в `execOnConn`, — и здесь он опаснее. `readyTimeout` кончается
+    // на аутентификации; дальше сервер может принять зонд и не закрыть поток (зависший диск,
+    // отвалившийся NFS, полу-закрытое соединение). Тогда промис не разрешается никогда, а на
+    // нём висят СРАЗУ ДВА замка: склейка одинаковых опросов в main и общий флаг «опрос идёт» в
+    // renderer. Оба снимаются только по завершении — то есть весь дальнейший опрос парка молча
+    // прекращается, и приложение до перезапуска показывает старые числа как свежие.
+    const deadline = setTimeout(
+      () => done({ ok: false, status: 'unknown', error: `зонд не ответил за ${PROBE_DEADLINE_MS / 1000}с` }),
+      PROBE_DEADLINE_MS
+    )
+    deadline.unref?.()
     const done = (r: ProbeResult): void => {
       if (!settled) {
         settled = true
+        clearTimeout(deadline)
         try {
           client.end()
         } catch {

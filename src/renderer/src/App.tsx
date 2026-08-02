@@ -8,6 +8,7 @@ import { SettingsView } from './views/SettingsView'
 import { LockScreen } from './components/LockScreen'
 import { DeviceDrawer } from './components/DeviceDrawer'
 import { CommandPalette } from './components/CommandPalette'
+import { Toasts } from './components/Toasts'
 import { SshImportDialog } from './components/SshImportDialog'
 import { BroadcastPanel } from './components/BroadcastPanel'
 import { useUI, type ViewId } from './store/ui'
@@ -126,7 +127,13 @@ export default function App(): React.JSX.Element {
     }
   }, [status, refreshMetrics, refreshLiveness])
 
-  if (status !== 'unlocked') return <LockScreen />
+  if (status !== 'unlocked')
+    return (
+      <>
+        <LockScreen />
+        <Toasts />
+      </>
+    )
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
@@ -136,6 +143,9 @@ export default function App(): React.JSX.Element {
       <CommandPalette />
       <SshImportDialog />
       <BroadcastPanel />
+      {/* Поверх всего и вне любого диалога: сообщение об отказе должно пережить закрытие
+          окна, в котором отказ произошёл, — иначе его нечем прочитать. */}
+      <Toasts />
     </div>
   )
 }

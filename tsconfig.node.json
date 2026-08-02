@@ -5,7 +5,10 @@
     "src/main/**/*",
     "src/preload/**/*",
     "e2e/**/*",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "src/shared/**/*",
+    "vitest.config.ts",
+    "eslint.config.mjs"
   ],
   "compilerOptions": {
     "composite": true,

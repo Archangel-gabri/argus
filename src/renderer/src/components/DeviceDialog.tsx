@@ -22,7 +22,7 @@ import { shouldDismissOverlay, useOverlayA11y } from '@/lib/overlay'
 import {
   assignBootEntry,
   selectedBootEntry,
-  useStoredProbe,
+  probesWithStoredSecret,
   type BootTarget
 } from '@/lib/device-dialog-policy'
 
@@ -371,7 +371,7 @@ export function DeviceDialog(): React.JSX.Element | null {
       if (
         dialog.mode === 'edit' &&
         f.authMethod === dialog.device.authType &&
-        useStoredProbe(true, dialog.device.hasSecret, f.password, f.privateKey)
+        probesWithStoredSecret(true, dialog.device.hasSecret, f.password, f.privateKey)
       ) {
         const endpointUnchanged =
           f.ip.trim() === dialog.device.ip &&

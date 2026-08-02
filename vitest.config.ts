@@ -19,8 +19,36 @@ import { resolve } from 'node:path'
 // Запустить его вместе с остальными в одном процессе нельзя: это не неудобство, а невозможность.
 export default defineConfig({
   test: {
+    coverage: {
+      provider: 'v8',
+      // Считаем ВЕСЬ боевой код, а не только тот, куда тест уже дошёл: иначе цифра растёт от
+      // удаления тестов и ничего не значит. В vitest 4 это поведение задаётся самим `include`
+      // (прежний ключ `all` убран — и он молча ничего не делал, пока конфиг не попал под tsc).
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.d.ts',
+        // Точки входа и разметка: их поведение проверяется E2E на живом приложении, а не
+        // построчным покрытием — здесь оно мерило длины файла, а не проверенности.
+        'src/renderer/src/main.tsx',
+        'src/renderer/src/screen-main.tsx',
+        'src/renderer/src/assets/**',
+        'src/main/sqlite.d.ts',
+        'src/main/vendor.d.ts'
+      ],
+      reporter: ['text-summary', 'json-summary', 'html'],
+      reportsDirectory: './coverage'
+    },
     projects: [
       {
+        // Псевдонимы нужны и здесь: файлы renderer/lib и renderer/store — обычный TypeScript
+        // без разметки, их место в быстром прогоне, а ссылаются они через `@`.
+        resolve: {
+          alias: {
+            '@renderer': resolve('src/renderer/src'),
+            '@': resolve('src/renderer/src')
+          }
+        },
         test: {
           name: 'unit',
           environment: 'node',
