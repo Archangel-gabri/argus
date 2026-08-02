@@ -16,7 +16,13 @@ vi.mock('./vault', () => ({
 vi.mock('./agent', () => ({ agentEndpoint: vi.fn(), agentStatus: vi.fn() }))
 vi.mock('./session', () => ({ ensureScreenUnlocked: vi.fn() }))
 
-import { decideAgentScreenAccess, LINUX_PREFLIGHT, WIN_PREFLIGHT_PS, rememberRdpEnableResult } from './screen'
+import {
+  decideAgentScreenAccess,
+  LINUX_PREFLIGHT,
+  WIN_PREFLIGHT_PS,
+  rememberRdpEnableResult,
+  interpretRdpEnable
+} from './screen'
 
 describe('preflight агента', () => {
   it('ищет ровно те имена, которые устанавливает provisioning', () => {
@@ -55,5 +61,57 @@ describe('допуск агента к физическому экрану', () 
       decideAgentScreenAccess('windows', { state: 'locked-no-unlock', reason: 'не удалось проверить блокировку' })
     ).toEqual({ action: 'fallback', reason: 'не удалось проверить блокировку' })
     expect(decideAgentScreenAccess('darwin', { state: 'unsupported', reason: 'нет loginctl' })).toEqual({ action: 'open' })
+  })
+})
+
+// ── Включение RDP: вердикт по факту, а не по коду возврата ────────────────────────────────────
+// Регрессия на реальный дефект: скрипт шёл с $ErrorActionPreference='SilentlyContinue' и
+// заканчивался безусловным 'ok', поэтому отказ по правам рапортовался как успех. Отдельно —
+// обещание «только tailnet»: узкое правило лишь добавлялось, встроенные широкие не выключались.
+describe('interpretRdpEnable', () => {
+  const done = (deny: string, nla: string, rule: string, wide: string): string =>
+    `ARGUS_RDP_DENY=${deny}\nARGUS_RDP_NLA=${nla}\nARGUS_RDP_RULE=${rule}\nARGUS_RDP_WIDE=${wide}\nARGUS_RDP_DONE`
+
+  it('всё применилось — успех и честное «только tailnet»', () => {
+    const v = interpretRdpEnable(done('0', '1', '1', '0'), true)
+    expect(v.ok).toBe(true)
+    expect(v.tailnetOnly).toBe(true)
+    expect(v.warnings).toEqual([])
+  })
+
+  it('RDP остался выключенным — провал, даже если команда «отработала»', () => {
+    const v = interpretRdpEnable(done('1', '1', '1', '0'), true)
+    expect(v.ok).toBe(false)
+    expect(v.error).toMatch(/прав администратора/)
+  })
+
+  it('широкие правила на 3389 — успех, но НЕ tailnet-only, и об этом сказано', () => {
+    const v = interpretRdpEnable(done('0', '1', '1', '2'), true)
+    expect(v.ok).toBe(true)
+    expect(v.tailnetOnly).toBe(false)
+    expect(v.warnings.join(' ')).toMatch(/2 широких правил/)
+  })
+
+  it('нет своего правила firewall — доступ ограничен не нами', () => {
+    const v = interpretRdpEnable(done('0', '1', '0', '0'), true)
+    expect(v.tailnetOnly).toBe(false)
+    expect(v.warnings.join(' ')).toMatch(/не создано/)
+  })
+
+  it('выключенный NLA не блокирует, но и не замалчивается', () => {
+    const v = interpretRdpEnable(done('0', '0', '1', '0'), true)
+    expect(v.ok).toBe(true)
+    expect(v.warnings.join(' ')).toMatch(/NLA/)
+  })
+
+  it('нет маркера завершения — успехом не считается', () => {
+    expect(interpretRdpEnable('', true).ok).toBe(false)
+    expect(interpretRdpEnable('ok', true).ok).toBe(false)
+  })
+
+  it('перехваченная ошибка скрипта попадает в текст', () => {
+    const v = interpretRdpEnable('ARGUS_RDP_ERR=Requested registry access is not allowed', false)
+    expect(v.ok).toBe(false)
+    expect(v.error).toMatch(/registry access/)
   })
 })

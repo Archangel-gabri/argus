@@ -130,12 +130,106 @@ function encryptToken(obj: unknown): string {
   return Buffer.from(JSON.stringify({ iv: iv.toString('base64'), value })).toString('base64')
 }
 
-// Включение RDP на Windows (idempotent, tailnet-only firewall). Нужны права admin (Windows-фолбэк-путь).
-const WIN_RDP_ENABLE_PS =
-  `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$ErrorActionPreference='SilentlyContinue';` +
-  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0;` +
-  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -Value 1;` +
-  `if(-not(Get-NetFirewallRule -DisplayName 'Argus RDP tailnet' -EA 0)){New-NetFirewallRule -DisplayName 'Argus RDP tailnet' -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null};'ok'`
+// Включение RDP на Windows (idempotent, tailnet-only firewall). Нужны права admin.
+//
+// Скрипт ЗАКАНЧИВАЕТСЯ ПРОВЕРКОЙ, а не словом «ok». Раньше он шёл с
+// $ErrorActionPreference='SilentlyContinue' и печатал 'ok' безусловно: отказ по правам
+// (не-admin) был не-прерывающей ошибкой, скрипт доходил до конца, выходил с нулём — и Argus
+// считал RDP включённым. Хуже того, рядом стояло осознанное смягчение rememberRdpEnableResult
+// с комментарием «только exit=0 доказывает, что повторный enable можно пропустить», и оно было
+// обесценено ровно этим SilentlyContinue.
+//
+// Отдельная ложь — «только tailnet». Узкое правило лишь ДОБАВЛЯЛОСЬ; встроенные широкие правила
+// Windows для 3389 никто не выключал, поэтому порт мог оставаться открытым в локальную сеть.
+// Теперь их количество считается и возвращается предупреждением, а не замалчивается.
+const WIN_RDP_ENABLE_PS = [
+  `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8`,
+  `$ErrorActionPreference='Stop'`,
+  `try {`,
+  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0;`,
+  `Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -Value 1;`,
+  `if(-not(Get-NetFirewallRule -DisplayName 'Argus RDP tailnet' -EA SilentlyContinue)){`,
+  `New-NetFirewallRule -DisplayName 'Argus RDP tailnet' -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null}`,
+  `} catch { Write-Output "ARGUS_RDP_ERR=$($_.Exception.Message)" }`,
+  // Дальше — чтение фактического состояния. Оно идёт ВСЕГДА, даже если правка упала.
+  `$deny=(Get-ItemProperty 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -EA SilentlyContinue).fDenyTSConnections`,
+  `$nla=(Get-ItemProperty 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -EA SilentlyContinue).UserAuthentication`,
+  `$rule=if(Get-NetFirewallRule -DisplayName 'Argus RDP tailnet' -EA SilentlyContinue){1}else{0}`,
+  `$wide=0`,
+  `foreach($r in (Get-NetFirewallRule -Direction Inbound -Enabled True -Action Allow -EA SilentlyContinue)){`,
+  `if($r.DisplayName -eq 'Argus RDP tailnet'){continue}`,
+  `$pf=$r|Get-NetFirewallPortFilter -EA SilentlyContinue`,
+  `if($pf.LocalPort -contains '3389'){`,
+  `$af=$r|Get-NetFirewallAddressFilter -EA SilentlyContinue`,
+  `if($af.RemoteAddress -contains 'Any'){$wide++}}}`,
+  `Write-Output "ARGUS_RDP_DENY=$deny"`,
+  `Write-Output "ARGUS_RDP_NLA=$nla"`,
+  `Write-Output "ARGUS_RDP_RULE=$rule"`,
+  `Write-Output "ARGUS_RDP_WIDE=$wide"`,
+  `Write-Output 'ARGUS_RDP_DONE'`
+].join(';')
+
+export interface RdpEnableVerdict {
+  /** RDP действительно принимает подключения и NLA включён. */
+  ok: boolean
+  /** Доступ ограничен диапазоном tailnet — то есть обещание выполнено. */
+  tailnetOnly: boolean
+  warnings: string[]
+  error?: string
+}
+
+/**
+ * Вердикт по фактическому состоянию машины, а не по коду возврата.
+ *
+ * Разбирается вывод, который скрипт печатает ПОСЛЕ попытки правки: реестр и правила читаются
+ * заново, поэтому не-прерывающий отказ по правам виден как «значение не изменилось».
+ */
+export function interpretRdpEnable(output: string, execOk: boolean): RdpEnableVerdict {
+  const value = (key: string): string | null => {
+    const m = new RegExp(`ARGUS_RDP_${key}=(.*)`).exec(output)
+    return m ? m[1].trim() : null
+  }
+  const scriptError = value('ERR')
+  const warnings: string[] = []
+
+  if (!/ARGUS_RDP_DONE/.test(output))
+    return {
+      ok: false,
+      tailnetOnly: false,
+      warnings,
+      error: scriptError
+        ? `не удалось включить RDP: ${scriptError}`
+        : execOk
+          ? 'машина не сообщила состояние RDP — считаем, что он не включён'
+          : 'не удалось выполнить команду включения RDP'
+    }
+
+  const deny = value('DENY')
+  const nla = value('NLA')
+  const rule = value('RULE') === '1'
+  const wide = Number(value('WIDE') ?? '0')
+
+  if (deny !== '0')
+    return {
+      ok: false,
+      tailnetOnly: false,
+      warnings,
+      error: scriptError
+        ? `RDP остался выключенным: ${scriptError}`
+        : 'RDP остался выключенным — вероятно, не хватило прав администратора'
+    }
+
+  // NLA не блокирует подключение, но без него сеанс слабее — об этом надо сказать, а не молчать.
+  if (nla !== '1') warnings.push('NLA не включён — подключение пойдёт по ослабленной проверке')
+  if (!rule) warnings.push('правило firewall для tailnet не создано — доступ ограничен не нами')
+  if (wide > 0)
+    warnings.push(
+      `на порту 3389 есть ${wide} широких правил (RemoteAddress=Any) — RDP доступен не только из tailnet`
+    )
+  if (scriptError) warnings.push(`часть настройки не применилась: ${scriptError}`)
+
+  return { ok: true, tailnetOnly: rule && wide === 0, warnings }
+}
 const winRdpEnableCmd = (): string =>
   `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_RDP_ENABLE_PS, 'utf16le').toString('base64')}`
 
@@ -153,6 +247,19 @@ export function rememberRdpEnableResult(
   if (!result.ok) return false
   ready.add(deviceId)
   return true
+}
+
+/** Свернуть вывод скрипта в тот же вид, что ждёт вызывающий код: ok + причина отказа. */
+function rdpEnableOutcome(r: { ok: boolean; output: string; error?: string }): {
+  ok: boolean
+  output: string
+  error?: string
+  warnings: string[]
+} {
+  const v = interpretRdpEnable(r.output, r.ok)
+  if (!v.ok) return { ok: false, output: r.output, error: v.error ?? r.error, warnings: v.warnings }
+  for (const w of v.warnings) console.warn('[screen] RDP:', w)
+  return { ok: true, output: r.output, warnings: v.warnings }
 }
 
 /** TCP-жив ли порт (для проверки guacd). */
@@ -261,7 +368,10 @@ export async function screenStart(
     rdpReady.has(deviceId)
       ? Promise.resolve<{ ok: boolean; output: string; error?: string }>({ ok: true, output: '' })
       : execOnce(deviceId, winRdpEnableCmd())
-          .then((result) => {
+          .then((raw) => {
+            // Вердикт выносится по прочитанному состоянию машины, а не по коду возврата:
+            // не-прерывающий отказ по правам давал exit=0 и выглядел как успех.
+            const result = rdpEnableOutcome(raw)
             rememberRdpEnableResult(rdpReady, deviceId, result)
             return result
           })

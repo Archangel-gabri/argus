@@ -15,6 +15,7 @@ import { whichOs } from './pc'
 import { getAgentToken, setAgentToken, getAgentCert, setAgentCert } from './vault'
 import { buildForgetCommand, decideForgetOutcome, type ForgetOutcome } from './agent-forget'
 import { remoteFamily, remoteArch } from './os-family'
+import { interpretWindowsService, interpretHealth } from './agent-health'
 
 export const AGENT_PORT = 47990
 const AGENT_VERSION = '0.1.0'
@@ -25,6 +26,12 @@ export interface AgentStatus {
   version?: string
   os?: string
   error?: string
+  /**
+   * Агент отвечает, но его версия не совпадает с ожидаемой. Раньше версия просто пересылалась
+   * наверх и ни с чем не сверялась: агент старого протокола объявлялся рабочим, окно
+   * трансляции открывалось, и разваливалось всё уже на разборе кадров — далеко от причины.
+   */
+  outdated?: boolean
   /** Чего не хватает, человеческим языком (нет ffmpeg, нет прав на /dev/uinput …). */
   detail?: string
 }
@@ -178,7 +185,11 @@ function agentHTTP(host: string, token: string, pinnedPem: string | null, timeou
         res.on('end', () => {
           try {
             const j = JSON.parse(body) as { ok?: boolean; version?: string; os?: string; error?: string }
-            resolve({ installed: true, running: !!j.ok, version: j.version, os: j.os, error: j.error })
+            // Версия теперь сверяется, а не просто пересылается наверх. Иначе агент старого
+            // протокола объявлялся рабочим, окно трансляции открывалось, и всё разваливалось
+            // уже на разборе кадров — далеко от причины.
+            const v = interpretHealth(j, AGENT_VERSION)
+            resolve({ ...v, os: j.os })
           } catch {
             resolve({ installed: false, running: false, error: 'агент ответил неразборчиво' })
           }
@@ -501,19 +512,35 @@ async function installService(
     // Порт агента открываем ТОЛЬКО для диапазона Tailscale. Агент слушает 0.0.0.0 (иначе он не
     // виден в tailnet), а значит без этого правила он торчал бы и в локальную сеть — где трафик
     // идёт без шифрования и сосед по Wi-Fi мог бы снять токен вместе с экраном и управлением.
-    const ps =
-      `$exe="$env:LOCALAPPDATA\\Argus\\argus-agent.exe";` +
-      `if(-not(Get-NetFirewallRule -DisplayName 'Argus agent tailnet' -EA 0)){` +
+    // Скрипт заканчивается ПРОВЕРКОЙ, а не словом 'ok'. Без $ErrorActionPreference='Stop'
+    // отказ New-NetFirewallRule или Register-ScheduledTask по правам — не-прерывающая ошибка:
+    // скрипт доходил до конца, печатал 'ok', выходил с нулём, и установка объявлялась успешной
+    // без обещанного правила firewall и без автозапуска. Если при этом на машине ещё жил старый
+    // процесс агента, то и последующая проба здоровья подтверждала «всё хорошо».
+    const ps = [
+      `$ErrorActionPreference='Stop'`,
+      `$exe="$env:LOCALAPPDATA\\Argus\\argus-agent.exe"`,
+      `try {`,
+      `if(-not(Get-NetFirewallRule -DisplayName 'Argus agent tailnet' -EA SilentlyContinue)){`,
       `New-NetFirewallRule -DisplayName 'Argus agent tailnet' -Direction Inbound -Protocol TCP ` +
-      `-LocalPort ${AGENT_PORT} -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null};` +
-      `$a=New-ScheduledTaskAction -Execute $exe -Argument '--addr 0.0.0.0:${AGENT_PORT}';` +
-      `$t=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME;` +
-      `$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew;` +
-      `Register-ScheduledTask -TaskName 'ArgusAgent' -Action $a -Trigger $t -Settings $s -Force -RunLevel Highest | Out-Null;` +
-      `Start-ScheduledTask -TaskName 'ArgusAgent';` +
-      `Start-Sleep -Seconds 2; 'ok'`
+        `-LocalPort ${AGENT_PORT} -RemoteAddress 100.64.0.0/10 -Action Allow|Out-Null}`,
+      `$a=New-ScheduledTaskAction -Execute $exe -Argument '--addr 0.0.0.0:${AGENT_PORT}';`,
+      `$t=New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME;`,
+      `$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew;`,
+      `Register-ScheduledTask -TaskName 'ArgusAgent' -Action $a -Trigger $t -Settings $s -Force -RunLevel Highest | Out-Null;`,
+      `Start-ScheduledTask -TaskName 'ArgusAgent'`,
+      `} catch { Write-Output "ARGUS_SVC_ERR=$($_.Exception.Message)" }`,
+      `Start-Sleep -Seconds 2`,
+      // Читаем фактическое состояние — и только оно решает.
+      `$task=if(Get-ScheduledTask -TaskName 'ArgusAgent' -EA SilentlyContinue){1}else{0}`,
+      `$fw=if(Get-NetFirewallRule -DisplayName 'Argus agent tailnet' -EA SilentlyContinue){1}else{0}`,
+      `Write-Output "ARGUS_SVC_TASK=$task"`,
+      `Write-Output "ARGUS_SVC_FW=$fw"`,
+      `Write-Output 'ARGUS_SVC_DONE'`
+    ].join(';')
     const r = await execOnce(deviceId, psCmd(ps))
-    return r.ok ? { ok: true } : { ok: false, error: r.error || r.output }
+    const v = interpretWindowsService(r.output, r.ok)
+    return v.ok ? { ok: true } : { ok: false, error: v.error || r.error || r.output }
   }
 
   if (family === 'darwin') {
