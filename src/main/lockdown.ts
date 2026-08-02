@@ -7,6 +7,8 @@ import { clearPinnedHosts } from './agent'
 import { clearAlerts } from './watchdog'
 import { lock as lockVault } from './vault'
 import { revokePendingAccess } from './access-epoch'
+import { clearInFlight } from './single-flight'
+import { clearReachMemory } from './reach-memory'
 
 /** Единая граница блокировки: закрыть доступы и только затем зашифрованную БД. */
 export function lockApplication(): void {
@@ -18,6 +20,8 @@ export function lockApplication(): void {
     closeForwards: closeAllForwards,
     clearAgentPins: clearPinnedHosts,
     clearAlerts,
+    clearInFlight,
+    clearReachMemory,
     lockVault
   })
 }

@@ -17,6 +17,8 @@ const CHECK_EVERY_MS = 60_000
 
 const memory = new AlertMemory()
 let timer: ReturnType<typeof setInterval> | null = null
+/** Отложенная первая проверка. Хранится отдельно, потому что гасить её надо тоже. */
+let firstCheck: ReturnType<typeof setTimeout> | null = null
 let last: Alert[] = []
 
 /** Текущие тревоги — их показывает интерфейс, чтобы не полагаться только на уведомления. */
@@ -69,11 +71,17 @@ export function startWatchdog(): void {
   if (timer) return
   // Ждём первый полный цикл опроса: иначе на старте все машины «не отвечают» просто потому,
   // что их ещё не спрашивали, и владелец получит пачку ложных тревог при каждом запуске.
-  setTimeout(check, 90_000)
+  //
+  // Дескриптор отложенной проверки надо сохранить. Раньше он выбрасывался, и `stopWatchdog`
+  // гасил только интервал: отложенная проверка всё равно срабатывала — уже после остановки,
+  // а на выходе из приложения ещё и после блокировки хранилища.
+  firstCheck = setTimeout(check, 90_000)
   timer = setInterval(check, CHECK_EVERY_MS)
 }
 
 export function stopWatchdog(): void {
+  if (firstCheck) clearTimeout(firstCheck)
   if (timer) clearInterval(timer)
+  firstCheck = null
   timer = null
 }

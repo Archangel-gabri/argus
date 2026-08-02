@@ -121,6 +121,38 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     expect(orphan?.jumpId ?? null).toBeNull()
   })
 
+  it('блокировка ВО ВРЕМЯ открытия не отменяется завершившимся unlock', async () => {
+    // Регрессия на реальную гонку. Вывод ключа (Argon2id, 64 МиБ, 3 прохода) занимает сотни
+    // миллисекунд, и всё это время unlock держит уже открытое соединение, о котором lock ничего
+    // не знает: он видит db === null и честно ничего не закрывает. Раньше завершившийся unlock
+    // затем присваивал соединение — и приложение оказывалось разблокированным ПОСЛЕ блокировки.
+    vault.lock()
+    expect(vault.vaultStatus()).toBe('locked')
+
+    const opening = vault.unlock(PASSWORD)
+    // Блокируем, пока идёт вывод ключа. Микрозадача гарантированно попадает внутрь await.
+    await Promise.resolve()
+    vault.lock()
+
+    await expect(opening).rejects.toThrow(/заблокировал/i)
+    // Главное утверждение: приложение осталось закрытым.
+    expect(vault.vaultStatus()).toBe('locked')
+
+    // И обычное открытие после этого по-прежнему работает.
+    await vault.unlock(PASSWORD)
+    expect(vault.vaultStatus()).toBe('unlocked')
+  })
+
+  it('два одновременных открытия не оставляют лишнее соединение', async () => {
+    vault.lock()
+    const [a, b] = await Promise.allSettled([vault.unlock(PASSWORD), vault.unlock(PASSWORD)])
+    // Оба вызова допустимы; недопустимо только состояние «открыто дважды».
+    expect([a.status, b.status]).toContain('fulfilled')
+    expect(vault.vaultStatus()).toBe('unlocked')
+    // Хранилище работает — значит присвоено живое соединение, а не закрытое.
+    expect(() => vault.listDevices()).not.toThrow()
+  })
+
   it('смена мастер-пароля перешифровывает базу: старый больше не подходит', async () => {
     await vault.changePassword(PASSWORD, NEXT_PASSWORD)
     vault.lock()

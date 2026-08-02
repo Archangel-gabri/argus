@@ -21,7 +21,8 @@ import { lockApplication } from './lockdown'
 import type { DeviceInput, VaultState, AiAccountInput, PowerResult } from './types'
 import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
-import { nextReachability, type Reachability } from '../shared/reachability'
+
+import { trackedReach } from './reach-memory'
 import { masterPasswordPolicyError } from '../shared/password-strength'
 import { parseSubscriptionInput, parseWalletInput } from './finance-validation'
 
@@ -49,19 +50,6 @@ function state(): VaultState {
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
-const probeMisses = new Map<string, number>()
-const pcMisses = new Map<string, number>()
-
-function trackedReach(
-  memory: Map<string, number>,
-  id: string,
-  observation: Reachability
-): Reachability {
-  const next = nextReachability(memory.get(id) ?? 0, observation)
-  if (next.misses) memory.set(id, next.misses)
-  else memory.delete(id)
-  return next.status
-}
 
 export function registerIpc(): void {
   ipcMain.handle('vault:state', () => state())
@@ -208,7 +196,7 @@ export function registerIpc(): void {
     // другая. Отметить такую машину выключенной означает соврать. Первый промах = «не знаю»
     // (снимок не трогаем, старый остаётся), выключенной считаем со второго подряд.
     // Тот же принцип уже работает у быстрой проверки живости — здесь он просто был не доделан.
-    const status = trackedReach(probeMisses, id, r.ok ? 'online' : 'offline')
+    const status = trackedReach('probe', id, r.ok ? 'online' : 'offline')
     if (status === 'online') {
       if (vault.isUnlocked()) vault.recordSnapshot(id, r)
       return { ...r, status }
@@ -338,7 +326,7 @@ export function registerIpc(): void {
   ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
     const deviceId = asString(id)
     const r = await pc.metrics(deviceId)
-    const status = trackedReach(pcMisses, deviceId, r.family === 'off' ? 'offline' : 'online')
+    const status = trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online')
     // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).
     // Выключенный ПК записываем ТОЖЕ, только статусом: иначе кэш последнего состояния воскрешал
     // его как «online» после перезапуска приложения, а в истории не оставалось провала.

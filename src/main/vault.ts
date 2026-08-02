@@ -7,6 +7,7 @@ import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
 import { prepareVaultInitialization, type VaultMeta } from './vault-init'
 import { addColumn } from './migrate-guard'
+import { beginAccess, isAccessCurrent, revokePendingAccess } from './access-epoch'
 import {
   METRIC_SNAPSHOT_INSERT,
   snapshotStatus,
@@ -404,6 +405,10 @@ export async function unlock(password: string): Promise<void> {
     }
   }
 
+  // Билет доступа берём ДО долгого вывода ключа: по нему видно, не заблокировали ли хранилище,
+  // пока мы его открывали.
+  const ticket = beginAccess()
+  let cancelled = false
   let keyWasCorrect = false
   let schemaError: Error | null = null
   for (const cand of candidates) {
@@ -431,6 +436,26 @@ export async function unlock(password: string): Promise<void> {
       }
       // Глобальное состояние меняем ПОСЛЕ файловой финализации. Если rename/unlink упадёт,
       // catch закроет только локальный d, а vaultStatus не соврёт «unlocked» закрытым handle.
+      //
+      // И только если за время работы никто не заблокировал хранилище. Вывод ключа занимает
+      // сотни миллисекунд (Argon2id, 64 МиБ, 3 прохода), и всё это время `unlock` держит уже
+      // открытое соединение, о котором `lock` ничего не знает: он видит `db === null`, честно
+      // ничего не закрывает, а затем строка ниже вернула бы приложение в разблокированное
+      // состояние ПОСЛЕ блокировки. Второе условие — про два одновременных `unlock`: первый
+      // уже присвоил соединение, второе стало бы утечкой.
+      //
+      // Выходим из цикла, а не бросаем прямо здесь: бросок попал бы в общий catch ниже и был
+      // бы засчитан как неподошедшая соль, то есть отменённая операция выглядела бы как
+      // неверный пароль.
+      if (!isAccessCurrent(ticket) || db) {
+        try {
+          d.close()
+        } catch {
+          /* ignore */
+        }
+        cancelled = true
+        break
+      }
       db = d
       return
     } catch (e) {
@@ -444,12 +469,20 @@ export async function unlock(password: string): Promise<void> {
       }
     }
   }
+  if (cancelled) {
+    // Уже разблокировано параллельным вызовом — считаем задачу выполненной.
+    if (isUnlocked()) return
+    throw new Error('Хранилище заблокировали во время открытия — введи пароль ещё раз')
+  }
   if (schemaError)
     throw new Error(`Пароль верный, но хранилище не открылось: ${schemaError.message}`)
   throw new Error('Invalid master password')
 }
 
 export function lock(): void {
+  // Поколение растёт ДО закрытия соединения и независимо от того, кто нас позвал: `unlock`,
+  // начатый раньше, обязан увидеть отмену, даже если lock пришёл не через общую блокировку.
+  revokePendingAccess()
   if (db) {
     try {
       db.close()

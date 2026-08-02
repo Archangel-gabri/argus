@@ -13,16 +13,21 @@ describe('блокировка Argus', () => {
       closeForwards: action('forward'),
       clearAgentPins: action('pins'),
       clearAlerts: action('alerts'),
+      clearInFlight: action('inflight'),
+      clearReachMemory: action('reach'),
       lockVault: action('vault')
     }
 
     runLockdown(actions)
 
-    expect(order).toEqual(['revoke', 'screen', 'ssh', 'sftp', 'forward', 'pins', 'alerts', 'vault'])
+    expect(order).toEqual(['revoke', 'screen', 'ssh', 'sftp', 'forward', 'pins', 'alerts', 'inflight', 'reach', 'vault'])
     for (const fn of Object.values(actions)) expect(fn).toHaveBeenCalledOnce()
   })
 
-  it.each(['revokePending', 'closeScreens', 'closeSsh', 'closeSftp', 'closeForwards', 'clearAgentPins', 'clearAlerts'] as const)(
+  it.each([
+    'revokePending', 'closeScreens', 'closeSsh', 'closeSftp', 'closeForwards',
+    'clearAgentPins', 'clearAlerts', 'clearInFlight', 'clearReachMemory'
+  ] as const)(
     'не оставляет остальные доступы открытыми, если %s уже сломан',
     (broken) => {
       const called: string[] = []
@@ -35,6 +40,8 @@ describe('блокировка Argus', () => {
         closeForwards: action('forward'),
         clearAgentPins: action('pins'),
         clearAlerts: action('alerts'),
+        clearInFlight: action('inflight'),
+        clearReachMemory: action('reach'),
         lockVault: action('vault')
       }
       actions[broken] = vi.fn(() => {

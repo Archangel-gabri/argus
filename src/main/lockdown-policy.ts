@@ -7,6 +7,10 @@ export interface LockdownActions {
   closeForwards: () => void
   clearAgentPins: () => void
   clearAlerts: () => void
+  /** Забыть склейки одновременных опросов: начатое до блокировки не должно отвечать после. */
+  clearInFlight: () => void
+  /** Забыть серии промахов живости: новая сессия считает «не знаю» с чистого листа. */
+  clearReachMemory: () => void
   lockVault: () => void
 }
 
@@ -22,6 +26,8 @@ export function runLockdown(actions: LockdownActions): void {
     actions.closeForwards,
     actions.clearAgentPins,
     actions.clearAlerts,
+    actions.clearInFlight,
+    actions.clearReachMemory,
     actions.lockVault
   ]
   for (const step of steps) {
