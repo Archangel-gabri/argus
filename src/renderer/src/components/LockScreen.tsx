@@ -104,6 +104,9 @@ export function LockScreen(): React.JSX.Element {
             value={pw}
             onChange={(e) => setPw(e.target.value)}
             placeholder="Мастер-пароль"
+            // placeholder исчезает при вводе и именем поля не является: без aria-label
+            // программа чтения с экрана объявляет здесь безымянное поле пароля.
+            aria-label={setup ? 'Новый мастер-пароль' : 'Мастер-пароль'}
             className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
           />
           {setup && (
@@ -134,6 +137,7 @@ export function LockScreen(): React.JSX.Element {
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 placeholder="Ещё раз"
+                aria-label="Мастер-пароль ещё раз"
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30"
               />
               <label className="flex items-start gap-2 text-[11px] leading-snug text-slate-400">
@@ -150,7 +154,7 @@ export function LockScreen(): React.JSX.Element {
         </div>
 
         {(localError || error) && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-rose-400">
+          <div role="alert" className="mt-3 flex items-center gap-2 text-xs text-rose-400">
             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
             {localError || error}
           </div>
