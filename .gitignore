@@ -23,3 +23,7 @@ fleet.local.json
 # коммитом 942d9ce — 10 МБ; в рабочем дереве его больше не отслеживаем.
 agent/argus-agent
 agent/argus-agent.exe
+
+# Playwright
+test-results/
+playwright-report/

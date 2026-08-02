@@ -3,10 +3,15 @@
   "include": [
     "electron.vite.config.*",
     "src/main/**/*",
-    "src/preload/**/*"
+    "src/preload/**/*",
+    "e2e/**/*",
+    "playwright.config.ts"
   ],
   "compilerOptions": {
     "composite": true,
-    "types": ["electron-vite/node", "node"]
+    "types": [
+      "electron-vite/node",
+      "node"
+    ]
   }
 }

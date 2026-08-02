@@ -24,8 +24,9 @@
     "test:agent": "cd agent && test -z \"$(gofmt -l .)\" && go vet ./... && go test ./...",
     "agent:build": "bash agent/build-all.sh",
     "check": "npm run typecheck && npm run test && npm run test:agent && npm run build",
-    "check:full": "npm run check && npm run test:vault && npm run test:net",
-    "rebuild": "electron-rebuild"
+    "check:full": "npm run check && npm run test:vault && npm run test:net && npm run test:e2e",
+    "rebuild": "electron-rebuild",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

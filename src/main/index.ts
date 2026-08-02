@@ -10,7 +10,11 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.argus.app')
 
   // Strict CSP in production only (dev stays relaxed so Vite HMR works).
-  if (!is.dev) {
+  //
+  // ARGUS_FORCE_CSP=1 включает её и в незапакованном запуске. Нужно для E2E: `is.dev` — это
+  // `!app.isPackaged`, поэтому запуск из исходников политику не ставит, и проверить её иначе
+  // можно было бы только на собранном AppImage. Флаг умеет лишь УЖЕСТОЧИТЬ, ослабить им нельзя.
+  if (!is.dev || process.env.ARGUS_FORCE_CSP === '1') {
     const BASE =
       "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
       "font-src 'self' data:; script-src 'self'; connect-src 'self' ws://127.0.0.1:* wss://127.0.0.1:*"
