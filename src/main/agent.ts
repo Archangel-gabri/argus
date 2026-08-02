@@ -15,6 +15,7 @@ import { whichOs } from './pc'
 import { getAgentToken, setAgentToken, getAgentCert, setAgentCert } from './vault'
 import { buildForgetCommand, decideForgetOutcome, type ForgetOutcome } from './agent-forget'
 import { remoteFamily, remoteArch } from './os-family'
+import { hostForUrl } from './ip-privacy'
 import { interpretWindowsService, interpretHealth } from './agent-health'
 
 export const AGENT_PORT = 47990
@@ -682,7 +683,9 @@ export async function agentEndpoint(
   // Закрепляем ДО открытия окна: проверка сертификата в Electron сработает раньше,
   // чем renderer успеет что-либо отправить.
   pinHost(conn.host, cert)
-  return { ok: true, url: `wss://${conn.host}:${AGENT_PORT}/stream`, token }
+  // Литерал IPv6 в URL обязан быть в квадратных скобках, иначе двоеточия адреса сливаются с
+  // разделителем порта: `wss://fd00::1:47990/stream` — не адрес, `new URL` бросает Invalid URL.
+  return { ok: true, url: `wss://${hostForUrl(conn.host)}:${AGENT_PORT}/stream`, token }
 }
 
 export { AGENT_VERSION }

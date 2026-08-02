@@ -418,6 +418,10 @@ export function registerIpc(): void {
   ipcMain.handle('screen:claim', (e, handle: unknown) =>
     screen.screenClaim(asString(handle), BrowserWindow.fromWebContents(e.sender)?.id ?? null)
   )
+  // Рабочий стол отрисовался — только теперь введённый пароль доказал свою верность.
+  ipcMain.handle('screen:confirmPassword', (e, handle: unknown) =>
+    screen.screenConfirmPassword(asString(handle), BrowserWindow.fromWebContents(e.sender)?.id ?? null)
+  )
 
   // Управление собственным окном (окну экрана нужны полный экран / свернуть / закрыть,
   // потому что в полноэкранном титлбар ОС исчезает). Действует только на окно-отправитель.

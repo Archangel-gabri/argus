@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isGeoResolvable } from './ip-privacy'
+import { isGeoResolvable, hostForUrl } from './ip-privacy'
 
 // Регрессия на реальный дефект: наружу, на публичный ipwho.is, могли уехать адреса и имена
 // внутренней сети. Проверок было две, в разных редакциях, и та, что стоит за IPC-каналом
@@ -79,5 +79,34 @@ describe('isGeoResolvable — что отправлять МОЖНО', () => {
 
   it('пробелы по краям не мешают', () => {
     expect(isGeoResolvable('  8.8.8.8  ')).toBe(true)
+  })
+})
+
+// Регрессия на реальный дефект: адрес агента собирался как `wss://${host}:47990/stream`, и на
+// IPv6 это давало не адрес, а мусор — new URL бросал Invalid URL, окно трансляции не открывалось.
+describe('hostForUrl', () => {
+  it('литерал IPv6 берётся в квадратные скобки', () => {
+    expect(hostForUrl('fd00::1')).toBe('[fd00::1]')
+    expect(hostForUrl('2606:4700:4700::1111')).toBe('[2606:4700:4700::1111]')
+  })
+
+  it('собранный адрес после этого разбирается', () => {
+    expect(() => new URL(`wss://${hostForUrl('fd00::1')}:47990/stream`)).not.toThrow()
+    // А без скобок — именно та ошибка, из-за которой всё и ломалось.
+    expect(() => new URL('wss://fd00::1:47990/stream')).toThrow()
+  })
+
+  it('IPv4 и имена хостов не трогаются', () => {
+    expect(hostForUrl('100.74.94.24')).toBe('100.74.94.24')
+    expect(hostForUrl('castiel-pc')).toBe('castiel-pc')
+  })
+
+  it('уже заскобленный адрес не обрастает второй парой', () => {
+    expect(hostForUrl('[fd00::1]')).toBe('[fd00::1]')
+  })
+
+  it('пустая строка остаётся пустой', () => {
+    expect(hostForUrl('')).toBe('')
+    expect(hostForUrl('   ')).toBe('')
   })
 })

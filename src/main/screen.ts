@@ -505,11 +505,39 @@ export async function screenOpen(
   // sendSize сразу после коннекта (resize-method=display-update), так что картинка будет 1:1.
   const r = await screenStart(deviceId, { password, width: area.width, height: area.height })
   if (!r.ok || !r.wsPort || !r.token) return { ok: false, error: r.error ?? 'не удалось запустить сеанс' }
-  // Сохраняем только явно введённый пароль и только по галочке. Верность пароля тут ещё не
-  // известна (RDP проверит его позже) — поэтому в интерфейсе есть «забыть» одним кликом.
-  if (opts.remember && opts.password) setScreenPassword(deviceId, opts.password)
+  // Пароль НЕ сохраняем здесь. Мост guacd поднимается раньше, чем RDP проверит учётные данные,
+  // поэтому опечатка с галочкой «запомнить» затирала верный сохранённый пароль безвозвратно —
+  // а узнавали об этом уже после отказа NLA. Держим введённое в памяти и записываем только
+  // когда рабочий стол действительно отрисовался (см. screenConfirmPassword).
+  if (opts.remember && opts.password) pendingPasswords.set(deviceId, opts.password)
+  else pendingPasswords.delete(deviceId)
 
   return openWindow({ deviceId, mode: 'rdp', wsPort: r.wsPort, token: r.token })
+}
+
+/**
+ * Пароли, введённые с галочкой «запомнить», но ещё не доказавшие свою верность.
+ *
+ * Живут только в памяти main и переезжают в хранилище единственным путём — через
+ * `screenConfirmPassword`, который зовётся, когда рабочий стол реально отрисовался.
+ */
+const pendingPasswords = new Map<string, string>()
+
+/**
+ * Сеанс дошёл до рабочего стола — значит введённый пароль верен, и его можно сохранить.
+ *
+ * Раньше сохранение шло сразу после поднятия моста guacd, то есть ДО проверки учётных данных
+ * по NLA: опечатка затирала верный сохранённый пароль, и восстановить его было неоткуда.
+ */
+export function screenConfirmPassword(handle: string, senderWinId: number | null): { ok: boolean } {
+  const s = sessions.get(handle)
+  // Чужое окно не может подтвердить чужой сеанс — та же проверка, что и у claim.
+  if (!s || s.winId !== senderWinId) return { ok: false }
+  const pending = pendingPasswords.get(s.deviceId)
+  if (pending === undefined) return { ok: true }
+  setScreenPassword(s.deviceId, pending)
+  pendingPasswords.delete(s.deviceId)
+  return { ok: true }
 }
 
 /** Окно забирает параметры своего сеанса. Повторно — можно (реконнект), из чужого окна — нельзя. */

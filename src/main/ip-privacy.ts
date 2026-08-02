@@ -63,3 +63,16 @@ function isPublicV6(ip: string): boolean {
   if (/^64:ff9b$/.test(head + ':' + ip.split(':')[1])) return false // NAT64 well-known
   return true
 }
+
+/**
+ * Хост в том виде, в каком его можно подставить в URL.
+ *
+ * Литерал IPv6 обязан быть в квадратных скобках: без них двоеточия адреса сливаются с
+ * разделителем порта, и `wss://fd00::1:47990/stream` — не адрес вовсе, `new URL` бросает
+ * `Invalid URL`. Для IPv4 и имён хостов ничего не меняется.
+ */
+export function hostForUrl(host: string): string {
+  const s = (host || '').trim()
+  if (!s || s.startsWith('[')) return s
+  return isIP(s) === 6 ? `[${s}]` : s
+}

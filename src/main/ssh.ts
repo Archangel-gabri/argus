@@ -15,12 +15,48 @@ export function makeHostVerifier(
   host: string,
   port: number,
   onChanged?: (changed: boolean) => void
-): NonNullable<ConnectConfig['hostVerifier']> {
-  return ((hash: string, cb: (ok: boolean) => void): void => {
-    const changed = checkHostKey(host, port, hash) === 'changed'
+): NonNullable<ConnectConfig['hostVerifier']> & { commit: () => void } {
+  // Закрепление откладывается до УСПЕШНОЙ аутентификации.
+  //
+  // Проверка ключа хоста происходит в рукопожатии, то есть раньше, чем мы предъявили пароль
+  // или ключ. Раньше `checkHostKey` тут же вставлял запись в known_hosts — и один коннект по
+  // ошибочному адресу (опечатка в IP, чужой хост на том же порту, перехваченный DNS) навсегда
+  // закреплял ЧУЖОЙ ключ. Настоящий сервер после этого читался как «ключ изменился», то есть
+  // предупреждение о подмене выдавалось ровно наоборот.
+  //
+  // Теперь при первом контакте ключ запоминается только в памяти; в хранилище он попадает
+  // из `commit()`, который вызывается после `ready` — а до `ready` ssh2 доходит лишь пройдя
+  // аутентификацию, то есть доказав, что это та машина, к которой у нас есть доступ.
+  let pending: string | null = null
+  const verifier = ((hash: string, cb: (ok: boolean) => void): void => {
+    const verdict = checkHostKey(host, port, hash, { commit: false })
+    if (verdict === 'new') pending = hash
+    const changed = verdict === 'changed'
     if (onChanged) onChanged(changed)
     cb(!changed)
-  }) as NonNullable<ConnectConfig['hostVerifier']>
+  }) as NonNullable<ConnectConfig['hostVerifier']> & { commit: () => void }
+
+  verifier.commit = (): void => {
+    if (pending === null) return
+    checkHostKey(host, port, pending, { commit: true })
+    pending = null
+  }
+  return verifier
+}
+
+/**
+ * Закрепить ключ хоста, когда соединение действительно установилось.
+ *
+ * `ready` у ssh2 наступает уже ПОСЛЕ аутентификации, поэтому это единственный момент, когда
+ * можно честно сказать «мы дошли до нужной машины». Проверка ключа происходит раньше, в
+ * рукопожатии, и записывать его там было ошибкой.
+ */
+export function commitHostKeyOnReady(
+  client: Client,
+  verifier: NonNullable<ConnectConfig['hostVerifier']>
+): void {
+  const commit = (verifier as { commit?: () => void }).commit
+  if (commit) client.once('ready', () => commit())
 }
 
 /** Build the ssh2 auth fields from a credential bundle: private key wins, else password. */
@@ -100,6 +136,10 @@ export function establish(
     hostHash: 'sha256' as const,
     hostVerifier: verifier
   }
+  // Ключ хоста закрепляем только после `ready`: до него ssh2 не дойдёт, не пройдя
+  // аутентификацию, — то есть машина доказала, что она та самая. Коннект по ошибочному
+  // адресу теперь не оставляет за собой чужой закреплённый ключ.
+  commitHostKeyOnReady(client, verifier)
   if (!conn.jump) {
     try {
       client.connect({ ...base, host: conn.host, port: conn.port })
@@ -110,6 +150,8 @@ export function establish(
   }
   const jump = conn.jump
   const jumpClient = new Client()
+  const jumpVerifier = makeHostVerifier(jump.host, jump.port)
+  commitHostKeyOnReady(jumpClient, jumpVerifier)
   jumpClient.on('error', (e) => onError(new Error('jump-host: ' + e.message)))
   jumpClient.on('ready', () => {
     jumpClient.forwardOut('127.0.0.1', 0, conn.host, conn.port, (err, stream) => {
@@ -140,7 +182,7 @@ export function establish(
       ...authFields(jump),
       readyTimeout,
       hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(jump.host, jump.port)
+      hostVerifier: jumpVerifier
     })
   } catch (e) {
     onError(e as Error)
@@ -554,6 +596,9 @@ export function probeHost(opts: {
       runProbe(PROBE_HOST_CMD, () => runProbe(PROBE_HOST_WINDOWS_CMD))
     })
     client.on('error', (e) => done({ ok: false, error: e.message }))
+    // Собственный клиент, без establish, — поэтому закрепление вешаем здесь же.
+    const probeVerifier = makeHostVerifier(opts.host, port)
+    commitHostKeyOnReady(client, probeVerifier)
     client.connect({
       host: opts.host,
       port,
@@ -561,7 +606,7 @@ export function probeHost(opts: {
       ...authFields({ password: opts.password, privateKey: opts.privateKey, passphrase: opts.passphrase }),
       readyTimeout: 12000,
       hostHash: 'sha256',
-      hostVerifier: makeHostVerifier(opts.host, port)
+      hostVerifier: probeVerifier
     })
   })
 }

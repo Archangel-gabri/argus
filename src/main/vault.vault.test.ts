@@ -153,6 +153,51 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     expect(() => vault.listDevices()).not.toThrow()
   })
 
+  it('ключ хоста НЕ закрепляется, пока не подтверждён вход', async () => {
+    // Регрессия на реальный дефект. Проверка ключа идёт в рукопожатии, то есть раньше, чем мы
+    // предъявили пароль или ключ. Раньше checkHostKey тут же вставлял запись — и один коннект
+    // по ошибочному адресу навсегда закреплял ЧУЖОЙ ключ, после чего настоящий сервер читался
+    // как «ключ изменился»: предупреждение о подмене выдавалось ровно наоборот.
+    await vault.unlock(PASSWORD)
+    const host = 'example.invalid'
+
+    // Рукопожатие с незнакомым хостом: «новый», но в хранилище пока ничего.
+    expect(vault.checkHostKey(host, 22, 'aa:bb')).toBe('new')
+    expect(vault.checkHostKey(host, 22, 'совсем-другой')).toBe('new')
+
+    // Вход удался — только теперь закрепляем.
+    expect(vault.checkHostKey(host, 22, 'aa:bb', { commit: true })).toBe('new')
+    expect(vault.checkHostKey(host, 22, 'aa:bb')).toBe('match')
+    // И вот теперь чужой ключ — это подмена, о которой надо кричать.
+    expect(vault.checkHostKey(host, 22, 'подменённый')).toBe('changed')
+
+    vault.forgetHostKey(host, 22)
+    expect(vault.checkHostKey(host, 22, 'aa:bb')).toBe('new')
+  })
+
+  it('отрицательная стоимость устройства не попадает в хранилище', async () => {
+    await vault.unlock(PASSWORD)
+    expect(() =>
+      vault.createDevice(device({ name: 'дешёвый', cost: { amount: -100, currency: 'USD', usd: -100 } }))
+    ).toThrow(/отрицательной/)
+    expect(vault.listDevices().find((d) => d.name === 'дешёвый')).toBeUndefined()
+  })
+
+  it('неполный ввод не роняет main внутренней ошибкой', async () => {
+    await vault.unlock(PASSWORD)
+    // Раньше здесь было голое input.provider.trim(): наружу уезжало
+    // «Cannot read properties of undefined (reading 'trim')» — внутренности в ответе renderer.
+    // Теперь отсутствующий провайдер штатно становится 'Custom'.
+    const created = vault.createDevice({ name: 'без провайдера' } as never)
+    expect(created.provider).toBe('Custom')
+
+    // А вот заведомо неверный тип — понятная ошибка на человеческом языке, не стек.
+    expect(() => vault.createDevice({ name: 'кривой', provider: 42 } as never)).toThrow(/Провайдер/)
+    expect(() => vault.createDevice({ provider: 'Hetzner' } as never)).toThrow(/Название/)
+
+    vault.deleteDevice(created.id)
+  })
+
   it('смена мастер-пароля перешифровывает базу: старый больше не подходит', async () => {
     await vault.changePassword(PASSWORD, NEXT_PASSWORD)
     vault.lock()

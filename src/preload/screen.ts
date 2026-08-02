@@ -4,7 +4,9 @@ import { contextBridge, ipcRenderer } from 'electron'
 // компрометация canvas-окна не должна превращаться в доступ ко всему командному центру.
 const api = {
   screen: {
-    claim: (handle: string) => ipcRenderer.invoke('screen:claim', handle)
+    claim: (handle: string) => ipcRenderer.invoke('screen:claim', handle),
+    // Подтверждение, что сеанс дошёл до рабочего стола: до него пароль не сохраняется.
+    confirmPassword: (handle: string) => ipcRenderer.invoke('screen:confirmPassword', handle)
   },
   win: {
     setFullScreen: (on: boolean) => ipcRenderer.invoke('window:setFullScreen', on),

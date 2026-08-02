@@ -15,7 +15,13 @@ import {
   type SnapshotInput
 } from './metric-snapshot'
 import { initialStatus } from '../shared/reachability'
-import { legacyManualRenewal, parseSubscriptionInput, parseWalletInput } from './finance-validation'
+import {
+  legacyManualRenewal,
+  parseDeviceCost,
+  parseSubscriptionInput,
+  parseWalletInput,
+  text
+} from './finance-validation'
 import type {
   AuthType,
   AltBoot,
@@ -744,11 +750,14 @@ export function createDevice(input: DeviceInput): DeviceDTO {
   const d = requireDb()
   const now = Date.now()
   const nextSort = (d.prepare('SELECT COALESCE(MAX(sort), -1) + 1 AS s FROM devices').get() as { s: number }).s
-  const cost = input.cost ?? { amount: 0, currency: 'USD' as const, usd: 0 }
+  // Деньги проверяются, а не принимаются на слово: отрицательная сумма уменьшала общий
+  // месячный расход и пряталась фильтром `usd > 0`, а неизвестная валюта молча получала курс 1.
+  // Пересчёт в доллары делаем сами — арифметике из renderer в деньгах не место.
+  const cost = parseDeviceCost(input.cost)
   const row: DeviceRow = {
     id: randomUUID(),
-    name: input.name.trim(),
-    provider: input.provider.trim() || 'Custom',
+    name: text(input.name, 'Название устройства', 160, true),
+    provider: text(input.provider, 'Провайдер', 160) || 'Custom',
     role: input.role ?? null,
     kind: input.kind ?? 'server',
     ip: input.ip ?? '',
@@ -762,9 +771,9 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     cpu: input.cpu ?? 0,
     ram_used: input.ram?.used ?? 0,
     ram_total: input.ram?.total ?? 0,
-    cost_amount: cost.amount ?? 0,
-    cost_currency: cost.currency ?? 'USD',
-    cost_usd: cost.usd || toUsd(cost.amount ?? 0, cost.currency ?? 'USD'),
+    cost_amount: cost.amount,
+    cost_currency: cost.currency,
+    cost_usd: toUsd(cost.amount, cost.currency),
     console_url: input.consoleUrl ?? '',
     auth_type: input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : 'none'),
     secret_password: input.password || null,
@@ -828,7 +837,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     ram_total: input.ram?.total ?? cur.ram_total,
     cost_amount: cost.amount,
     cost_currency: cost.currency,
-    cost_usd: cost.usd || toUsd(cost.amount, cost.currency),
+    cost_usd: toUsd(cost.amount, cost.currency),
     console_url: input.consoleUrl ?? cur.console_url,
     auth_type: authType,
     secret_password: newSecret,
@@ -991,18 +1000,32 @@ export function getOsEndpoints(id: string): OsEndpoint[] {
 }
 
 /** TOFU host-key check: 'new' (just stored), 'match', or 'changed'. Main-process only. */
-export function checkHostKey(host: string, port: number, keyHash: string): 'new' | 'match' | 'changed' {
+/**
+ * Сверить ключ хоста с закреплённым.
+ *
+ * `commit` управляет тем, ЗАПИСЫВАТЬ ли новый ключ. По умолчанию — нет: проверка идёт в
+ * рукопожатии, до аутентификации, и коннект по ошибочному адресу не должен навсегда закреплять
+ * чужой ключ (после чего настоящий сервер читался бы как «ключ изменился»). Записывает
+ * `makeHostVerifier.commit()` — уже после успешного входа.
+ */
+export function checkHostKey(
+  host: string,
+  port: number,
+  keyHash: string,
+  opts: { commit?: boolean } = {}
+): 'new' | 'match' | 'changed' {
   const d = requireDb()
   const row = d.prepare('SELECT key_hash FROM known_hosts WHERE host = ? AND port = ?').get(host, port) as
     | { key_hash: string }
     | undefined
   if (!row) {
-    d.prepare('INSERT INTO known_hosts (host, port, key_hash, first_seen) VALUES (?, ?, ?, ?)').run(
-      host,
-      port,
-      keyHash,
-      Date.now()
-    )
+    if (opts.commit)
+      d.prepare('INSERT INTO known_hosts (host, port, key_hash, first_seen) VALUES (?, ?, ?, ?)').run(
+        host,
+        port,
+        keyHash,
+        Date.now()
+      )
     return 'new'
   }
   return row.key_hash === keyHash ? 'match' : 'changed'

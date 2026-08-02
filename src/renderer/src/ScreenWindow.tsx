@@ -240,6 +240,10 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
         attemptRef.current = 0
         setErr(null)
         setPhase('connected')
+        // Рабочий стол отрисовался — значит учётные данные приняты. Только теперь main
+        // сохранит введённый пароль: мост guacd поднимается ДО проверки по NLA, и раньше
+        // опечатка с галочкой «запомнить» затирала верный сохранённый пароль безвозвратно.
+        void api?.screen.confirmPassword?.(handle)
         const { w, h } = viewport()
         try {
           client.sendSize(w, h) // разрешение сеанса = размер окна → картинка 1:1, без мыла
