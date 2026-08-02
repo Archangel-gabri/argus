@@ -419,8 +419,17 @@ export async function unlock(password: string): Promise<void> {
   let schemaError: Error | null = null
   for (const cand of candidates) {
     const keyHex = await deriveKeyHex(password, Buffer.from(cand.salt, 'hex'))
-    const d = openEncrypted(keyHex)
+    // ОТКРЫТИЕ ВНУТРИ try — и это принципиально.
+    //
+    // Предполагалось, что неверный ключ обнаружится на первом чтении ниже. На деле он
+    // обнаруживается раньше: `openEncrypted` выставляет `journal_mode = WAL`, а эта прагма уже
+    // трогает страницы базы и на чужом ключе бросает SQLITE_NOTADB. Пока вызов стоял снаружи,
+    // ошибка вылетала мимо цикла — и ВТОРОЙ кандидат, та самая соль из `.new`, не пробовался
+    // никогда. То есть согласование после сбоя между перешифровкой и публикацией соли не
+    // работало вовсе: ровно тот случай, ради которого двухфазная фиксация и сделана.
+    let d: Database.Database | null = null
     try {
+      d = openEncrypted(keyHex)
       // Force key verification: a wrong key makes the first read throw.
       d.prepare('SELECT count(*) AS n FROM sqlite_master').get()
       // С этого места ПАРОЛЬ ТОЧНО ВЕРЕН: чтение зашифрованной базы удалось.
@@ -468,8 +477,10 @@ export async function unlock(password: string): Promise<void> {
       // Первую такую ошибку и запоминаем: она относится к сработавшему ключу,
       // ошибки последующих кандидатов — уже про чужую соль.
       if (keyWasCorrect && !schemaError) schemaError = e as Error
+      // `d` может быть null, если упало само открытие: неверный ключ обнаруживается ещё в
+      // прагме, до того как соединение вернулось наружу.
       try {
-        d.close()
+        d?.close()
       } catch {
         /* ignore */
       }
