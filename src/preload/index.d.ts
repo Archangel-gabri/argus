@@ -196,7 +196,11 @@ export interface ArgusApi {
   agent: {
     status: (deviceId: string) => Promise<AgentStatus>
     provision: (deviceId: string) => Promise<ProvisionResult>
-    forget: (deviceId: string) => Promise<{ ok: boolean }>
+    /** `revoked`: remote — снят с машины; pending — она не в сети и агент на ней жив;
+     *  failed — дошли, но снять не удалось. `ok: true` бывает только при 'remote'. */
+    forget: (
+      deviceId: string
+    ) => Promise<{ ok: boolean; revoked: 'remote' | 'pending' | 'failed'; error?: string }>
   }
   win: {
     setFullScreen: (on: boolean) => Promise<boolean>

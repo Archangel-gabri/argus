@@ -13,6 +13,8 @@ import { app } from 'electron'
 import { execOnce, resolveConn } from './ssh'
 import { whichOs } from './pc'
 import { getAgentToken, setAgentToken, getAgentCert, setAgentCert } from './vault'
+import { buildForgetCommand, decideForgetOutcome, type ForgetOutcome } from './agent-forget'
+import { remoteFamily, remoteArch } from './os-family'
 
 export const AGENT_PORT = 47990
 const AGENT_VERSION = '0.1.0'
@@ -245,9 +247,8 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
       ? await execOnce(deviceId, psCmd('$env:PROCESSOR_ARCHITECTURE'))
       : await execOnce(deviceId, 'uname -s; uname -m')
   const raw = (archProbe.output || '').trim().toLowerCase()
-  const arch = /arm64|aarch64/.test(raw) ? 'arm64' : 'amd64'
-  const family =
-    os.family === 'windows' ? 'windows' : /darwin/.test(raw) ? 'darwin' : /bsd/.test(raw) ? 'freebsd' : 'linux'
+  const arch = remoteArch(raw)
+  const family = remoteFamily(os.family === 'windows', raw)
 
   if (family === 'freebsd')
     return {
@@ -596,16 +597,49 @@ async function uploadFile(
  * Сам двоичный файл не трогаем: он будет перезаписан установкой, а удалять работающую программу
  * ради выдачи новых ключей незачем.
  */
-export async function forgetAgent(deviceId: string): Promise<{ ok: boolean; error?: string }> {
-  setAgentToken(deviceId, null)
+export async function forgetAgent(
+  deviceId: string
+): Promise<{ ok: boolean; revoked: ForgetOutcome['revoked']; error?: string }> {
+  // Порядок обратный прежнему и это главное в этой функции. Раньше локальный токен стирался
+  // ПЕРВЫМ: обрыв посередине оставлял на машине живой агент с действующим токеном, а у нас —
+  // ничего, чем его отозвать. Теперь токен уходит последним и только после подтверждения.
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: true } // машина не в сети — стёрли что могли
-  const cmd =
+
+  if (os.family === 'off') {
+    const out = decideForgetOutcome({ family: 'off', execOk: false, output: '' })
+    return { ok: out.ok, revoked: out.revoked, error: out.ok ? undefined : out.error }
+  }
+
+  // Семейство спрашиваем у машины, а не у `whichOs`: тот знает только Windows и «всё остальное»,
+  // и на macOS отзыв ушёл бы по linux-ветке, не тронув launchd — а он поднял бы агент заново.
+  const probe =
     os.family === 'windows'
-      ? psCmd(`Remove-Item "$env:LOCALAPPDATA\\Argus\\agent.crt","$env:LOCALAPPDATA\\Argus\\agent.key","$env:LOCALAPPDATA\\Argus\\agent.token" -Force -EA SilentlyContinue; 'ok'`)
-      : 'rm -f "$HOME/.argus/agent.crt" "$HOME/.argus/agent.key" "$HOME/.argus/agent.token"'
-  const r = await execOnce(deviceId, cmd)
-  return r.ok ? { ok: true } : { ok: false, error: r.error }
+      ? { output: '' }
+      : await execOnce(deviceId, 'uname -s; uname -m')
+  const family = remoteFamily(os.family === 'windows', probe.output)
+
+  let darwinJob: string | undefined
+  if (family === 'darwin') {
+    const ctx = await readDarwinContext(deviceId)
+    if (!('error' in ctx)) darwinJob = `gui/${ctx.uid}/com.argus.agent`
+  }
+
+  const raw = buildForgetCommand(family, darwinJob)
+  const r = await execOnce(deviceId, family === 'windows' ? psCmd(raw) : raw)
+  const out = decideForgetOutcome({
+    family,
+    execOk: r.ok,
+    output: r.output,
+    error: r.error
+  })
+
+  // Забываем у себя ТОЛЬКО когда отзыв подтверждён с той стороны. Иначе токен нужен нам
+  // самим — чтобы проверить состояние и повторить попытку.
+  if (out.ok) {
+    setAgentToken(deviceId, null)
+    setAgentCert(deviceId, null)
+  }
+  return { ok: out.ok, revoked: out.revoked, error: out.ok ? undefined : out.error }
 }
 
 /** Данные для подключения окна экрана к агенту. */
