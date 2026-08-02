@@ -16,6 +16,8 @@ function friendlyErr(msg: string): string {
 
 interface SftpSession {
   id: string
+  /** Чьё это соединение. Нужно, чтобы удаление устройства могло его закрыть. */
+  deviceId: string
   client: Client
   sftp: SFTPWrapper
 }
@@ -75,7 +77,7 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
         }
         const id = randomUUID()
         ok = true
-        sessions.set(id, { id, client, sftp })
+        sessions.set(id, { id, deviceId, client, sftp })
         client.on('close', () => sessions.delete(id)) // не течь сессией при обрыве
         done({ ok: true, sessionId: id })
       })
@@ -214,4 +216,11 @@ export function sftpClose(sessionId: string): void {
 
 export function sftpCloseAll(): void {
   for (const id of [...sessions.keys()]) sftpClose(id)
+}
+
+/** Закрыть файловые сессии ОДНОГО устройства. Возвращает, сколько закрыл. */
+export function sftpCloseDevice(deviceId: string): number {
+  const ids = [...sessions.values()].filter((s) => s.deviceId === deviceId).map((s) => s.id)
+  for (const id of ids) sftpClose(id)
+  return ids.length
 }

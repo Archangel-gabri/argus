@@ -18,7 +18,9 @@ import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
-import type { DeviceInput, VaultState, AiAccountInput } from './types'
+import type { DeviceInput, VaultState, AiAccountInput, PowerResult } from './types'
+import { resolvePowerAction, describeRejectedAction } from './power-action'
+import { disposeDevice } from './device-disposal'
 import { nextReachability, type Reachability } from '../shared/reachability'
 import { masterPasswordPolicyError } from '../shared/password-strength'
 import { parseSubscriptionInput, parseWalletInput } from './finance-validation'
@@ -160,9 +162,20 @@ export function registerIpc(): void {
   ipcMain.handle('devices:delete', (_e, id: unknown) => {
     try {
       const deviceId = asString(id)
-      // Гасим живые проброс-туннели этого устройства — иначе localhost-листенер продолжал
-      // туннелировать даже после удаления (утечка до перезапуска приложения).
-      for (const fwd of forward.listForwards(deviceId)) forward.closeForward(fwd.id)
+      // Отзываем ВСЕ живые возможности устройства до того, как запись исчезнет. Раньше здесь
+      // гасились только проброс-туннели, а терминал, файловая сессия и трансляция продолжали
+      // работать по уже открытым соединениям: устройства в списке нет, а доступ к машине есть,
+      // и закрыть его нечем — закрывать не по чему.
+      disposeDevice(deviceId, {
+        closeShells: ssh.closeDevice,
+        closeSftp: sftp.sftpCloseDevice,
+        closeScreens: screen.closeDeviceScreens,
+        closeForwards: (dev) => {
+          const live = forward.listForwards(dev)
+          for (const fwd of live) forward.closeForward(fwd.id)
+          return live.length
+        }
+      })
       const removed = vault.deleteDevice(deviceId)
       return removed ? { ok: true } : { ok: false, error: 'Устройство не найдено' }
     } catch (err) {
@@ -347,8 +360,18 @@ export function registerIpc(): void {
   })
   ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) => pc.boot(asString(id), asString(target)))
   ipcMain.handle('pc:power', (_e, id: unknown, action: unknown) => {
-    const a = asString(action)
-    return pc.power(asString(id), a === 'poweroff' || a === 'suspend' ? a : 'reboot')
+    // Раньше здесь стояло `a === 'poweroff' || a === 'suspend' ? a : 'reboot'`: любое
+    // неузнанное значение уводило живую машину в перезагрузку. Действие необратимое,
+    // поэтому неизвестное — отказ, а не догадка.
+    const a = resolvePowerAction(action)
+    if (!a)
+      return {
+        ok: false,
+        os: '',
+        phase: 'rejected',
+        error: `неизвестное действие питания: ${describeRejectedAction(action)}`
+      } satisfies PowerResult
+    return pc.power(asString(id), a)
   })
   ipcMain.handle('pc:wake', (_e, id: unknown) => pc.wake(asString(id)))
   ipcMain.handle('pc:powerDiag', (_e, id: unknown) => pc.powerDiag(asString(id)))

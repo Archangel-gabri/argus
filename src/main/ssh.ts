@@ -310,6 +310,13 @@ export function closeAll(): void {
   for (const id of [...sessions.keys()]) closeShell(id)
 }
 
+/** Закрыть терминалы ОДНОГО устройства. Возвращает, сколько закрыл. */
+export function closeDevice(deviceId: string): number {
+  const ids = [...sessions.values()].filter((s) => s.deviceId === deviceId).map((s) => s.id)
+  for (const id of ids) closeShell(id)
+  return ids.length
+}
+
 function cleanup(id: string): void {
   // Раньше сессия просто выбрасывалась из карты, а само SSH-соединение оставалось жить с
   // keep-alive до конца работы приложения. Каждый `exit` в терминале утекал одним соединением,
@@ -559,11 +566,22 @@ export function probeHost(opts: {
   })
 }
 
+/**
+ * Потолок на выполнение одной команды, считая от рукопожатия.
+ *
+ * Щедрый намеренно: сюда попадают и пользовательские сниппеты, и сбор железа, который на
+ * медленной машине идёт десятки секунд. Задача не «уложиться в норматив», а не дать зависшему
+ * потоку остановить опрос парка навсегда. Вызывающие, знающие свой бюджет, передают своё
+ * значение — питание, например, ждёт всего 10 секунд.
+ */
+const EXEC_DEADLINE_MS = 90_000
+
 /** One-shot exec against an explicit connection bundle (reused by execOnce + pc dual-boot). */
 export function execOnConn(
   conn: DeviceConn,
   command: string,
-  readyTimeout = 15000
+  readyTimeout = 15000,
+  execTimeout = EXEC_DEADLINE_MS
 ): Promise<{ ok: boolean; output: string; error?: string }> {
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, output: '', error: 'placeholder IP' })
   if (!hasCredential(conn)) return Promise.resolve({ ok: false, output: '', error: 'no credential' })
@@ -571,9 +589,26 @@ export function execOnConn(
     const client = new Client()
     let settled = false
     let out = ''
+    // `readyTimeout` ограничивает ТОЛЬКО рукопожатие. Дальше стоял вечный ожидатель: сервер,
+    // принявший команду и не закрывший поток (зависший `ss`, замерший диск, полу-закрытое
+    // соединение), подвешивал промис навсегда. Наверху `refreshMetrics` держит один общий
+    // флаг «опрос идёт» и снимает его в finally — который в этом случае не наступал никогда,
+    // так что ВЕСЬ последующий опрос парка молча пропускался, а интерфейс до перезапуска
+    // показывал старые числа как свежие. Отказ должен быть заметным, а не бесшумным.
+    const deadline = setTimeout(
+      () =>
+        done({
+          ok: false,
+          output: out.trimEnd(),
+          error: `команда не ответила за ${Math.round(execTimeout / 1000)}с`
+        }),
+      execTimeout
+    )
+    deadline.unref?.()
     const done = (r: { ok: boolean; output: string; error?: string }): void => {
       if (!settled) {
         settled = true
+        clearTimeout(deadline)
         try {
           client.end()
         } catch {

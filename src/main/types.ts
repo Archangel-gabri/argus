@@ -263,6 +263,9 @@ export interface LiveMetrics {
  *  unreachable = до хоста не доехали, команда НЕ выполнялась (не путать с rejected);
  *  rejected = хост отклонил (inhibitor/polkit/нет прав) — error несёт реальный stderr;
  *  still-up = команда ушла, но хост всё ещё отвечает; no-endpoint = не в сети. */
+/** Что именно делаем с машиной. Список закрытый: всё остальное — ошибка, а не «наверное, ребут». */
+export type PowerAction = 'reboot' | 'poweroff' | 'suspend'
+
 export interface PowerResult {
   ok: boolean
   os: string

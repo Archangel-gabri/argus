@@ -413,6 +413,19 @@ export function screenClaim(
   return { ok: true, mode: s.mode, wsPort: s.wsPort, token: s.token, url: s.url }
 }
 
+/** Закрыть трансляции ОДНОГО устройства (его удалили — сеанс не должен пережить запись). */
+export function closeDeviceScreens(deviceId: string): number {
+  const mine = [...sessions.entries()].filter(([, s]) => s.deviceId === deviceId)
+  for (const [handle, s] of mine) {
+    const w = BrowserWindow.fromId(s.winId)
+    if (w && !w.isDestroyed()) w.close()
+    sessions.delete(handle)
+  }
+  // Мост guacd намеренно не трогаем: он общий, и его закрытие оборвало бы чужие сеансы.
+  // Без записи в `sessions` окно всё равно ничего не получит по `screen:claim`.
+  return mine.length
+}
+
 /** Закрыть все удалённые экраны и loopback-мост. Вызывается при lock и завершении приложения. */
 export function closeAllScreens(): void {
   for (const s of sessions.values()) {
