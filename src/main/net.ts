@@ -2,6 +2,8 @@
 // страна/флаг/провайдер при добавлении устройства. Приватность: запрос ТОЛЬКО по кнопке
 // (не автоматически), уходит один IP по TLS на публичный geo-сервис.
 
+import { isGeoResolvable } from './ip-privacy'
+
 export interface IpInfo {
   ok: boolean
   country?: string
@@ -34,13 +36,15 @@ function tidyProvider(domain: string, org: string, isp: string): string {
     .trim()
 }
 
-const isPrivate = (ip: string): boolean =>
-  /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|::1|fe80:|fc|fd)/i.test(ip)
-
 export async function ipLookup(ip: string): Promise<IpInfo> {
   const clean = (ip || '').trim()
   if (!clean) return { ok: false, error: 'Пустой IP' }
-  if (isPrivate(clean)) return { ok: false, error: 'Приватный/локальный IP — гео недоступно' }
+  // Единая проверка для всех точек входа. Раньше здесь был свой, более слабый список
+  // префиксов: он не знал ни про 169.254, ни про `::ffff:10.0.0.7`, ни про имена хостов —
+  // а именно эта функция стоит за IPC-каналом `net:ipLookup`, то есть строгий фильтр из
+  // geo.ts обходился прямым вызовом.
+  if (!isGeoResolvable(clean))
+    return { ok: false, error: 'Приватный, локальный или не-адрес — наружу не отправляем' }
   try {
     const r = await fetch(`https://ipwho.is/${encodeURIComponent(clean)}?fields=success,message,country,country_code,city,connection,flag`, {
       signal: AbortSignal.timeout(8000)

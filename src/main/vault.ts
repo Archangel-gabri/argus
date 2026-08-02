@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 
 import Database from 'better-sqlite3-multiple-ciphers'
 import { deriveKeyHex } from './crypto'
 import { prepareVaultInitialization, type VaultMeta } from './vault-init'
+import { addColumn } from './migrate-guard'
 import {
   METRIC_SNAPSHOT_INSERT,
   snapshotStatus,
@@ -74,6 +75,14 @@ function openEncrypted(keyHex: string): Database.Database {
 }
 
 function migrate(d: Database.Database): void {
+  // Наращивание схемы идёт через addColumn: он терпит ТОЛЬКО «колонка уже есть». Раньше здесь
+  // стояли одиннадцать голых `catch {}`, и под тем же кодом SQLITE_ERROR молча проглатывались
+  // повреждение базы, отсутствие таблицы и кончившийся диск — приложение продолжало работать
+  // на схеме, которой нет, а всплывало это позже и в другом месте.
+  const exec = (sql: string): void => {
+    d.exec(sql)
+  }
+
   d.exec(`CREATE TABLE IF NOT EXISTS devices (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -107,65 +116,29 @@ function migrate(d: Database.Database): void {
     updated_at INTEGER
   )`)
   // Add jump_id to pre-existing device tables (fresh tables already have it → ALTER throws, ignored).
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN jump_id TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN jump_id TEXT')
   // B3: device class for Fleet groups (existing rows are all servers).
-  try {
-    d.exec(`ALTER TABLE devices ADD COLUMN kind TEXT DEFAULT 'server'`)
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, `ALTER TABLE devices ADD COLUMN kind TEXT DEFAULT 'server'`)
   // C: alt OS endpoint for dual-boot PCs.
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN alt TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN alt TEXT')
   // Экран: пароль учётки ОС для трансляции (RDP/NLA) — отдельный секрет, не SSH.
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN screen_password TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN screen_password TEXT')
   // Токен собственного агента трансляции (выдаётся при провижининге по SSH).
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN agent_token TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN agent_token TEXT')
   // Закреплённый отпечаток TLS-сертификата агента (TOFU, как host-key у SSH).
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN agent_cert TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN agent_cert TEXT')
   // Загрузочная запись ОСНОВНОЙ ОС (EFI-идентификатор или пункт меню загрузчика).
   // Без неё переключение ОС из Windows не могло указать цель.
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN boot_entry TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN boot_entry TEXT')
   // Портрет устройства: ключ встроенного изображения либо data-URL своей картинки.
   // До этого картинка выводилась из типа и роли, и пользователь не мог её сменить.
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN icon TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN icon TEXT')
   // Типы «телефон/часы/наушники» убраны: приложение с ними ничего не делало, и карточка
   // такого устройства открывалась пустой. Уже заведённые записи переезжают в «другое» —
   // само устройство, его адрес и заметки остаются на месте, меняется только ярлык типа.
   d.exec(`UPDATE devices SET kind = 'other' WHERE kind IN ('phone', 'watch', 'buds')`)
   // C: MAC for Wake-on-LAN.
-  try {
-    d.exec('ALTER TABLE devices ADD COLUMN mac TEXT')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE devices ADD COLUMN mac TEXT')
   d.exec(`CREATE TABLE IF NOT EXISTS known_hosts (
     host TEXT NOT NULL,
     port INTEGER NOT NULL DEFAULT 22,
@@ -200,13 +173,10 @@ function migrate(d: Database.Database): void {
     manual_renewal INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER
   )`)
-  let addedManualRenewal = false
-  try {
-    d.exec('ALTER TABLE subscriptions ADD COLUMN manual_renewal INTEGER NOT NULL DEFAULT 0')
-    addedManualRenewal = true
-  } catch {
-    /* column already exists */
-  }
+  const addedManualRenewal = addColumn(
+    exec,
+    'ALTER TABLE subscriptions ADD COLUMN manual_renewal INTEGER NOT NULL DEFAULT 0'
+  )
   if (addedManualRenewal) {
     // Старые записи один раз переезжают из notes. После миграции notes больше не
     // влияют на логику: владелец может явно снять флаг.
@@ -231,11 +201,7 @@ function migrate(d: Database.Database): void {
     status TEXT
   )`)
   // Дисковая тревога раньше имела правило, но не имела данных: snapshot отбрасывал disk.
-  try {
-    d.exec('ALTER TABLE metric_snapshots ADD COLUMN disk REAL')
-  } catch {
-    /* column already exists */
-  }
+  addColumn(exec, 'ALTER TABLE metric_snapshots ADD COLUMN disk REAL')
   d.exec('CREATE INDEX IF NOT EXISTS idx_snap_dev ON metric_snapshots (device_id, ts)')
   d.exec(`CREATE TABLE IF NOT EXISTS ai_accounts (
     id TEXT PRIMARY KEY,

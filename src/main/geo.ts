@@ -4,13 +4,11 @@
 import type { WebContents } from 'electron'
 import { ipLookup, type IpInfo } from './net'
 import { getIpGeo, setIpGeo, applyGeoToDevice } from './vault'
+import { isGeoResolvable } from './ip-privacy'
 
-/** Публичный, гео-кодируемый IP? (не RFC1918/CGNAT 100.64/8/Tailscale/loopback/link-local). */
-function isPublicResolvable(ip: string): boolean {
-  const s = (ip || '').trim()
-  if (!s || s.includes('x.x')) return false
-  return !/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|169\.254\.|::1|fe80:|fc|fd)/i.test(s)
-}
+// Проверка «можно ли отправлять адрес наружу» живёт в ip-privacy и одна на всех: раньше их
+// было две, в разных редакциях, и слабейшая стояла за IPC-каналом.
+const isPublicResolvable = isGeoResolvable
 
 // Защита от дублей: не запускаем два запроса на один IP одновременно.
 const inFlight = new Set<string>()

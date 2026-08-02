@@ -93,16 +93,23 @@ function netTotals(lines: string[]): { rx: number; tx: number } {
 const PHYS_DISK = /^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+)$/
 
 /** Сумма sectors read/written (×512 = байт) по физическим дискам из /proc/diskstats. */
-function diskTotals(lines: string[]): { r: number; w: number } {
+function diskTotals(lines: string[]): { r: number; w: number; measured: boolean } {
   let r = 0
   let w = 0
+  // `measured` отличает «дисков не нашлось» от «диск простаивал». Список имён намеренно узкий
+  // (обычные диски и nvme), поэтому на машине с LVM (`dm-0`), софт-рейдом (`md0`) или без
+  // секции diskstats он не совпадёт ни разу — и сумма честно останется нулём. Раньше такой
+  // случай отдавался как измеренный ноль, и интерфейс показывал «0 Б/с» вместо «недоступно»:
+  // отсутствие данных выглядело как факт простоя.
+  let measured = false
   for (const raw of lines) {
     const t = raw.trim().split(/\s+/)
     if (t.length < 10 || !PHYS_DISK.test(t[2])) continue
+    measured = true
     r += num(t[5]) * 512
     w += num(t[9]) * 512
   }
-  return { r, w }
+  return { r, w, measured }
 }
 
 function parseMem(lines: string[]): { used: number; total: number; cache: number; swapUsed: number; swapTotal: number } {
@@ -199,7 +206,8 @@ export function parseProbeV2(out: string): LiveMetrics {
     netTx: Math.max(0, Math.round((n2.tx - n1.tx) / SAMPLE_SEC)),
     diskR: Math.max(0, Math.round((d2.r - d1.r) / SAMPLE_SEC)),
     diskW: Math.max(0, Math.round((d2.w - d1.w) / SAMPLE_SEC)),
-    diskIoAvailable: true,
+    // Только если оба замера действительно нашли физические диски. Иначе это не ноль, а «не знаю».
+    diskIoAvailable: d1.measured && d2.measured,
     disk: root,
     uptime: s.UP ? Math.floor(num((s.UP[0] ?? '').trim().split(/\s+/)[0])) : undefined,
     tempCpu: parseTemp(s.TEMP ?? []),
