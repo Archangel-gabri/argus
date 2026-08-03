@@ -238,21 +238,11 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
       </Section>
       )}
 
-      {(limits.rpm != null || limits.rpd != null || limits.tpmo != null || limits.windowHours != null) && (
+      {(limits.rpm != null || limits.rpd != null || limits.tpmo != null) && (
         <Section title="Лимиты">
           {limits.rpm != null && <Fact label="В минуту">{limits.rpm} запросов</Fact>}
           {limits.rpd != null && <Fact label="В сутки">{limits.rpd} запросов</Fact>}
           {limits.tpmo != null && <Fact label="В месяц">{limits.tpmo.toLocaleString('ru-RU')} токенов</Fact>}
-          {limits.windowHours != null && (
-            <Fact label="Окно">
-              {limits.windowHours} ч
-              <span className="ml-1.5 text-[11px] text-slate-600">
-                {limits.windowTokens != null
-                  ? `потолок ${(limits.windowTokens / 1000).toFixed(0)}k — твоя оценка`
-                  : 'потолок провайдер не публикует'}
-              </span>
-            </Fact>
-          )}
         </Section>
       )}
 
