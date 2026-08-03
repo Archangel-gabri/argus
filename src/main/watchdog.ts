@@ -10,7 +10,7 @@
 
 import { Notification } from 'electron'
 import { evaluateAlerts, AlertMemory, type Alert } from './alerts'
-import { listDevices, listSubscriptions, isUnlocked } from './vault'
+import { listDevices, listSubscriptions, listAiAccess, listAiChecks, isUnlocked } from './vault'
 
 /** Как часто смотреть. Чаще незачем: полный опрос машин и так идёт раз в 30 секунд. */
 const CHECK_EVERY_MS = 60_000
@@ -51,8 +51,22 @@ function check(): void {
     nextRenewal: s.nextRenewal,
     manualRenewal: s.manualRenewal
   }))
+  // Вердикты проверок читаются из базы, а не запрашиваются у провайдеров: сторож по-прежнему
+  // ничего не опрашивает. Проверка происходит, когда владелец открывает раздел AI, — её
+  // результат и оседает здесь.
+  const checks = new Map(listAiChecks().map((c) => [c.accessId, c]))
+  const aiAccess = listAiAccess().map((a) => ({
+    id: a.id,
+    label: a.label,
+    status: a.status,
+    hasKey: a.hasKey,
+    keyExpiresAt: a.keyExpiresAt,
+    createdAt: a.createdAt,
+    checkStatus: checks.get(a.id)?.status ?? null,
+    remaining: checks.get(a.id)?.remaining ?? null
+  }))
 
-  last = evaluateAlerts({ devices, subscriptions, now: Date.now() })
+  last = evaluateAlerts({ devices, subscriptions, aiAccess, now: Date.now() })
   const { fresh } = memory.update(last)
 
   for (const a of fresh) {

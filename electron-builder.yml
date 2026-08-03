@@ -15,6 +15,11 @@ extraResources:
   - from: resources/agent
     to: agent
     filter: ['**/*']
+  # Каталог цен моделей: читается при первом открытии вольта, чтобы расход считался в деньгах
+  # сразу и без сети. Собирается tools/build-price-catalog.mjs.
+  - from: resources/ai
+    to: ai
+    filter: ['**/*']
 # SQLCipher-биндинг должен лежать распакованным (не в asar), иначе .node не загрузится.
 asarUnpack:
   - '**/*.node'

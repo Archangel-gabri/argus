@@ -101,7 +101,17 @@ const api = {
     create: (input: unknown) => ipcRenderer.invoke('ai:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('ai:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('ai:delete', id),
-    check: (id: string) => ipcRenderer.invoke('ai:check', id)
+    check: (id: string) => ipcRenderer.invoke('ai:check', id),
+    checks: () => ipcRenderer.invoke('ai:checks'),
+    prices: (provider?: string) => ipcRenderer.invoke('ai:prices', provider),
+    priceCount: () => ipcRenderer.invoke('ai:priceCount'),
+    // Ключ для запроса берётся в main по идентификатору доступа — через мост он не проходит.
+    refreshPrices: (accessId?: string) => ipcRenderer.invoke('ai:refreshPrices', accessId),
+    models: (accessId: string) => ipcRenderer.invoke('ai:models', accessId),
+    setModel: (model: unknown) => ipcRenderer.invoke('ai:setModel', model),
+    deleteModel: (accessId: string, model: string) => ipcRenderer.invoke('ai:deleteModel', accessId, model),
+    usage: (since?: string) => ipcRenderer.invoke('ai:usage', since),
+    collect: () => ipcRenderer.invoke('ai:collect')
   },
   forward: {
     open: (deviceId: string, localPort: number, remoteHost: string, remotePort: number) =>

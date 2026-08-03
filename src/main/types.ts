@@ -281,26 +281,161 @@ export interface PowerDiag {
   text: string
 }
 
-export interface AiAccount {
+/**
+ * Тип AI-доступа. Раньше запись была «ключ провайдера», и всё, что ключом не является,
+ * в неё не помещалось: подписка без ключа (Claude Max), чужие модели с наценкой (роутер),
+ * локальная Ollama, бесплатный tier, который ещё не оформлен.
+ */
+export type AiKind = 'subscription' | 'api' | 'router' | 'free-tier' | 'local' | 'cli-agent'
+
+/** Состояние доступа. `planned` — «доступно, но ещё не взято»: реестр служит и списком дел. */
+export type AiStatus = 'active' | 'paused' | 'expired' | 'planned'
+
+/** Чем платим. Из РФ это не формальность: картой платится не всё. */
+export type AiPayment = 'card' | 'crypto' | 'reseller' | 'free'
+
+/** Известные ограничения доступа. Всё необязательное: чего не знаем — не выдумываем. */
+export interface AiLimits {
+  /** Запросов в минуту / в день. */
+  rpm?: number | null
+  rpd?: number | null
+  /** Токенов в минуту / в месяц. */
+  tpm?: number | null
+  tpmo?: number | null
+  /** Окно лимита подписки: длительность в часах и наблюдаемый потолок (задаётся владельцем). */
+  windowHours?: number | null
+  /** Сколько токенов, по наблюдениям владельца, влезает в окно. Argus этого знать не может. */
+  windowTokens?: number | null
+  /** Сообщений в окне — как их считает провайдер. */
+  windowMessages?: number | null
+}
+
+export interface AiAccess {
   id: string
+  kind: AiKind
   provider: string
   label: string
+  /** На каком аккаунте/почте куплено. */
+  account: string
   plan: string
+  status: AiStatus
+  /** Ссылка на строку в subscriptions — деньги живут только там. */
+  subscriptionId: string | null
   hasKey: boolean
+  /** Где ещё лежит значение ключа: `secrets/env/api-keys.env → OPENROUTER_API_KEY`, KWallet. */
+  keyRef: string | null
+  /** Дата истечения ключа/токена (ISO yyyy-mm-dd). */
+  keyExpiresAt: string | null
+  baseUrl: string | null
+  payment: AiPayment
+  /** Трафик идёт через чужой прокси (router neutrino) — это надо видеть, а не подразумевать. */
+  thirdParty: boolean
+  /** Какие инструменты читают этот доступ. */
+  usedBy: string[]
+  /** Чем заменить, если доступ умрёт. */
+  fallbackId: string | null
+  limits: AiLimits
   notes: string | null
+  /** Когда доступ завели (мс). По нему видно, что «возьму потом» висит уже месяц. */
+  createdAt: number
 }
-export interface AiAccountInput {
+
+export interface AiAccessInput {
+  kind?: AiKind
   provider: string
   label?: string
-  apiKey?: string
+  account?: string
   plan?: string
+  status?: AiStatus
+  subscriptionId?: string | null
+  apiKey?: string
+  keyRef?: string | null
+  keyExpiresAt?: string | null
+  baseUrl?: string | null
+  payment?: AiPayment
+  thirdParty?: boolean
+  usedBy?: string[]
+  fallbackId?: string | null
+  limits?: AiLimits
   notes?: string | null
 }
+
 export interface AiCheck {
   status: 'valid' | 'invalid' | 'quota' | 'error' | 'nokey'
   remaining?: number | null
   usage?: number | null
   detail?: string
+}
+
+/**
+ * Цена модели. Четыре ставки раздельно — одна «цена за токен» врёт в разы там, где основную
+ * долю трафика составляет чтение кэша (а у агентных сессий это норма). Часовой кэш дороже
+ * пятиминутного, поэтому у него своя ставка.
+ *
+ * Все цены — доллары за ОДИН токен, как в таблице LiteLLM. Умножение на миллион делает интерфейс.
+ */
+export interface AiPrice {
+  provider: string
+  model: string
+  input: number | null
+  output: number | null
+  cacheWrite: number | null
+  cacheWrite1h: number | null
+  cacheRead: number | null
+  contextTokens: number | null
+  maxOutputTokens: number | null
+  /** chat · embedding · image_generation … — из каталога. */
+  mode: string | null
+  supportsVision: boolean
+  supportsTools: boolean
+  supportsCaching: boolean
+  /** Дата вывода модели из обращения, если объявлена. */
+  deprecatedAt: string | null
+  /** Откуда цена: вшитый каталог, живой ответ роутера или рука владельца. */
+  source: 'catalog' | 'openrouter' | 'manual'
+  fetchedAt: number
+}
+
+/** Привязка модели к доступу: что реально доступно через него и по какой цене. */
+export interface AiAccessModel {
+  accessId: string
+  model: string
+  /** Владелец отметил, что реально этим пользуется. */
+  favorite: boolean
+  /** Наценка реселлера/роутера в процентах поверх каталожной цены. */
+  markupPct: number | null
+  /** Полная замена цены (доллары за токен). Побеждает и каталог, и наценку. */
+  priceInput: number | null
+  priceOutput: number | null
+  notes: string | null
+}
+
+/** Сколько токенов и денег ушло за день по одной модели одного источника. */
+export interface AiUsageDay {
+  /** yyyy-mm-dd по местному времени: расход смотрят по своим суткам, не по UTC. */
+  date: string
+  /** Откуда данные: claude-code · codex · openrouter. */
+  source: string
+  model: string
+  input: number
+  output: number
+  cacheWrite: number
+  cacheWrite1h: number
+  cacheRead: number
+  requests: number
+  /** Доллары по ставкам каталога. Для подписки это ЭКВИВАЛЕНТ, а не потраченные деньги. */
+  costUsd: number
+}
+
+/** Итог по источнику за период — то, что показывает экран. */
+export interface AiUsageSummary {
+  days: AiUsageDay[]
+  /** Когда последний раз читали логи. */
+  collectedAt: number | null
+  /** Сколько файлов просмотрено и сколько записей учтено в последнем проходе. */
+  scannedFiles: number
+  /** Строки логов, которые не удалось разобрать: молчать о них нечестно. */
+  skipped: number
 }
 
 export interface DiskInfo {

@@ -9,9 +9,12 @@ import type {
   WalletInput,
   WalletBalance,
   MetricSnapshot,
-  AiAccount,
-  AiAccountInput,
+  AiAccess,
+  AiAccessInput,
+  AiAccessModel,
   AiCheck,
+  AiPrice,
+  AiUsageSummary,
   PowerResult,
   PowerDiag,
   LiveMetrics,
@@ -156,11 +159,30 @@ export interface ArgusApi {
     }>
   }
   ai: {
-    list: () => Promise<AiAccount[]>
-    create: (input: AiAccountInput) => Promise<AiAccount>
-    update: (id: string, input: AiAccountInput) => Promise<AiAccount>
+    list: () => Promise<AiAccess[]>
+    create: (input: AiAccessInput) => Promise<AiAccess>
+    update: (id: string, input: AiAccessInput) => Promise<AiAccess>
     remove: (id: string) => Promise<{ ok: boolean }>
     check: (id: string) => Promise<AiCheck>
+    checks: () => Promise<
+      Array<{
+        accessId: string
+        status: string
+        remaining: number | null
+        usage: number | null
+        detail: string | null
+        checkedAt: number
+        lastOkAt: number | null
+      }>
+    >
+    prices: (provider?: string) => Promise<AiPrice[]>
+    priceCount: () => Promise<number>
+    refreshPrices: (accessId?: string) => Promise<{ ok: boolean; count: number; error?: string }>
+    models: (accessId: string) => Promise<AiAccessModel[]>
+    setModel: (model: AiAccessModel) => Promise<{ ok: boolean }>
+    deleteModel: (accessId: string, model: string) => Promise<{ ok: boolean }>
+    usage: (since?: string) => Promise<AiUsageSummary>
+    collect: () => Promise<{ files: number; records: number; duplicates: number; unpriced: string[] }>
   }
   forward: {
     open: (

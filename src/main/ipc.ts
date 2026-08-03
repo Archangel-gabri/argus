@@ -8,6 +8,10 @@ import { parseSshConfig, type ParsedHost } from './sshconfig'
 import { discoverTailscale } from './discovery'
 import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
+import * as aiPrices from './ai-prices'
+import { seedPricesIfEmpty } from './ai-prices'
+import { seedAiAccessIfEmpty } from './ai-seed'
+import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
 import * as ports from './ports'
@@ -18,7 +22,7 @@ import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
-import type { DeviceInput, VaultState, AiAccountInput, PowerResult } from './types'
+import type { DeviceInput, VaultState, AiAccessInput, AiAccessModel, PowerResult } from './types'
 import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
 import { revokePendingAccess } from './access-epoch'
@@ -52,6 +56,22 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
 
+/**
+ * Что делается сразу после открытия хранилища.
+ *
+ * Каталог цен и реестр доступов нужны экрану AI с первой секунды, а собрать их можно только на
+ * открытой базе. Обе операции срабатывают ровно один раз (при пустых таблицах) и молчат дальше.
+ * Ошибка здесь не должна мешать войти в приложение: без цен показываются токены без денег.
+ */
+function afterUnlock(): void {
+  try {
+    seedPricesIfEmpty()
+    seedAiAccessIfEmpty()
+  } catch {
+    /* каталог или файл засева испорчены — приложение работает и без них */
+  }
+}
+
 export function registerIpc(): void {
   ipcMain.handle('vault:state', () => state())
 
@@ -61,6 +81,7 @@ export function registerIpc(): void {
       const policyError = await masterPasswordPolicyError(value)
       if (policyError) return { ok: false, error: policyError, state: state() }
       await vault.initialize(value)
+      afterUnlock()
       return { ok: true, state: state() }
     } catch (err) {
       return { ok: false, error: (err as Error).message, state: state() }
@@ -70,6 +91,7 @@ export function registerIpc(): void {
   ipcMain.handle('vault:unlock', async (_e, password: unknown) => {
     try {
       await vault.unlock(asString(password))
+      afterUnlock()
       return { ok: true, state: state() }
     } catch (err) {
       return { ok: false, error: (err as Error).message, state: state() }
@@ -330,19 +352,67 @@ export function registerIpc(): void {
     return walletBalance(wallet.chain, wallet.address)
   })
 
-  // AI accounts — keys stay in the vault; only validity/quota verdicts cross IPC
-  ipcMain.handle('ai:list', () => (vault.isUnlocked() ? vault.listAiAccounts() : []))
-  ipcMain.handle('ai:create', (_e, input: unknown) => vault.createAiAccount(input as AiAccountInput))
+  // AI-доступы — ключи остаются в вольте; наружу идут только вердикты и обезличенные DTO
+  ipcMain.handle('ai:list', () => (vault.isUnlocked() ? vault.listAiAccess() : []))
+  ipcMain.handle('ai:create', (_e, input: unknown) => vault.createAiAccess(input as AiAccessInput))
   ipcMain.handle('ai:update', (_e, id: unknown, input: unknown) =>
-    vault.updateAiAccount(asString(id), input as AiAccountInput)
+    vault.updateAiAccess(asString(id), input as AiAccessInput)
   )
   ipcMain.handle('ai:delete', (_e, id: unknown) => {
-    vault.deleteAiAccount(asString(id))
+    vault.deleteAiAccess(asString(id))
     return { ok: true }
   })
-  ipcMain.handle('ai:check', (_e, id: unknown) => {
-    const acc = vault.listAiAccounts().find((a) => a.id === asString(id))
-    return checkAccount(acc?.provider ?? '', vault.getAiKey(asString(id)) ?? '')
+  ipcMain.handle('ai:check', async (_e, id: unknown) => {
+    const accessId = asString(id)
+    const acc = vault.listAiAccess().find((a) => a.id === accessId)
+    const verdict = await checkAccount(acc?.provider ?? '', vault.getAiKey(accessId) ?? '')
+    // Вердикт сохраняется, чтобы его увидел сторож (он сам в сеть не ходит) и чтобы на карточке
+    // было видно, когда ключ последний раз отвечал.
+    if (acc) vault.recordAiCheck(accessId, verdict)
+    return verdict
+  })
+  ipcMain.handle('ai:checks', () => (vault.isUnlocked() ? vault.listAiChecks() : []))
+
+  // Каталог цен: список для экрана, засев вшитого снапшота и живое обновление у OpenRouter.
+  ipcMain.handle('ai:prices', (_e, provider: unknown) =>
+    vault.isUnlocked() ? vault.listAiPrices(provider ? asString(provider) : undefined) : []
+  )
+  ipcMain.handle('ai:priceCount', () => (vault.isUnlocked() ? vault.aiPriceCount() : 0))
+  ipcMain.handle('ai:refreshPrices', async (_e, accessId: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, count: 0, error: 'Хранилище заперто' }
+    // Ключ берётся в main и наружу не выходит: renderer передаёт только идентификатор доступа.
+    const key = accessId ? vault.getAiKey(asString(accessId)) : null
+    const seeded = aiPrices.reseedPrices()
+    const live = await aiPrices.refreshOpenRouterPrices(key)
+    return { ok: live.ok || seeded > 0, count: seeded + live.count, error: live.ok ? undefined : live.error }
+  })
+
+  // Модели конкретного доступа: что через него доступно и по какой цене.
+  ipcMain.handle('ai:models', (_e, accessId: unknown) =>
+    vault.isUnlocked() ? vault.listAccessModels(asString(accessId)) : []
+  )
+  ipcMain.handle('ai:setModel', (_e, model: unknown) => {
+    vault.setAccessModel(model as AiAccessModel)
+    return { ok: true }
+  })
+  ipcMain.handle('ai:deleteModel', (_e, accessId: unknown, model: unknown) => {
+    vault.deleteAccessModel(asString(accessId), asString(model))
+    return { ok: true }
+  })
+
+  // Расход: дневные итоги из базы и разбор новых хвостов логов по требованию.
+  ipcMain.handle('ai:usage', (_e, since: unknown) => {
+    if (!vault.isUnlocked()) return { days: [], collectedAt: null, scannedFiles: 0, skipped: 0 }
+    return {
+      days: vault.listUsageDays(since ? asString(since) : undefined),
+      collectedAt: vault.lastUsageScan(),
+      scannedFiles: 0,
+      skipped: 0
+    }
+  })
+  ipcMain.handle('ai:collect', async () => {
+    if (!vault.isUnlocked()) return { files: 0, records: 0, duplicates: 0, unpriced: [] }
+    return await collectUsage()
   })
 
   // Локальный ИИ-ассистент: извлечение полей устройства из текста (Ollama, приватно)

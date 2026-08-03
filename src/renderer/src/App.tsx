@@ -61,7 +61,20 @@ export default function App(): React.JSX.Element {
         error: null
       })
       useSubs.setState({ subs: [], loaded: false, loading: false, error: null })
-      useAi.setState({ accounts: [], checks: {}, loaded: false, loading: false, error: null, checking: {} })
+      useAi.setState({
+        access: [],
+        checks: {},
+        lastOk: {},
+        prices: [],
+        models: {},
+        usage: [],
+        usageCollectedAt: null,
+        unpriced: [],
+        loaded: false,
+        loading: false,
+        error: null,
+        checking: {}
+      })
       useUI.setState({
         dialog: { mode: 'closed' },
         detail: null,

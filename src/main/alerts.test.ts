@@ -193,3 +193,64 @@ describe('пороги согласованы между собой', () => {
     expect(RENEWAL_WARNING_DAYS).toBeGreaterThan(0)
   })
 })
+
+type AiInput = NonNullable<Parameters<typeof evaluateAlerts>[0]['aiAccess']>[number]
+
+const ai = (over: Partial<AiInput> = {}): AiInput => ({
+  id: 'a1',
+  label: 'OpenRouter',
+  status: 'active',
+  hasKey: true,
+  keyExpiresAt: null,
+  createdAt: NOW,
+  ...over
+})
+
+const runAi = (list: AiInput[]): Alert[] =>
+  evaluateAlerts({ devices: [], subscriptions: [], aiAccess: list, now: NOW })
+
+describe('тревоги по AI-доступам', () => {
+  it('предупреждает об истекающем ключе и усиливает голос под конец', () => {
+    expect(runAi([ai({ keyExpiresAt: '2026-08-20' })])).toHaveLength(0)
+    const soon = runAi([ai({ keyExpiresAt: '2026-08-10' })])
+    expect(soon[0]).toMatchObject({ kind: 'ai-key-expiring', severity: 'warning' })
+    const now = runAi([ai({ keyExpiresAt: '2026-08-01' })])
+    expect(now[0].severity).toBe('critical')
+  })
+
+  it('про истёкший ключ говорит прямо — в реестре он выглядит рабочим', () => {
+    const past = runAi([ai({ keyExpiresAt: '2026-07-01' })])
+    expect(past[0].title).toContain('истёк')
+    expect(past[0].severity).toBe('critical')
+  })
+
+  it('мёртвым считается только явно отвергнутый ключ, но не сетевая ошибка', () => {
+    expect(runAi([ai({ checkStatus: 'invalid' })]).map((a) => a.kind)).toEqual(['ai-key-dead'])
+    // «Не смогли спросить» и «провайдер не проверяется» — не повод объявлять ключ мёртвым:
+    // по такой тревоге рабочий ключ пойдёт на перевыпуск.
+    expect(runAi([ai({ checkStatus: 'error' })])).toHaveLength(0)
+    expect(runAi([ai({ checkStatus: 'quota' })])).toHaveLength(0)
+    // Записи без ключа проверять нечем — подписке ключ и не нужен.
+    expect(runAi([ai({ hasKey: false, checkStatus: 'invalid' })])).toHaveLength(0)
+  })
+
+  it('низкий остаток замечается, а неизвестный — нет', () => {
+    expect(runAi([ai({ remaining: 3 })])[0]).toMatchObject({ kind: 'ai-credit-low', severity: 'warning' })
+    expect(runAi([ai({ remaining: 0 })])[0].severity).toBe('critical')
+    // Ноль — это «работа встала», а отсутствие числа — «не знаем»; смешивать нельзя.
+    expect(runAi([ai({ remaining: null })])).toHaveLength(0)
+    expect(runAi([ai({ remaining: 42 })])).toHaveLength(0)
+  })
+
+  it('напоминает про бесплатный доступ, который так и не оформили', () => {
+    const old = NOW - 40 * 24 * 60 * 60 * 1000
+    expect(runAi([ai({ status: 'planned', createdAt: old })])[0].kind).toBe('ai-access-idle')
+    // Вчерашняя пометка «возьму» — это план, а не забывчивость.
+    expect(runAi([ai({ status: 'planned', createdAt: NOW - 24 * 60 * 60 * 1000 })])).toHaveLength(0)
+  })
+
+  it('раздел AI пуст или отсутствует — тревог нет', () => {
+    expect(evaluateAlerts({ devices: [], subscriptions: [], now: NOW })).toHaveLength(0)
+    expect(runAi([])).toHaveLength(0)
+  })
+})

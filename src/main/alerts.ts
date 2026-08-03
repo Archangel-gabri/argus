@@ -16,6 +16,10 @@ export type AlertKind =
   | 'device-offline' // машина не отвечает
   | 'disk-full' // на диске мало места
   | 'renewal-soon' // подписку/сервер скоро продлевать, а платёж ручной
+  | 'ai-key-expiring' // ключ или токен доступа скоро истекает
+  | 'ai-key-dead' // ключ перестал приниматься провайдером
+  | 'ai-credit-low' // на балансе доступа почти ничего не осталось
+  | 'ai-access-idle' // бесплатный доступ отмечен «возьму», но так и не взят
 
 export interface Alert {
   /** Устойчивый ключ: по нему тревога узнаётся между проверками и не повторяется. */
@@ -49,6 +53,20 @@ export interface AlertInput {
     /** Продление ручное: о таком надо напоминать, автосписание само себя не забудет. */
     manualRenewal?: boolean
   }>
+  /** AI-доступы. Пусто — раздел ещё не заведён, и тревожить не о чем. */
+  aiAccess?: Array<{
+    id: string
+    label: string
+    status: string
+    hasKey: boolean
+    /** ISO-дата истечения ключа/токена. */
+    keyExpiresAt: string | null
+    createdAt: number
+    /** Последний СОХРАНЁННЫЙ вердикт проверки — сторож сам в сеть не ходит. */
+    checkStatus?: string | null
+    /** Остаток на счету, если провайдер его отдаёт (сейчас только OpenRouter). */
+    remaining?: number | null
+  }>
   now: number
 }
 
@@ -56,6 +74,11 @@ export interface AlertInput {
 export const DISK_WARNING = 85 // % — «скоро кончится»
 export const DISK_CRITICAL = 93 // % — «уже мешает»
 export const RENEWAL_WARNING_DAYS = 5 // за сколько дней напоминать о ручном продлении
+export const KEY_EXPIRY_WARNING_DAYS = 14 // за сколько дней предупреждать об истечении ключа
+export const KEY_EXPIRY_CRITICAL_DAYS = 3 // когда это уже «бросай и перевыпускай»
+export const CREDIT_WARNING_USD = 5 // остаток, ниже которого пора пополняться
+export const CREDIT_CRITICAL_USD = 1 // остаток, при котором работа встанет со дня на день
+export const IDLE_ACCESS_DAYS = 30 // сколько «возьму потом» считается решением, а не забывчивостью
 
 /**
  * Оценить состояние и вернуть тревоги.
@@ -124,6 +147,63 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
       body: `${s.provider}: продление ручное, само не спишется.`,
       severity: days <= 1 ? 'critical' : 'warning'
     })
+  }
+
+  for (const a of input.aiAccess ?? []) {
+    // Ключ с концом срока. Про истёкший говорим тоже: он выглядит рабочим в реестре, а
+    // ломается ровно в тот момент, когда понадобился.
+    const days = a.keyExpiresAt ? daysUntilCalendar(a.keyExpiresAt, input.now) : null
+    if (days !== null && days <= KEY_EXPIRY_WARNING_DAYS) {
+      out.push({
+        key: `ai-expiry:${a.id}`,
+        kind: 'ai-key-expiring',
+        title:
+          days < 0
+            ? `${a.label}: ключ истёк`
+            : days === 0
+              ? `${a.label}: ключ истекает сегодня`
+              : `${a.label}: ключу осталось ${days} дн.`,
+        body: 'Выпусти новый ключ и замени его в Argus и в конфигурациях инструментов.',
+        severity: days <= KEY_EXPIRY_CRITICAL_DAYS ? 'critical' : 'warning'
+      })
+    }
+
+    // Мёртвый ключ. Только `invalid` — то есть провайдер ЯВНО его не принял. Сетевая ошибка и
+    // «провайдер не поддерживает проверку» сюда не попадают: по ним ключ выбрасывать нельзя.
+    if (a.hasKey && a.checkStatus === 'invalid') {
+      out.push({
+        key: `ai-dead:${a.id}`,
+        kind: 'ai-key-dead',
+        title: `${a.label}: ключ не принимается`,
+        body: 'Провайдер отверг ключ — он отозван, истёк или заменён.',
+        severity: 'critical'
+      })
+    }
+
+    // Остаток на счету. Ноль — это тоже число: «$0» значит «работа встала», а не «неизвестно».
+    if (typeof a.remaining === 'number' && a.remaining <= CREDIT_WARNING_USD) {
+      out.push({
+        key: `ai-credit:${a.id}`,
+        kind: 'ai-credit-low',
+        title: `${a.label}: остаток $${a.remaining.toFixed(2)}`,
+        body: 'Баланс почти исчерпан — пополни, пока запросы ещё проходят.',
+        severity: a.remaining <= CREDIT_CRITICAL_USD ? 'critical' : 'warning'
+      })
+    }
+
+    // Отмеченный «возьму потом» бесплатный доступ, про который забыли. Напоминаем один раз:
+    // подавление повторов не даст этому превратиться в ежеминутный укор.
+    if (a.status === 'planned' && a.createdAt > 0) {
+      const ageDays = Math.floor((input.now - a.createdAt) / (24 * 60 * 60 * 1000))
+      if (ageDays >= IDLE_ACCESS_DAYS)
+        out.push({
+          key: `ai-idle:${a.id}`,
+          kind: 'ai-access-idle',
+          title: `${a.label}: так и не оформлен`,
+          body: `Доступ помечен как «возьму» ${ageDays} дн. назад. Оформи или убери из реестра.`,
+          severity: 'warning'
+        })
+    }
   }
 
   return out

@@ -23,6 +23,7 @@
     "test:live": "ARGUS_LIVE=1 vitest run --project live",
     "test:agent": "cd agent && test -z \"$(gofmt -l .)\" && go vet ./... && go test -race ./...",
     "agent:build": "bash agent/build-all.sh",
+    "ai:prices": "node tools/build-price-catalog.mjs",
     "check": "npm run typecheck && npm run test && npm run test:agent && npm run build",
     "check:full": "npm run check && npm run test:vault && npm run test:net && npm run test:e2e",
     "rebuild": "electron-rebuild",

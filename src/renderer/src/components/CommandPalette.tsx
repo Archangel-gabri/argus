@@ -75,7 +75,7 @@ export function CommandPalette(): React.JSX.Element | null {
   const setBroadcast = useUI((s) => s.setBroadcast)
   const lock = useVault((s) => s.lock)
   const subs = useSubs((s) => s.subs)
-  const aiAccounts = useAi((s) => s.accounts)
+  const aiAccounts = useAi((s) => s.access)
   const wallets = useWallets((s) => s.wallets)
   const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -180,7 +180,7 @@ export function CommandPalette(): React.JSX.Element | null {
           )}
 
           {aiAccounts.length > 0 && (
-            <Command.Group heading="ИИ-аккаунты" className={GROUP}>
+            <Command.Group heading="ИИ-доступы" className={GROUP}>
               {aiAccounts.map((a) => (
                 <Item key={a.id} icon={Bot} value={`ai ${a.provider} ${a.label}`} onSelect={() => run(() => setView('ai'))}>
                   {a.label}

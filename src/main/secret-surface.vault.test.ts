@@ -66,7 +66,7 @@ describe('поверхность секретов', () => {
     deviceId = d.id
     vault.setScreenPassword(deviceId, SECRETS.screenPassword)
     vault.setAgentToken(deviceId, SECRETS.agentToken)
-    vault.createAiAccount({ provider: 'openrouter', label: 'тест', apiKey: SECRETS.aiKey } as never)
+    vault.createAiAccess({ provider: 'openrouter', label: 'тест', apiKey: SECRETS.aiKey } as never)
   })
 
   describe('НЕ должно пересекать границу main → renderer', () => {
@@ -87,7 +87,7 @@ describe('поверхность секретов', () => {
     })
 
     it('список ИИ-доступов не несёт ключ', () => {
-      const accounts = vault.listAiAccounts()
+      const accounts = vault.listAiAccess()
       expect(accounts.length).toBeGreaterThan(0)
       expect(contains(accounts, SECRETS.aiKey)).toBe(false)
     })
@@ -111,7 +111,7 @@ describe('поверхность секретов', () => {
     })
 
     it('ключ ИИ достаётся только явным вызовом', () => {
-      const account = vault.listAiAccounts()[0]
+      const account = vault.listAiAccess()[0]
       expect(vault.getAiKey(account.id)).toBe(SECRETS.aiKey)
     })
   })

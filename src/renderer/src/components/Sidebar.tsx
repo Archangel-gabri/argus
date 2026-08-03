@@ -59,7 +59,7 @@ export function Sidebar(): React.JSX.Element {
   const setSearch = useUI((s) => s.setSearch)
   const setView = useUI((s) => s.setView)
   const deviceCount = useDevices((s) => s.devices.length)
-  const aiCount = useAi((s) => s.accounts.length)
+  const aiCount = useAi((s) => s.access.length)
   const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: aiCount }
 
   return (

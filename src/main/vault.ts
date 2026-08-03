@@ -37,8 +37,15 @@ import type {
   Wallet,
   WalletInput,
   MetricSnapshot,
-  AiAccount,
-  AiAccountInput
+  AiAccess,
+  AiAccessInput,
+  AiAccessModel,
+  AiKind,
+  AiLimits,
+  AiPayment,
+  AiPrice,
+  AiStatus,
+  AiUsageDay
 } from './types'
 
 type Meta = VaultMeta
@@ -239,6 +246,111 @@ function migrate(d: Database.Database): void {
     plan TEXT,
     notes TEXT,
     created_at INTEGER
+  )`)
+  // AI-доступ вместо «ключа провайдера». Имя таблицы осталось прежним намеренно: переезд на новое
+  // имя означал бы копирование строк с ключами во временную таблицу, а это лишний способ потерять
+  // ключи ради косметики. Наружу запись зовётся AiAccess.
+  addColumn(exec, `ALTER TABLE ai_accounts ADD COLUMN kind TEXT NOT NULL DEFAULT 'api'`)
+  // На каком аккаунте/почте куплено. Подписок у владельца несколько, и без этого поля
+  // «Claude Max» в списке ничем не отличается от второго такого же.
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN account TEXT')
+  addColumn(exec, `ALTER TABLE ai_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
+  // Деньги живут только в subscriptions; здесь — ссылка на них.
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN subscription_id TEXT')
+  // Где ещё лежит значение ключа (env-переменная, KWallet) — ответ на «а если приложение снесут».
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN key_ref TEXT')
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN key_expires_at TEXT')
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN base_url TEXT')
+  addColumn(exec, `ALTER TABLE ai_accounts ADD COLUMN payment TEXT NOT NULL DEFAULT 'card'`)
+  // Трафик через чужой прокси. Признак хранится явно, потому что по одному имени провайдера
+  // его не вывести: cli.neutrino.su выглядит как обычный OpenAI-совместимый эндпоинт.
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN third_party INTEGER NOT NULL DEFAULT 0')
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN used_by TEXT')
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN fallback_id TEXT')
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN limits_json TEXT')
+
+  // Каталог цен. Не пользовательские данные, а кэш: вшитый снапшот LiteLLM + живой ответ
+  // OpenRouter. Живёт в том же зашифрованном файле просто потому, что другой базы у приложения нет.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_prices (
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input REAL,
+    output REAL,
+    cache_write REAL,
+    cache_write_1h REAL,
+    cache_read REAL,
+    context_tokens INTEGER,
+    max_output_tokens INTEGER,
+    mode TEXT,
+    supports_vision INTEGER NOT NULL DEFAULT 0,
+    supports_tools INTEGER NOT NULL DEFAULT 0,
+    supports_caching INTEGER NOT NULL DEFAULT 0,
+    deprecated_at TEXT,
+    source TEXT NOT NULL,
+    fetched_at INTEGER NOT NULL,
+    PRIMARY KEY (provider, model)
+  )`)
+
+  // Какие модели доступны через конкретный доступ и по какой цене (наценка реселлера,
+  // ручная замена цены, отметка «пользуюсь»).
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_access_models (
+    access_id TEXT NOT NULL,
+    model TEXT NOT NULL,
+    favorite INTEGER NOT NULL DEFAULT 0,
+    markup_pct REAL,
+    price_input REAL,
+    price_output REAL,
+    notes TEXT,
+    PRIMARY KEY (access_id, model)
+  )`)
+
+  // Агрегат расхода: дата × источник × модель. Сырые логи не копируем — они и так лежат на диске,
+  // а их дублирование в зашифрованной базе только раздувало бы её.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_daily (
+    date TEXT NOT NULL,
+    source TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input INTEGER NOT NULL DEFAULT 0,
+    output INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0,
+    cache_write_1h INTEGER NOT NULL DEFAULT 0,
+    cache_read INTEGER NOT NULL DEFAULT 0,
+    requests INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (date, source, model)
+  )`)
+
+  // Курсор на прочитанный файл: без него каждый проход перечитывал бы все 300+ файлов логов.
+  // size вместе с mtime, потому что дописывание в конец файла mtime меняет, а вот усечение
+  // и перезапись могут уложиться в ту же секунду — тогда спасает только размер.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_cursor (
+    path TEXT PRIMARY KEY,
+    size INTEGER NOT NULL,
+    mtime INTEGER NOT NULL,
+    offset INTEGER NOT NULL,
+    read_at INTEGER NOT NULL
+  )`)
+
+  // Идентификаторы уже учтённых ответов. Один ответ попадает в несколько файлов при возобновлении
+  // сессии, и без этой таблицы возобновлённая сессия удваивала бы расход.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_seen (
+    id TEXT PRIMARY KEY,
+    seen_at INTEGER NOT NULL
+  )`)
+
+  // Последний вердикт проверки ключа. Нужен двум потребителям: экрану — чтобы показать, когда
+  // ключ в последний раз отвечал, и сторожу — чтобы заметить умерший ключ, НЕ ходя в сеть
+  // самому (сторож только читает уже собранное, как и с метриками машин).
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_key_checks (
+    access_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    remaining REAL,
+    usage REAL,
+    detail TEXT,
+    checked_at INTEGER NOT NULL,
+    /* Когда ключ последний раз ТОЧНО работал: по нему видно, «сломалось только что» или
+       «не отвечает неделю». Ошибка сети этот момент не сбрасывает. */
+    last_ok_at INTEGER
   )`)
 
   // Кэш IP-геолокации (страна/флаг/хостер/ASN) — привязан к IP, а не к устройству. Живёт в
@@ -1317,58 +1429,425 @@ export function setDeviceHardware(id: string, info: Record<string, unknown>): vo
     .run(id, JSON.stringify(info), Date.now())
 }
 
-// AI accounts — api_key lives in the SQLCipher DB; the DTO exposes only hasKey (never the key).
-export function listAiAccounts(): AiAccount[] {
-  const rows = requireDb()
-    .prepare('SELECT id, provider, label, api_key, plan, notes FROM ai_accounts ORDER BY created_at')
-    .all() as Array<{ id: string; provider: string; label: string; api_key: string | null; plan: string | null; notes: string | null }>
-  return rows.map((r) => ({
+// AI-доступы — api_key лежит в SQLCipher, наружу уходит только hasKey (значение никогда).
+
+/** Строка таблицы как её отдаёт SQLite: булевы поля целыми, списки и лимиты — текстом. */
+interface AiAccessRow {
+  id: string
+  kind: string
+  provider: string
+  label: string | null
+  api_key: string | null
+  plan: string | null
+  account: string | null
+  status: string | null
+  subscription_id: string | null
+  key_ref: string | null
+  key_expires_at: string | null
+  base_url: string | null
+  payment: string | null
+  third_party: number | null
+  used_by: string | null
+  fallback_id: string | null
+  limits_json: string | null
+  notes: string | null
+  created_at?: number | null
+}
+
+const AI_KINDS: AiKind[] = ['subscription', 'api', 'router', 'free-tier', 'local', 'cli-agent']
+const AI_STATUSES: AiStatus[] = ['active', 'paused', 'expired', 'planned']
+const AI_PAYMENTS: AiPayment[] = ['card', 'crypto', 'reseller', 'free']
+
+/** Разбор списка инструментов. Битый JSON = «список неизвестен», а не падение экрана. */
+function parseUsedBy(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function parseLimits(raw: string | null): AiLimits {
+  if (!raw) return {}
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as AiLimits) : {}
+  } catch {
+    return {}
+  }
+}
+
+function toAccess(r: AiAccessRow): AiAccess {
+  return {
     id: r.id,
+    // Значение из базы могло прийти из ручной правки или из будущей версии схемы: неизвестный
+    // тип показываем как обычный api-доступ, но запись не теряем.
+    kind: AI_KINDS.includes(r.kind as AiKind) ? (r.kind as AiKind) : 'api',
     provider: r.provider,
     label: r.label || r.provider,
-    plan: r.plan || '',
+    account: r.account ?? '',
+    plan: r.plan ?? '',
+    status: AI_STATUSES.includes(r.status as AiStatus) ? (r.status as AiStatus) : 'active',
+    subscriptionId: r.subscription_id,
     hasKey: Boolean(r.api_key),
-    notes: r.notes
+    keyRef: r.key_ref,
+    keyExpiresAt: r.key_expires_at,
+    baseUrl: r.base_url,
+    payment: AI_PAYMENTS.includes(r.payment as AiPayment) ? (r.payment as AiPayment) : 'card',
+    thirdParty: Boolean(r.third_party),
+    usedBy: parseUsedBy(r.used_by),
+    fallbackId: r.fallback_id,
+    limits: parseLimits(r.limits_json),
+    notes: r.notes,
+    createdAt: r.created_at ?? 0
+  }
+}
+
+const AI_COLUMNS = `id, kind, provider, label, api_key, plan, account, status, subscription_id,
+   key_ref, key_expires_at, base_url, payment, third_party, used_by, fallback_id, limits_json, notes`
+const AI_SELECT = `${AI_COLUMNS}, created_at`
+
+export function listAiAccess(): AiAccess[] {
+  const rows = requireDb()
+    .prepare(`SELECT ${AI_SELECT} FROM ai_accounts ORDER BY created_at`)
+    .all() as AiAccessRow[]
+  return rows.map(toAccess)
+}
+
+export function createAiAccess(input: AiAccessInput): AiAccess {
+  const id = randomUUID()
+  const row = {
+    id,
+    kind: input.kind ?? 'api',
+    provider: input.provider,
+    label: input.label?.trim() || input.provider,
+    api_key: input.apiKey || null,
+    plan: input.plan ?? '',
+    account: input.account ?? '',
+    status: input.status ?? 'active',
+    subscription_id: input.subscriptionId ?? null,
+    key_ref: input.keyRef ?? null,
+    key_expires_at: input.keyExpiresAt ?? null,
+    base_url: input.baseUrl ?? null,
+    payment: input.payment ?? 'card',
+    third_party: input.thirdParty ? 1 : 0,
+    used_by: JSON.stringify(input.usedBy ?? []),
+    fallback_id: input.fallbackId ?? null,
+    limits_json: JSON.stringify(input.limits ?? {}),
+    notes: input.notes ?? null,
+    created_at: Date.now()
+  }
+  requireDb()
+    .prepare(
+      `INSERT INTO ai_accounts (${AI_COLUMNS}, created_at)
+       VALUES (@id, @kind, @provider, @label, @api_key, @plan, @account, @status, @subscription_id,
+               @key_ref, @key_expires_at, @base_url, @payment, @third_party, @used_by, @fallback_id,
+               @limits_json, @notes, @created_at)`
+    )
+    .run(row)
+  return toAccess(row)
+}
+
+export function updateAiAccess(id: string, input: AiAccessInput): AiAccess {
+  const d = requireDb()
+  const cur = d.prepare(`SELECT ${AI_SELECT} FROM ai_accounts WHERE id = ?`).get(id) as AiAccessRow | undefined
+  if (!cur) throw new Error('AI-доступ не найден')
+  // Пустой apiKey на правке = оставить текущий ключ (частый случай — правим только метку или план).
+  const next = {
+    id,
+    kind: input.kind ?? cur.kind,
+    provider: input.provider ?? cur.provider,
+    label: input.label?.trim() || cur.label || (input.provider ?? cur.provider),
+    api_key: input.apiKey ? input.apiKey : cur.api_key,
+    plan: input.plan ?? cur.plan ?? '',
+    account: input.account ?? cur.account ?? '',
+    status: input.status ?? cur.status ?? 'active',
+    subscription_id: input.subscriptionId !== undefined ? input.subscriptionId : cur.subscription_id,
+    key_ref: input.keyRef !== undefined ? input.keyRef : cur.key_ref,
+    key_expires_at: input.keyExpiresAt !== undefined ? input.keyExpiresAt : cur.key_expires_at,
+    base_url: input.baseUrl !== undefined ? input.baseUrl : cur.base_url,
+    payment: input.payment ?? cur.payment ?? 'card',
+    third_party: (input.thirdParty ?? Boolean(cur.third_party)) ? 1 : 0,
+    used_by: input.usedBy !== undefined ? JSON.stringify(input.usedBy) : (cur.used_by ?? '[]'),
+    fallback_id: input.fallbackId !== undefined ? input.fallbackId : cur.fallback_id,
+    limits_json: input.limits !== undefined ? JSON.stringify(input.limits) : (cur.limits_json ?? '{}'),
+    notes: input.notes !== undefined ? input.notes : cur.notes
+  }
+  d.prepare(
+    `UPDATE ai_accounts SET kind=@kind, provider=@provider, label=@label, api_key=@api_key,
+       plan=@plan, account=@account, status=@status, subscription_id=@subscription_id,
+       key_ref=@key_ref, key_expires_at=@key_expires_at, base_url=@base_url, payment=@payment,
+       third_party=@third_party, used_by=@used_by, fallback_id=@fallback_id,
+       limits_json=@limits_json, notes=@notes WHERE id=@id`
+  ).run(next)
+  // Дата создания в UPDATE не участвует (её нет среди именованных параметров — better-sqlite3
+  // отвергает лишние), но в ответе она нужна: без неё правка обнуляла бы возраст записи.
+  return toAccess({ ...next, created_at: cur.created_at })
+}
+
+export function deleteAiAccess(id: string): void {
+  const d = requireDb()
+  d.prepare('DELETE FROM ai_accounts WHERE id = ?').run(id)
+  // Привязки моделей пережили бы удаление доступа и всплыли бы у следующего с тем же id
+  // (идентификаторы случайные, но чужие строки в базе — всё равно мусор).
+  d.prepare('DELETE FROM ai_access_models WHERE access_id = ?').run(id)
+  // Ссылка «чем заменить» указывала на удалённую запись — обнуляем, иначе интерфейс покажет
+  // фолбэк, которого нет.
+  d.prepare('UPDATE ai_accounts SET fallback_id = NULL WHERE fallback_id = ?').run(id)
+}
+
+// --- Каталог цен ---------------------------------------------------------------------------
+
+/** Массовая запись каталога. Одной транзакцией: 3000 отдельных INSERT занимают секунды. */
+export function upsertAiPrices(prices: AiPrice[]): number {
+  const d = requireDb()
+  const stmt = d.prepare(
+    `INSERT INTO ai_prices (provider, model, input, output, cache_write, cache_write_1h, cache_read,
+       context_tokens, max_output_tokens, mode, supports_vision, supports_tools, supports_caching,
+       deprecated_at, source, fetched_at)
+     VALUES (@provider, @model, @input, @output, @cacheWrite, @cacheWrite1h, @cacheRead,
+       @contextTokens, @maxOutputTokens, @mode, @supportsVision, @supportsTools, @supportsCaching,
+       @deprecatedAt, @source, @fetchedAt)
+     ON CONFLICT(provider, model) DO UPDATE SET
+       input=excluded.input, output=excluded.output, cache_write=excluded.cache_write,
+       cache_write_1h=excluded.cache_write_1h, cache_read=excluded.cache_read,
+       context_tokens=excluded.context_tokens, max_output_tokens=excluded.max_output_tokens,
+       mode=excluded.mode, supports_vision=excluded.supports_vision,
+       supports_tools=excluded.supports_tools, supports_caching=excluded.supports_caching,
+       deprecated_at=excluded.deprecated_at, source=excluded.source, fetched_at=excluded.fetched_at`
+  )
+  const write = d.transaction((list: AiPrice[]) => {
+    for (const p of list)
+      stmt.run({
+        ...p,
+        supportsVision: p.supportsVision ? 1 : 0,
+        supportsTools: p.supportsTools ? 1 : 0,
+        supportsCaching: p.supportsCaching ? 1 : 0
+      })
+  })
+  write(prices)
+  return prices.length
+}
+
+function toPrice(r: Record<string, unknown>): AiPrice {
+  return {
+    provider: r.provider as string,
+    model: r.model as string,
+    input: (r.input as number) ?? null,
+    output: (r.output as number) ?? null,
+    cacheWrite: (r.cache_write as number) ?? null,
+    cacheWrite1h: (r.cache_write_1h as number) ?? null,
+    cacheRead: (r.cache_read as number) ?? null,
+    contextTokens: (r.context_tokens as number) ?? null,
+    maxOutputTokens: (r.max_output_tokens as number) ?? null,
+    mode: (r.mode as string) ?? null,
+    supportsVision: Boolean(r.supports_vision),
+    supportsTools: Boolean(r.supports_tools),
+    supportsCaching: Boolean(r.supports_caching),
+    deprecatedAt: (r.deprecated_at as string) ?? null,
+    source: (r.source as AiPrice['source']) ?? 'catalog',
+    fetchedAt: (r.fetched_at as number) ?? 0
+  }
+}
+
+export function listAiPrices(provider?: string): AiPrice[] {
+  const d = requireDb()
+  const rows = provider
+    ? (d.prepare('SELECT * FROM ai_prices WHERE provider = ? ORDER BY model').all(provider) as Array<Record<string, unknown>>)
+    : (d.prepare('SELECT * FROM ai_prices ORDER BY provider, model').all() as Array<Record<string, unknown>>)
+  return rows.map(toPrice)
+}
+
+/** Цена одной модели. Сначала точное совпадение, потом — без префикса провайдера. */
+export function findAiPrice(model: string): AiPrice | null {
+  const d = requireDb()
+  const exact = d.prepare('SELECT * FROM ai_prices WHERE model = ? LIMIT 1').get(model) as Record<string, unknown> | undefined
+  if (exact) return toPrice(exact)
+  // Логи Claude Code пишут «claude-opus-4-7», а каталог знает «anthropic/claude-opus-4-7».
+  const suffix = d.prepare("SELECT * FROM ai_prices WHERE model LIKE ? LIMIT 1").get(`%/${model}`) as
+    | Record<string, unknown>
+    | undefined
+  return suffix ? toPrice(suffix) : null
+}
+
+export function aiPriceCount(): number {
+  const r = requireDb().prepare('SELECT COUNT(*) as n FROM ai_prices').get() as { n: number }
+  return r.n
+}
+
+// --- Модели доступа ------------------------------------------------------------------------
+
+export function listAccessModels(accessId: string): AiAccessModel[] {
+  const rows = requireDb()
+    .prepare('SELECT * FROM ai_access_models WHERE access_id = ? ORDER BY model').all(accessId) as Array<Record<string, unknown>>
+  return rows.map((r) => ({
+    accessId: r.access_id as string,
+    model: r.model as string,
+    favorite: Boolean(r.favorite),
+    markupPct: (r.markup_pct as number) ?? null,
+    priceInput: (r.price_input as number) ?? null,
+    priceOutput: (r.price_output as number) ?? null,
+    notes: (r.notes as string) ?? null
   }))
 }
 
-export function createAiAccount(input: AiAccountInput): AiAccount {
-  const id = randomUUID()
+export function setAccessModel(m: AiAccessModel): void {
   requireDb()
-    .prepare('INSERT INTO ai_accounts (id, provider, label, api_key, plan, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, input.provider, input.label?.trim() || input.provider, input.apiKey || null, input.plan ?? '', input.notes ?? null, Date.now())
-  return {
-    id,
-    provider: input.provider,
-    label: input.label?.trim() || input.provider,
-    plan: input.plan ?? '',
-    hasKey: Boolean(input.apiKey),
-    notes: input.notes ?? null
-  }
+    .prepare(
+      `INSERT INTO ai_access_models (access_id, model, favorite, markup_pct, price_input, price_output, notes)
+       VALUES (@accessId, @model, @favorite, @markupPct, @priceInput, @priceOutput, @notes)
+       ON CONFLICT(access_id, model) DO UPDATE SET favorite=excluded.favorite,
+         markup_pct=excluded.markup_pct, price_input=excluded.price_input,
+         price_output=excluded.price_output, notes=excluded.notes`
+    )
+    .run({ ...m, favorite: m.favorite ? 1 : 0 })
 }
 
-export function updateAiAccount(id: string, input: AiAccountInput): AiAccount {
+export function deleteAccessModel(accessId: string, model: string): void {
+  requireDb().prepare('DELETE FROM ai_access_models WHERE access_id = ? AND model = ?').run(accessId, model)
+}
+
+// --- Расход --------------------------------------------------------------------------------
+
+export function listUsageDays(sinceDate?: string): AiUsageDay[] {
   const d = requireDb()
-  const cur = d
-    .prepare('SELECT id, provider, label, api_key, plan, notes FROM ai_accounts WHERE id = ?')
-    .get(id) as { provider: string; label: string; api_key: string | null; plan: string | null; notes: string | null } | undefined
-  if (!cur) throw new Error('AI account not found')
-  // Пустой apiKey на правке = оставить текущий ключ (частый случай — правим только метку/план).
-  const api_key = input.apiKey ? input.apiKey : cur.api_key
-  const next = {
-    id,
-    provider: input.provider ?? cur.provider,
-    label: input.label?.trim() || cur.label || (input.provider ?? cur.provider),
-    api_key,
-    plan: input.plan ?? cur.plan ?? '',
-    notes: input.notes !== undefined ? input.notes : cur.notes
-  }
-  d.prepare('UPDATE ai_accounts SET provider=@provider, label=@label, api_key=@api_key, plan=@plan, notes=@notes WHERE id=@id').run(next)
-  return { id, provider: next.provider, label: next.label, plan: next.plan ?? '', hasKey: Boolean(next.api_key), notes: next.notes }
+  const rows = sinceDate
+    ? (d.prepare('SELECT * FROM ai_usage_daily WHERE date >= ? ORDER BY date').all(sinceDate) as Array<Record<string, unknown>>)
+    : (d.prepare('SELECT * FROM ai_usage_daily ORDER BY date').all() as Array<Record<string, unknown>>)
+  return rows.map((r) => ({
+    date: r.date as string,
+    source: r.source as string,
+    model: r.model as string,
+    input: r.input as number,
+    output: r.output as number,
+    cacheWrite: r.cache_write as number,
+    cacheWrite1h: r.cache_write_1h as number,
+    cacheRead: r.cache_read as number,
+    requests: r.requests as number,
+    costUsd: r.cost_usd as number
+  }))
 }
 
-export function deleteAiAccount(id: string): void {
-  requireDb().prepare('DELETE FROM ai_accounts WHERE id = ?').run(id)
+/** Прибавить к дневному итогу. Именно прибавить: проход читает только НОВЫЙ хвост файлов. */
+export function addUsage(days: AiUsageDay[]): void {
+  const d = requireDb()
+  const stmt = d.prepare(
+    `INSERT INTO ai_usage_daily (date, source, model, input, output, cache_write, cache_write_1h,
+       cache_read, requests, cost_usd)
+     VALUES (@date, @source, @model, @input, @output, @cacheWrite, @cacheWrite1h, @cacheRead,
+       @requests, @costUsd)
+     ON CONFLICT(date, source, model) DO UPDATE SET
+       input = input + excluded.input,
+       output = output + excluded.output,
+       cache_write = cache_write + excluded.cache_write,
+       cache_write_1h = cache_write_1h + excluded.cache_write_1h,
+       cache_read = cache_read + excluded.cache_read,
+       requests = requests + excluded.requests,
+       cost_usd = cost_usd + excluded.cost_usd`
+  )
+  const write = d.transaction((list: AiUsageDay[]) => {
+    for (const day of list) stmt.run(day)
+  })
+  write(days)
+}
+
+export interface UsageCursor {
+  path: string
+  size: number
+  mtime: number
+  offset: number
+}
+
+export function getUsageCursor(path: string): UsageCursor | null {
+  const r = requireDb().prepare('SELECT path, size, mtime, offset FROM ai_usage_cursor WHERE path = ?').get(path) as
+    | UsageCursor
+    | undefined
+  return r ?? null
+}
+
+export function setUsageCursor(c: UsageCursor): void {
+  requireDb()
+    .prepare(
+      `INSERT INTO ai_usage_cursor (path, size, mtime, offset, read_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
+         offset=excluded.offset, read_at=excluded.read_at`
+    )
+    .run(c.path, c.size, c.mtime, c.offset, Date.now())
+}
+
+/** Отсеять уже учтённые ответы и запомнить новые. Возвращает те, которых раньше не видели. */
+export function filterUnseenUsage(ids: string[]): Set<string> {
+  const d = requireDb()
+  const has = d.prepare('SELECT 1 FROM ai_usage_seen WHERE id = ?')
+  const remember = d.prepare('INSERT OR IGNORE INTO ai_usage_seen (id, seen_at) VALUES (?, ?)')
+  const fresh = new Set<string>()
+  const run = d.transaction((list: string[]) => {
+    const now = Date.now()
+    for (const id of list) {
+      if (has.get(id)) continue
+      remember.run(id, now)
+      fresh.add(id)
+    }
+  })
+  run(ids)
+  return fresh
+}
+
+// --- Вердикты проверки ключей ----------------------------------------------------------------
+
+export interface AiKeyCheckRow {
+  accessId: string
+  status: string
+  remaining: number | null
+  usage: number | null
+  detail: string | null
+  checkedAt: number
+  lastOkAt: number | null
+}
+
+/**
+ * Запомнить результат проверки.
+ *
+ * `lastOkAt` двигается только на подтверждённо рабочем ключе. Сетевая ошибка его НЕ сбрасывает:
+ * «не смогли спросить» — это не «перестал работать», и путать их значит будить владельца
+ * каждый раз, когда отвалился интернет.
+ */
+export function recordAiCheck(accessId: string, check: { status: string; remaining?: number | null; usage?: number | null; detail?: string }): void {
+  const d = requireDb()
+  const now = Date.now()
+  const alive = check.status === 'valid' || check.status === 'quota'
+  d.prepare(
+    `INSERT INTO ai_key_checks (access_id, status, remaining, usage, detail, checked_at, last_ok_at)
+     VALUES (@accessId, @status, @remaining, @usage, @detail, @checkedAt, @lastOkAt)
+     ON CONFLICT(access_id) DO UPDATE SET status=excluded.status, remaining=excluded.remaining,
+       usage=excluded.usage, detail=excluded.detail, checked_at=excluded.checked_at,
+       last_ok_at=COALESCE(excluded.last_ok_at, ai_key_checks.last_ok_at)`
+  ).run({
+    accessId,
+    status: check.status,
+    remaining: check.remaining ?? null,
+    usage: check.usage ?? null,
+    detail: check.detail ?? null,
+    checkedAt: now,
+    lastOkAt: alive ? now : null
+  })
+}
+
+export function listAiChecks(): AiKeyCheckRow[] {
+  return requireDb()
+    .prepare(
+      `SELECT access_id as accessId, status, remaining, usage, detail,
+              checked_at as checkedAt, last_ok_at as lastOkAt FROM ai_key_checks`
+    )
+    .all() as AiKeyCheckRow[]
+}
+
+/** Когда последний раз читали логи. null — ни разу. */
+export function lastUsageScan(): number | null {
+  const r = requireDb().prepare('SELECT MAX(read_at) as t FROM ai_usage_cursor').get() as { t: number | null }
+  return r?.t ?? null
 }
 
 /** Main-process only: decrypt the stored key for a validity/quota probe. Never exposed to the renderer. */

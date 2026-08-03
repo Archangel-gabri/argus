@@ -1,30 +1,41 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { CheckCircle2, XCircle, AlertTriangle, KeyRound, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  Calculator,
+  CheckCircle2,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldAlert,
+  Trash2,
+  XCircle
+} from 'lucide-react'
 import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
+import { Sparkline } from '@/components/ui/Sparkline'
 import { money } from '@/lib/format'
-import { aiSummary, providerChangeError } from '@/lib/ai-account'
+import {
+  KIND_LABEL,
+  STATUS_LABEL,
+  aiSummary,
+  byModel,
+  daysAgoDate,
+  dailySeries,
+  daysUntilExpiry,
+  groupByKind,
+  monthlyCost,
+  needsAttention,
+  totalsFor
+} from '@/lib/ai-account'
+import { AccessForm } from '@/components/ai/AccessForm'
+import { AccessDrawer } from '@/components/ai/AccessDrawer'
+import { CostCalculator } from '@/components/ai/CostCalculator'
 import { useAi } from '@/store/ai'
-import type { AiAccount, AiCheck } from '@/types'
+import { useSubs } from '@/store/subs'
+import type { AiAccess, AiCheck, Subscription } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
-
-const PROVIDERS = ['openrouter', 'anthropic', 'openai', 'gemini', 'groq', 'xai', 'other'] as const
-
-// Идентификатор провайдера ХРАНИТСЯ в записи аккаунта и уходит в main-процесс, поэтому в списке
-// остаётся как есть; читаемое имя — отдельной картой. «other» подписан по-русски, остальные —
-// это названия компаний, их не переводят.
-const PROVIDER_LABEL: Record<string, string> = {
-  openrouter: 'OpenRouter',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  gemini: 'Gemini',
-  groq: 'Groq',
-  xai: 'xAI',
-  other: 'Другой'
-}
-
-const inputCls =
-  'w-full rounded-lg border border-border bg-bg/60 px-3 py-2 text-sm text-slate-200 outline-none focus:border-accent/40 focus:ring-1 focus:ring-accent/30'
 
 function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React.JSX.Element {
   if (!hasKey)
@@ -61,124 +72,218 @@ function Verdict({ check, hasKey }: { check?: AiCheck; hasKey: boolean }): React
   )
 }
 
-function AccountForm({ initial, onClose }: { initial?: AiAccount | null; onClose: () => void }): React.JSX.Element {
-  const add = useAi((s) => s.add)
-  const update = useAi((s) => s.update)
-  const [provider, setProvider] = useState<string>(initial?.provider ?? 'openrouter')
-  const [label, setLabel] = useState(initial?.label ?? '')
-  const [key, setKey] = useState('')
-  const [plan, setPlan] = useState(initial?.plan ?? '')
-  const [busy, setBusy] = useState(false)
-  const [formError, setFormError] = useState<string | null>(null)
-
-  const submit = async (e: FormEvent): Promise<void> => {
-    e.preventDefault()
-    setFormError(null)
-    if (initial) {
-      const providerError = providerChangeError(initial.provider, provider, key)
-      if (providerError) {
-        setFormError(providerError)
-        return
-      }
-    }
-    setBusy(true)
-    try {
-      const input = { provider, label: label.trim() || undefined, apiKey: key.trim() || undefined, plan: plan.trim() || undefined }
-      const ok = initial ? await update(initial.id, input) : await add(input)
-      if (ok) onClose()
-      else setFormError(useAi.getState().error ?? 'Не удалось сохранить аккаунт')
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Не удалось сохранить аккаунт')
-    } finally {
-      setBusy(false)
-    }
+/** Строка о деньгах в карточке: связанная подписка или честное «бесплатно / не привязано». */
+function MoneyLine({ access, sub }: { access: AiAccess; sub?: Subscription }): React.JSX.Element {
+  if (sub) {
+    const monthly = monthlyCost(sub)
+    return (
+      <span className="text-slate-300">
+        {money(sub.amount, sub.currency)}/{sub.period === 'yr' ? 'год' : 'мес'}
+        {sub.period === 'yr' && monthly != null && (
+          <span className="text-slate-600"> · {money(Math.round(monthly))}/мес</span>
+        )}
+        {sub.nextRenewal && <span className="text-slate-600"> · до {sub.nextRenewal}</span>}
+      </span>
+    )
   }
+  if (access.payment === 'free') return <span className="text-slate-500">бесплатно</span>
+  return <span className="text-slate-600">подписка не привязана</span>
+}
 
+function AccessCard({
+  access,
+  check,
+  spent,
+  series,
+  sub,
+  onOpen,
+  onEdit,
+  onDelete
+}: {
+  access: AiAccess
+  check?: AiCheck
+  spent: number | null
+  series: number[]
+  sub?: Subscription
+  onOpen: () => void
+  onEdit: () => void
+  onDelete: () => void
+}): React.JSX.Element {
+  const expiresIn = daysUntilExpiry(access.keyExpiresAt)
   return (
-    <Card className="mb-5">
-      <form onSubmit={submit} className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">Провайдер</span>
-          <select className={inputCls} value={provider} onChange={(e) => setProvider(e.target.value)}>
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{PROVIDER_LABEL[p] ?? p}</option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">Название</span>
-          <input className={inputCls} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Personal" />
-        </label>
-        <label className="col-span-2 block">
-          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">API-ключ</span>
-          <input
-            className={inputCls}
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder={initial ? 'пусто — не менять' : 'sk-…'}
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">План</span>
-          <input className={inputCls} value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="Pro / pay-as-you-go" />
-        </label>
-        <div className="flex items-end justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/5">
-            <X className="h-4 w-4" />
+    <Card className="cursor-pointer transition-colors hover:border-accent/30">
+      <div onClick={onOpen} className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-sm font-bold uppercase text-accent">
+          {access.provider.slice(0, 2)}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold text-white">{access.label}</span>
+            {access.status !== 'active' && (
+              <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-amber-400">
+                {STATUS_LABEL[access.status]}
+              </span>
+            )}
+            {access.thirdParty && (
+              <span title="Запросы идут через посредника">
+                <ShieldAlert className="h-3.5 w-3.5 text-amber-500" />
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-slate-500">
+            {access.account || access.provider}
+            {access.plan ? ` · ${access.plan}` : ''}
+          </div>
+        </div>
+        <Verdict check={check} hasKey={access.hasKey} />
+      </div>
+
+      <div onClick={onOpen} className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-lg bg-bg/40 p-3">
+          <div className="text-[11px] text-slate-500">Стоит</div>
+          <div className="mt-0.5 text-sm font-semibold tabular-nums">
+            <MoneyLine access={access} sub={sub} />
+          </div>
+        </div>
+        <div className="rounded-lg bg-bg/40 p-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] text-slate-500">Сожжено за 30 дн.</div>
+              <div className="mt-0.5 text-sm font-semibold tabular-nums text-white">
+                {spent == null ? '—' : money(Math.round(spent * 100) / 100)}
+              </div>
+            </div>
+            {series.some((v) => v > 0) && <Sparkline data={series} />}
+          </div>
+        </div>
+      </div>
+
+      {expiresIn !== null && expiresIn <= 30 && (
+        <div className="mt-3 text-[11px] text-amber-400">
+          {expiresIn < 0 ? `Ключ истёк ${-expiresIn} дн. назад` : `Ключ истекает через ${expiresIn} дн.`}
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center justify-between">
+        <button onClick={onOpen} className="text-xs font-medium text-slate-400 hover:text-accent">
+          Подробно →
+        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={onEdit} className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-accent" title="Редактировать">
+            <Pencil className="h-3.5 w-3.5" />
           </button>
           <button
-            type="submit"
-            disabled={busy}
-            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
+            onClick={onDelete}
+            className="rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
+            title="Удалить"
           >
-            {busy && <Loader2 className="h-4 w-4 animate-spin" />} {initial ? 'Сохранить' : 'Добавить'}
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
-        {formError && (
-          <div className="col-span-2 text-xs text-rose-400" role="alert">
-            {formError}
-          </div>
-        )}
-      </form>
+      </div>
     </Card>
   )
 }
 
 export function AIAccountsView(): React.JSX.Element {
-  const accounts = useAi((s) => s.accounts)
+  const access = useAi((s) => s.access)
   const checks = useAi((s) => s.checks)
-  const checking = useAi((s) => s.checking)
+  const usage = useAi((s) => s.usage)
+  const prices = useAi((s) => s.prices)
   const loaded = useAi((s) => s.loaded)
   const loading = useAi((s) => s.loading)
+  const collecting = useAi((s) => s.collecting)
   const error = useAi((s) => s.error)
   const load = useAi((s) => s.load)
-  const check = useAi((s) => s.check)
+  const collect = useAi((s) => s.collect)
   const remove = useAi((s) => s.remove)
+  const subs = useSubs((s) => s.subs)
+  const loadSubs = useSubs((s) => s.load)
+
   const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<AiAccount | null>(null)
+  const [editing, setEditing] = useState<AiAccess | null>(null)
+  const [opened, setOpened] = useState<string | null>(null)
+  const [calcOpen, setCalcOpen] = useState(false)
 
   useEffect(() => {
-    load()
-  }, [load])
+    void load()
+    void loadSubs()
+  }, [load, loadSubs])
 
-  const summary = aiSummary(accounts, checks)
+  const summary = aiSummary(access, checks)
+  const since = daysAgoDate(29)
+
+  // Расход за 30 дней и месячные деньги считаются один раз на весь экран: карточек немного,
+  // но каждая иначе перебирала бы весь массив дней.
+  const spentBySource = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const s of ['claude-code', 'codex']) out[s] = totalsFor(usage, { since, source: s }).costUsd
+    return out
+  }, [usage, since])
+
+  const seriesBySource = useMemo(() => {
+    const out: Record<string, number[]> = {}
+    for (const s of ['claude-code', 'codex']) out[s] = dailySeries(usage.filter((d) => d.source === s), 30)
+    return out
+  }, [usage])
+
+  const sourceOf = (a: AiAccess): string | null => {
+    if (a.usedBy.some((u) => u.toLowerCase().includes('claude code'))) return 'claude-code'
+    if (a.usedBy.some((u) => u.toLowerCase().includes('codex'))) return 'codex'
+    if (a.provider === 'anthropic') return 'claude-code'
+    if (a.provider === 'openai') return 'codex'
+    return null
+  }
+
+  const monthlyTotal = useMemo(() => {
+    // Только реальные деньги: доступы без привязанной подписки в сумму не входят, иначе
+    // «сколько я плачу за ИИ» превратилось бы в оценку.
+    let sum = 0
+    for (const a of access) {
+      const sub = subs.find((s) => s.id === a.subscriptionId)
+      const m = monthlyCost(sub)
+      if (m != null) sum += m
+    }
+    return sum
+  }, [access, subs])
+
+  const burned30 = useMemo(() => totalsFor(usage, { since }).costUsd, [usage, since])
+  const attention = needsAttention(access, checks)
+  const groups = groupByKind(access)
+  const openedAccess = access.find((a) => a.id === opened) ?? null
+  const topModels = useMemo(() => byModel(usage, since).slice(0, 3), [usage, since])
 
   return (
     <Page>
       <PageHeader
         title="AI"
-        subtitle="ключи, планы, квоты"
+        subtitle="доступы, модели, цены и расход"
         action={
-          <button
-            onClick={() => {
-              setEditing(null)
-              setAdding((v) => !v)
-            }}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
-          >
-            <Plus className="h-4 w-4" /> Аккаунт
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setCalcOpen((v) => !v)}
+              className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
+            >
+              <Calculator className="h-4 w-4" /> Калькулятор
+            </button>
+            <button
+              onClick={() => void collect()}
+              disabled={collecting}
+              className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
+            >
+              {collecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Пересчитать расход
+            </button>
+            <button
+              onClick={() => {
+                setEditing(null)
+                setAdding((v) => !v)
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
+            >
+              <Plus className="h-4 w-4" /> Доступ
+            </button>
+          </div>
         }
       />
       {!api && (
@@ -187,11 +292,41 @@ export function AIAccountsView(): React.JSX.Element {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Аккаунтов" value={loaded ? String(accounts.length) : '—'} />
-        <StatTile label="Ключи работают" value={summary.workingKeys ?? '—'} hint="по известным проверкам" />
-        <StatTile label="Остаток" value={summary.totalCredit == null ? '—' : money(summary.totalCredit)} hint="OpenRouter" />
+      <div className="grid grid-cols-4 gap-4">
+        <StatTile label="Доступов" value={loaded ? String(access.length) : '—'} hint={`${groups.length} типов`} />
+        <StatTile
+          label="Плачу в месяц"
+          value={loaded ? money(Math.round(monthlyTotal)) : '—'}
+          hint="только привязанные подписки"
+        />
+        <StatTile
+          label="Сожжено за 30 дн."
+          value={burned30 > 0 ? money(Math.round(burned30)) : '—'}
+          hint="эквивалент по ценам API"
+        />
+        <StatTile
+          label="Требуют внимания"
+          value={loaded ? String(attention.length) : '—'}
+          hint={summary.workingKeys ? `ключи: ${summary.workingKeys}` : 'ключи не проверены'}
+        />
       </div>
+
+      {calcOpen && (
+        <div className="mt-5">
+          <CostCalculator prices={prices} />
+        </div>
+      )}
+
+      {topModels.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-card/40 px-4 py-2.5 text-xs text-slate-500">
+          <span className="font-medium text-slate-400">Больше всего за 30 дней:</span>
+          {topModels.map((m) => (
+            <span key={`${m.source}/${m.model}`}>
+              {m.model} <span className="tabular-nums text-slate-300">{money(Math.round(m.costUsd * 100) / 100)}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="mt-6">
         {error && (
@@ -202,12 +337,13 @@ export function AIAccountsView(): React.JSX.Element {
             </button>
           </div>
         )}
+
         {/* key даёт форме идентичность цели правки. Без него переход «карандаш у A →
             карандаш у B» не перемонтирует компонент: React видит тот же элемент,
             useState сохраняет значения формы A, а «Сохранить» отправляет их с
             идентификатором B — то есть молча подменяет чужую запись. */}
         {(adding || editing) && (
-          <AccountForm
+          <AccessForm
             key={editing?.id ?? 'new'}
             initial={editing}
             onClose={() => {
@@ -219,98 +355,56 @@ export function AIAccountsView(): React.JSX.Element {
 
         {!loaded && error ? (
           <div className="w-full rounded-xl border border-rose-500/20 py-16 text-center text-sm text-slate-500">
-            Список аккаунтов не загружен
+            Список доступов не загружен
           </div>
         ) : !loaded || loading ? (
           <div className="flex w-full items-center justify-center gap-2 rounded-xl border border-border py-16 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Загружаю аккаунты…
+            <Loader2 className="h-4 w-4 animate-spin" /> Загружаю доступы…
           </div>
-        ) : accounts.length === 0 ? (
+        ) : access.length === 0 ? (
           <button
             onClick={() => setAdding(true)}
             className="w-full rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500 transition-colors hover:border-accent/40 hover:text-slate-300"
           >
-            Аккаунтов нет — добавь ключ
+            Доступов нет — добавь первый
           </button>
         ) : (
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-            {accounts.map((a) => {
-              const c = checks[a.id]
-              return (
-                <Card key={a.id}>
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-sm font-bold uppercase text-accent">
-                      {a.provider.slice(0, 2)}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate font-semibold text-white">{a.label}</span>
-                        <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-500">
-                          {a.provider}
-                        </span>
-                      </div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                        План: <span className="text-slate-300">{a.plan || '—'}</span>
-                      </div>
-                    </div>
-                    <Verdict check={c} hasKey={a.hasKey} />
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-bg/40 p-3">
-                      <div className="text-[11px] text-slate-500">Остаток</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums text-white">
-                        {c?.remaining != null ? money(c.remaining) : '—'}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-bg/40 p-3">
-                      <div className="text-[11px] text-slate-500">Потрачено</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums text-white">
-                        {c?.usage != null ? money(c.usage) : '—'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <button
-                      onClick={() => check(a.id)}
-                      disabled={!a.hasKey || checking[a.id]}
-                      className="flex items-center gap-1.5 rounded-lg bg-card px-2.5 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
-                    >
-                      {checking[a.id] ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                      Проверить
-                    </button>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => {
+          <div className="space-y-8">
+            {groups.map((group) => (
+              <section key={group.kind}>
+                <h2 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  {KIND_LABEL[group.kind]} <span className="text-slate-600">· {group.items.length}</span>
+                </h2>
+                <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                  {group.items.map((a) => {
+                    const source = sourceOf(a)
+                    return (
+                      <AccessCard
+                        key={a.id}
+                        access={a}
+                        check={checks[a.id]}
+                        spent={source ? (spentBySource[source] ?? null) : null}
+                        series={source ? (seriesBySource[source] ?? []) : []}
+                        sub={subs.find((s) => s.id === a.subscriptionId)}
+                        onOpen={() => setOpened(a.id)}
+                        onEdit={() => {
                           setEditing(a)
                           setAdding(false)
                         }}
-                        className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-accent"
-                        title="Редактировать"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (window.confirm(`Удалить аккаунт «${a.label}»?`)) remove(a.id)
+                        onDelete={() => {
+                          if (window.confirm(`Удалить доступ «${a.label}»?`)) void remove(a.id)
                         }}
-                        className="rounded-md p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400"
-                        title="Удалить"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {a.notes && <div className="mt-3 text-[11px] text-slate-500">ⓘ {a.notes}</div>}
-                  {c?.detail && <div className="mt-2 text-[11px] text-slate-600">{c.detail}</div>}
-                </Card>
-              )
-            })}
+                      />
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
         )}
       </div>
+
+      {openedAccess && <AccessDrawer access={openedAccess} onClose={() => setOpened(null)} />}
     </Page>
   )
 }

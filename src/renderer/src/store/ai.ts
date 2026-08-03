@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AiAccount, AiAccountInput, AiCheck } from '@/types'
+import type { AiAccess, AiAccessInput, AiAccessModel, AiCheck, AiPrice, AiUsageDay } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -7,27 +7,52 @@ const api = typeof window !== 'undefined' ? window.api : undefined
 const generation = new Map<string, number>()
 
 interface AiStore {
-  accounts: AiAccount[]
+  access: AiAccess[]
   checks: Record<string, AiCheck>
+  /** Когда ключ последний раз подтверждённо работал (мс). Пишется в базе, живёт между запусками. */
+  lastOk: Record<string, number | null>
+  prices: AiPrice[]
+  models: Record<string, AiAccessModel[]>
+  usage: AiUsageDay[]
+  usageCollectedAt: number | null
+  /** Модели, встреченные в логах, но отсутствующие в каталоге цен. */
+  unpriced: string[]
   loaded: boolean
   loading: boolean
+  collecting: boolean
+  pricesLoading: boolean
   error: string | null
   checking: Record<string, boolean>
   load: (force?: boolean) => Promise<void>
-  add: (input: AiAccountInput) => Promise<boolean>
-  update: (id: string, input: AiAccountInput) => Promise<boolean>
+  add: (input: AiAccessInput) => Promise<boolean>
+  update: (id: string, input: AiAccessInput) => Promise<boolean>
   remove: (id: string) => Promise<boolean>
   check: (id: string) => Promise<void>
+  loadPrices: () => Promise<void>
+  refreshPrices: (accessId?: string) => Promise<boolean>
+  loadModels: (accessId: string) => Promise<void>
+  setModel: (model: AiAccessModel) => Promise<void>
+  deleteModel: (accessId: string, model: string) => Promise<void>
+  loadUsage: () => Promise<void>
+  collect: () => Promise<void>
 }
 
 const messageOf = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Операция не выполнена'
 
 export const useAi = create<AiStore>((set, get) => ({
-  accounts: [],
+  access: [],
   checks: {},
+  lastOk: {},
+  prices: [],
+  models: {},
+  usage: [],
+  usageCollectedAt: null,
+  unpriced: [],
   loaded: !api,
   loading: false,
+  collecting: false,
+  pricesLoading: false,
   error: null,
   checking: {},
 
@@ -39,10 +64,33 @@ export const useAi = create<AiStore>((set, get) => ({
     if (get().loading || (get().loaded && !force)) return
     set({ loading: true, error: null })
     try {
-      const accounts = await api.ai.list()
-      set({ accounts, loaded: true })
+      const access = await api.ai.list()
+      set({ access, loaded: true })
+
+      // Прошлые вердикты показываются сразу: пока идёт свежая проверка, честнее показать
+      // «отвечал вчера», чем «не проверялся» — второе выглядит как отсутствие ключа.
+      try {
+        const saved = await api.ai.checks()
+        const checks: Record<string, AiCheck> = {}
+        const lastOk: Record<string, number | null> = {}
+        for (const c of saved) {
+          checks[c.accessId] = {
+            status: c.status as AiCheck['status'],
+            remaining: c.remaining,
+            usage: c.usage,
+            detail: c.detail ?? undefined
+          }
+          lastOk[c.accessId] = c.lastOkAt
+        }
+        set({ checks, lastOk })
+      } catch {
+        /* сохранённых вердиктов может не быть — это нормально для первого запуска */
+      }
+
       // Проверяем в фоне, но UI до ответа оставляет «не проверено»/«—», а не выдумывает нули.
-      for (const a of accounts) void get().check(a.id)
+      for (const a of access) if (a.hasKey) void get().check(a.id)
+      void get().loadUsage()
+      void get().loadPrices()
     } catch (error) {
       set({ error: messageOf(error) })
     } finally {
@@ -55,8 +103,8 @@ export const useAi = create<AiStore>((set, get) => ({
     set({ error: null })
     try {
       const acc = await api.ai.create(input)
-      set({ accounts: [...get().accounts, acc] })
-      void get().check(acc.id)
+      set({ access: [...get().access, acc] })
+      if (acc.hasKey) void get().check(acc.id)
       return true
     } catch (error) {
       set({ error: messageOf(error) })
@@ -70,9 +118,9 @@ export const useAi = create<AiStore>((set, get) => ({
     set({ error: null })
     try {
       const acc = await api.ai.update(id, input)
-      set({ accounts: get().accounts.map((a) => (a.id === id ? acc : a)) })
+      set({ access: get().access.map((a) => (a.id === id ? acc : a)) })
       // Ключ мог поменяться → перепроверить валидность/кредит.
-      void get().check(id)
+      if (acc.hasKey) void get().check(id)
       return true
     } catch (error) {
       set({ error: messageOf(error) })
@@ -85,10 +133,13 @@ export const useAi = create<AiStore>((set, get) => ({
     set({ error: null })
     try {
       const result = await api.ai.remove(id)
-      if (!result.ok) throw new Error('Аккаунт не удалён')
+      if (!result.ok) throw new Error('Доступ не удалён')
       const checks = { ...get().checks }
       delete checks[id]
-      set({ accounts: get().accounts.filter((a) => a.id !== id), checks })
+      set({ access: get().access.filter((a) => a.id !== id), checks })
+      // Удаление обнуляет ссылки «чем заменить» у других записей — перечитываем список,
+      // иначе интерфейс продолжит показывать фолбэк на несуществующий доступ.
+      void get().load(true)
       return true
     } catch (error) {
       set({ error: messageOf(error) })
@@ -113,7 +164,14 @@ export const useAi = create<AiStore>((set, get) => ({
         void get().check(id)
         return
       }
-      set((state) => ({ checks: { ...state.checks, [id]: result } }))
+      set((state) => ({
+        checks: { ...state.checks, [id]: result },
+        // Отметку «работал» двигает только подтверждённо живой ключ — так же, как в базе.
+        lastOk:
+          result.status === 'valid' || result.status === 'quota'
+            ? { ...state.lastOk, [id]: Date.now() }
+            : state.lastOk
+      }))
     } catch (error) {
       set((state) => ({
         checks: {
@@ -123,6 +181,91 @@ export const useAi = create<AiStore>((set, get) => ({
       }))
     } finally {
       set((state) => ({ checking: { ...state.checking, [id]: false } }))
+    }
+  },
+
+  loadPrices: async () => {
+    if (!api) return
+    set({ pricesLoading: true })
+    try {
+      const prices = await api.ai.prices()
+      set({ prices })
+    } catch (error) {
+      set({ error: messageOf(error) })
+    } finally {
+      set({ pricesLoading: false })
+    }
+  },
+
+  refreshPrices: async (accessId) => {
+    if (!api) return false
+    set({ pricesLoading: true, error: null })
+    try {
+      const r = await api.ai.refreshPrices(accessId)
+      await get().loadPrices()
+      // Каталог мог обновиться частично: вшитый снапшот залился, а сеть не ответила. Молчать
+      // об этом нельзя — иначе «обновил цены» будет означать разное в разные дни.
+      if (!r.ok) set({ error: `Живые цены не обновились: ${r.error ?? 'неизвестно'}` })
+      return r.ok
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return false
+    } finally {
+      set({ pricesLoading: false })
+    }
+  },
+
+  loadModels: async (accessId) => {
+    if (!api) return
+    try {
+      const models = await api.ai.models(accessId)
+      set((state) => ({ models: { ...state.models, [accessId]: models } }))
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  setModel: async (model) => {
+    if (!api) return
+    try {
+      await api.ai.setModel(model)
+      await get().loadModels(model.accessId)
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  deleteModel: async (accessId, model) => {
+    if (!api) return
+    try {
+      await api.ai.deleteModel(accessId, model)
+      await get().loadModels(accessId)
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  loadUsage: async () => {
+    if (!api) return
+    try {
+      const r = await api.ai.usage()
+      set({ usage: r.days, usageCollectedAt: r.collectedAt })
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  collect: async () => {
+    if (!api || get().collecting) return
+    set({ collecting: true, error: null })
+    try {
+      const r = await api.ai.collect()
+      set({ unpriced: r.unpriced })
+      await get().loadUsage()
+    } catch (error) {
+      set({ error: messageOf(error) })
+    } finally {
+      set({ collecting: false })
     }
   }
 }))
