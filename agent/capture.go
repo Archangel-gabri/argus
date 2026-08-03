@@ -198,7 +198,25 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 			return err
 		}
 	}
+	// stderr читает ОТДЕЛЬНАЯ горутина, а текст ошибки собирают семь мест в главной. Ребра
+	// happens-before между ними нет: `cmd.Wait()` закрывает пайп, но НЕ дожидается нашего
+	// сканера — os/exec джойнит только собственные горутины копирования, а у StderrPipe их нет.
+	// Гонка воспроизводится под `go test -race`, поэтому доступ к буферу идёт через один
+	// аксессор под мьютексом.
+	var errMu sync.Mutex
 	var errBuf strings.Builder
+	errAppend := func(line string) {
+		errMu.Lock()
+		defer errMu.Unlock()
+		if errBuf.Len() < 4000 {
+			errBuf.WriteString(line + "\n")
+		}
+	}
+	errText := func() string {
+		errMu.Lock()
+		defer errMu.Unlock()
+		return errBuf.String()
+	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return err
@@ -236,9 +254,7 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 					continue
 				}
 			}
-			if errBuf.Len() < 4000 {
-				errBuf.WriteString(line + "\n")
-			}
+			errAppend(line)
 		}
 	}()
 
@@ -285,7 +301,7 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 		if cctx.Err() != nil {
 			return nil
 		}
-		return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
+		return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errText()))
 	// Вариант может умереть мгновенно — например, в системе нет такого элемента GStreamer.
 	// Без этой ветки каждый такой вариант отнимал полные 6 секунд ожидания кадра, и перебор
 	// каскада из трёх кодировщиков стоил 18 секунд до первой картинки.
@@ -298,14 +314,14 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 		// причина у них разная, и путать их в сообщении нельзя.
 		select {
 		case <-first:
-			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
+			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errText()))
 		default:
-			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errBuf.String()))
+			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errText()))
 		}
 	case <-time.After(firstFrameTimeout):
 		// Кадров нет. Если конвейер при этом жив и ни на что не жалуется — на Wayland это
 		// скорее неподвижный экран, чем поломка. Даём ему второй, больший срок.
-		if errText := strings.TrimSpace(errBuf.String()); errText != "" {
+		if errText := strings.TrimSpace(errText()); errText != "" {
 			cancel()
 			_ = cmd.Wait()
 			return fmt.Errorf("нет кадров за %s (%s)", firstFrameTimeout, tail(errText))
@@ -321,17 +337,17 @@ func (s *Streamer) runOne(ctx context.Context, opt captureOption, onAU func(AU))
 			if cctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errBuf.String()))
+			return fmt.Errorf("поток оборвался: %v (%s)", err, tail(errText()))
 		case err := <-done:
 			_ = cmd.Wait()
 			if cctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errBuf.String()))
+			return fmt.Errorf("вариант не запустился: %v (%s)", err, tail(errText()))
 		case <-time.After(patienceTimeout - firstFrameTimeout):
 			cancel()
 			_ = cmd.Wait()
-			return fmt.Errorf("нет кадров за %s (%s)", patienceTimeout, tail(errBuf.String()))
+			return fmt.Errorf("нет кадров за %s (%s)", patienceTimeout, tail(errText()))
 		case <-cctx.Done():
 			_ = cmd.Wait()
 			return nil

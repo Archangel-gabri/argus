@@ -270,7 +270,14 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     if (!api) return
     const d = get().devices.find((x) => x.id === deviceId)
     if (!d || !d.hasSecret || d.ip.includes('x.x')) return
-    if (d.altOs.length > 0) {
+    // Одиночная Windows-машина идёт по ОС-зависимой ветке наравне с двухзагрузочной.
+    //
+    // Это правило соблюдается в трёх других местах (полный опрос, refreshOsStatus, ipc), а
+    // здесь его не было: на Windows-хост уходил универсальный Linux-зонд. Тот возвращает мусор,
+    // разбор даёт нули, карточка объявляет машину выключенной — и ровные нули уезжают в историю
+    // метрик как измеренные. Учащённый опрос при открытой карточке бьёт по этому пути чаще
+    // всего, то есть именно у открытой карточки данные и портились.
+    if (d.altOs.length > 0 || /win/i.test(d.os)) {
       const r = await api.pc.metrics(deviceId)
       const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
       set({
