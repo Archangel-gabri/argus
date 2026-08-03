@@ -14,6 +14,8 @@ const missStreak = new Map<string, number>()
 interface DevicesStore {
   devices: DeviceDTO[]
   loaded: boolean
+  /** Почему парк не прочитан. `null` — прочитан успешно (даже если он пуст). */
+  error: string | null
   load: () => Promise<void>
   create: (input: DeviceInput) => Promise<{ ok: boolean; error?: string }>
   update: (id: string, input: DeviceInput) => Promise<{ ok: boolean; error?: string }>
@@ -44,8 +46,13 @@ interface DevicesStore {
 export const useDevices = create<DevicesStore>((set, get) => ({
   devices: api ? [] : FALLBACK_DEVICES,
   loaded: !api,
+  error: null,
 
   load: async () => {
+    // Новая сессия считает серию промахов с нуля — как это уже делает `clearReachMemory` в main.
+    // Иначе промах до блокировки складывается с первым промахом после, и машина объявляется
+    // выключенной, хотя в новой сессии её спросили ровно один раз.
+    missStreak.clear()
     if (!api) {
       set({ devices: FALLBACK_DEVICES, loaded: true })
       return
@@ -53,7 +60,16 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     // Сначала рисуем последнее известное состояние из базы (мгновенно), потом уточняем.
     // Живые метрики, уже набранные в этой сессии, кэшем НЕ перетираем — иначе повторная
     // загрузка списка воскрешала бы выключенный хост как «online» из старого снимка.
-    const list = await api.devices.list()
+    let list: DeviceDTO[]
+    try {
+      list = await api.devices.list()
+    } catch (e) {
+      // Отказ IPC и пустой парк выглядели одинаково: пустой список. Человек видел «устройств
+      // нет» и решал, что база потеряна, — тогда как связь с main просто не удалась.
+      set({ error: e instanceof Error ? e.message : 'не удалось прочитать парк', loaded: true })
+      return
+    }
+    set({ error: null })
     const prev = new Map(get().devices.map((d) => [d.id, d]))
     set({
       devices: list.map((d) => {
@@ -106,6 +122,11 @@ export const useDevices = create<DevicesStore>((set, get) => ({
                 ...d,
                 ...updated,
                 status: d.status,
+                // cpu и ram — такие же эфемерные значения, как остальные ниже: в ответе из базы
+                // они нулевые (там лежит последний снимок, а не текущий замер), и сохранение
+                // правки выдавало эти нули за свежее измерение.
+                cpu: d.cpu,
+                ram: d.ram,
                 runningOs: d.runningOs,
                 disk: d.disk,
                 uptime: d.uptime,
@@ -133,7 +154,17 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     }
     // Убираем из UI ТОЛЬКО если удаление в vault реально прошло — иначе устройство «исчезало»
     // из списка, оставаясь в базе (провалившееся удаление выглядело как успех).
-    const r = await api.devices.remove(id)
+    let r = await api.devices.remove(id)
+    // Агент на машине отозвать не удалось (обычно она просто выключена). Спрашиваем прямо:
+    // удалить с остатком или отложить. Молча оставлять работающую службу с инжектом ввода
+    // нельзя, но и запирать человека, у которого машина офлайн, — тоже.
+    if (!r?.ok && r?.canForce) {
+      const proceed = window.confirm(
+        `${r.error}\n\nУдалить устройство всё равно? Служба на машине останется работать.`
+      )
+      if (!proceed) return { ok: false, error: 'удаление отменено' }
+      r = await api.devices.remove(id, { force: true })
+    }
     if (r?.ok) set({ devices: get().devices.filter((d) => d.id !== id) })
     return { ok: !!r?.ok, error: r?.error }
   },
@@ -180,6 +211,10 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       devices: get().devices.map((d) => {
         const r = reach[d.id]
         if (!r) return d
+        // «unknown» от быстрой проверки — это «мерить было нечем», а не промах. Так отвечают
+        // устройства за бастионом: прямая TCP-проба к ним недостижима по определению. Считать
+        // это неудачей значило бы ронять статус, ДОКАЗАННЫЙ полным опросом, до «не знаю».
+        if (r.status === 'unknown') return d
         const next = nextReachability(missStreak.get(d.id) ?? 0, r.status)
         if (next.misses) missStreak.set(d.id, next.misses)
         else missStreak.delete(d.id)

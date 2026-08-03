@@ -166,6 +166,13 @@ export async function refreshHardware(deviceId: string): Promise<{ ok: boolean; 
   const r = await execOnce(deviceId, os.family === 'windows' ? WIN_HW_CMD : LINUX_HW_CMD)
   if (!r.ok) return { ok: false, error: r.error }
   const info = os.family === 'windows' ? parseWinHw(r.output) : parseLinuxHw(r.output)
+  // Пустой разбор — это «машина ничего не отдала», а не «железа нет». У Linux-команды код
+  // возврата всегда 0 (она склеена из необязательных источников), поэтому `r.ok` тут ничего
+  // не доказывает: одна неудачная попытка затирала собранный инвентарь пустотой, и карточка
+  // теряла процессор, память и диски до следующего удачного сбора.
+  const empty =
+    !info.cpuModel && !info.ramGb && (info.disks?.length ?? 0) === 0 && (info.nics?.length ?? 0) === 0
+  if (empty) return { ok: false, error: 'машина не отдала ни одной секции — прежний инвентарь оставлен' }
   info.collectedAt = Date.now()
   setDeviceHardware(deviceId, info as unknown as Record<string, unknown>)
   return { ok: true, info }

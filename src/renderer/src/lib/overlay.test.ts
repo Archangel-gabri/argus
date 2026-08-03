@@ -23,3 +23,4 @@ describe('overlay accessibility helpers', () => {
     expect(focus).toHaveBeenCalledOnce()
   })
 })
+

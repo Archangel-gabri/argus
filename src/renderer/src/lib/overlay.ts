@@ -24,6 +24,30 @@ export function restoreFocus(target: FocusHandle | null | undefined): boolean {
   return true
 }
 
+/**
+ * Стек открытых overlay.
+ *
+ * Обработчик Escape вешается на document в фазе перехвата, и раньше срабатывали ВСЕ открытые
+ * сразу: диалог устройства поверх detail-drawer закрывался вместе с ним, а вместе с drawer
+ * умирала живая SSH-сессия и открытая файловая панель. Человек нажимал Escape, чтобы закрыть
+ * форму, и терял терминал.
+ *
+ * Escape по смыслу закрывает ВЕРХНИЙ слой, поэтому здесь ведётся порядок открытия, а нижние
+ * молча пропускают событие.
+ */
+const overlayStack: symbol[] = []
+
+/** Верхний ли этот overlay — только он реагирует на Escape. */
+export const isTopOverlay = (token: symbol): boolean => overlayStack[overlayStack.length - 1] === token
+
+/** Для проверок: сколько overlay открыто прямо сейчас. */
+export const openOverlayCount = (): number => overlayStack.length
+
+/** Для проверок: начать с чистого листа. */
+export const resetOverlayStack = (): void => {
+  overlayStack.length = 0
+}
+
 const FOCUSABLE = [
   '[autofocus]',
   'button:not([disabled]):not([tabindex="-1"])',
@@ -55,6 +79,8 @@ export function useOverlayA11y({
 
   useEffect(() => {
     if (!open) return
+    const token = Symbol('overlay')
+    overlayStack.push(token)
     previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
 
     // Effect идёт после commit: refs уже привязаны, отложенный frame не нужен.
@@ -62,13 +88,20 @@ export function useOverlayA11y({
     focusElement(target)
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      // Нижние слои молчат: закрывать надо тот, что сверху.
+      if (!isTopOverlay(token)) return
       event.preventDefault()
       event.stopPropagation()
+      // Останавливаем и остальных слушателей того же узла: иначе соседний overlay,
+      // подписавшийся раньше, всё равно получит событие.
+      event.stopImmediatePropagation()
       onEscapeRef.current()
     }
     document.addEventListener('keydown', onKeyDown, true)
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
+      const at = overlayStack.lastIndexOf(token)
+      if (at !== -1) overlayStack.splice(at, 1)
       restoreFocus(previousFocus.current)
       previousFocus.current = null
     }

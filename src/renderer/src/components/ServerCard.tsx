@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
 import { providerHex, providerGlyph, providerLogoUrl } from '@/lib/providers'
+import { loadPrefs } from '@/lib/prefs'
 import { providerLogo } from '@/lib/providerLogos'
 import { deviceIllustration } from '@/lib/illustrations'
 import type { DeviceDTO, DeviceKind, Status } from '@/types'
@@ -94,7 +95,9 @@ export function ProviderBadge({
       </div>
     )
   }
-  const remote = providerLogoUrl(provider)
+  // Логотип из интернета — только по явной настройке: запрос сообщает Google список хостеров
+  // владельца, а это часть приватной топологии.
+  const remote = providerLogoUrl(provider, loadPrefs().remoteLogos)
   if (remote && !remoteFailed) {
     return (
       <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>

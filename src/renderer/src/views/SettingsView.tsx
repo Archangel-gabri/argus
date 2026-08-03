@@ -144,6 +144,22 @@ export function SettingsView(): React.JSX.Element {
           />
           Reduce motion — без анимаций и переходов
         </label>
+        <label className="mt-3 flex items-start gap-2 text-sm text-slate-300">
+          <Eye className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+          <input
+            type="checkbox"
+            checked={prefs.remoteLogos}
+            onChange={(e) => update({ remoteLogos: e.target.checked })}
+            className="mt-0.5 h-4 w-4 accent-[#f59e0b]"
+          />
+          <span>
+            Логотипы хостеров из интернета
+            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+              Выключено по умолчанию: каждый такой запрос сообщает Google, у каких хостеров стоят твои
+              машины. Без него вместо картинки — монограмма.
+            </span>
+          </span>
+        </label>
       </Section>
 
       <Section title="О приложении">

@@ -1,6 +1,7 @@
 // Multi-boot ПК: одна железка, N ОС (основной эндпоинт + altOs). Определяем живую ОС,
 // переключаем загрузку, шлём питание/метрики на живой ОС. Команды OS-aware по семейству
 // (Linux systemctl/grub, Windows PowerShell/shutdown.exe).
+import os from 'node:os'
 import dgram from 'node:dgram'
 import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
 import { execOnConn } from './ssh'
@@ -35,13 +36,35 @@ async function resolveFamily(ep: OsEndpoint): Promise<'linux' | 'windows'> {
   const text = `${r.output}\n${r.error ?? ''}`
   // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
   // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
-  const fam: 'linux' | 'windows' = /linux|darwin|bsd|sunos|aix/i.test(text)
-    ? 'linux'
-    : /not recognized|not found|CommandNotFound|не является|не найден/i.test(text)
-      ? 'windows'
-      : 'linux'
-  famCache.set(key, fam)
+  const sawPosix = /linux|darwin|bsd|sunos|aix/i.test(text)
+  const sawWindowsShell = /not recognized|not found|CommandNotFound|не является|не найден/i.test(text)
+  const fam: 'linux' | 'windows' = sawPosix ? 'linux' : sawWindowsShell ? 'windows' : 'linux'
+  // Кэшируем ТОЛЬКО измеренное. Ветка «ничего не поняли → linux» — это догадка по умолчанию,
+  // и она возникает ровно тогда, когда связи не было вовсе. Раньше такая догадка ложилась в
+  // кэш бессрочно: одна неудачная попытка навсегда назначала Windows-машине Linux-семейство,
+  // после чего к ней уходил Linux-зонд, а починить это можно было только перезапуском.
+  if (sawPosix || sawWindowsShell) famCache.set(key, fam)
   return fam
+}
+
+/**
+ * Широковещательные адреса всех непетлевых IPv4-интерфейсов.
+ *
+ * Нужны для WoL: пакет в 255.255.255.255 уходит по маршруту по умолчанию, а при поднятом VPN
+ * это туннель — то есть не та сеть, где стоит спящая машина.
+ */
+function broadcastAddresses(): string[] {
+  const out: string[] = []
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const i of list ?? []) {
+      if (i.family !== 'IPv4' || i.internal) continue
+      const addr = i.address.split('.').map(Number)
+      const mask = i.netmask.split('.').map(Number)
+      if (addr.length !== 4 || mask.length !== 4) continue
+      out.push(addr.map((o, k) => (o | (~mask[k] & 255)) >>> 0).join('.'))
+    }
+  }
+  return out
 }
 
 /** POSIX single-quote экранирование: любую строку безопасно вставить в shell без инъекции. */
@@ -84,6 +107,11 @@ async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
   const eps = getOsEndpoints(deviceId)
   if (!eps.length) return null
   if (eps.length === 1) return firstAlive(eps)
+
+  // Хост за бастионом напрямую недостижим ПО ОПРЕДЕЛЕНИЮ: прямая TCP-проба всегда промахнётся
+  // и отсеет живой эндпоинт. `liveness.ts` от этого уже защищается явной оговоркой, а здесь
+  // защиты не было — двухзагрузочный ПК за бастионом отбраковывался целиком.
+  if (eps.some((e) => e.conn.jump)) return firstAlive(eps)
 
   const reach = await Promise.all(eps.map(async (ep) => ({ ep, r: await tcpAlive(ep.conn.host, ep.conn.port, 2500) })))
   const open = reach.filter((x) => x.r.status === 'online').map((x) => x.ep)
@@ -333,16 +361,29 @@ export async function wake(deviceId: string): Promise<{ ok: boolean; error?: str
       } catch (e) {
         return finish({ ok: false, error: `широковещание недоступно: ${(e as Error).message}` })
       }
-      // Шлём в общий broadcast на порт 9 (стандарт WoL); дублируем на 7.
-      // Ошибку отправки НЕ проглатываем: раньше отказ ядра всё равно давал «✓ отправлено».
-      let pending = 2
+      // Шлём во ВСЕ широковещательные адреса, а не только в 255.255.255.255.
+      //
+      // Пакет в 255.255.255.255 уходит по маршруту по умолчанию. У владельца поднят VPN —
+      // значит по умолчанию маршрут идёт в туннель, и пакет улетает туда, где спящей машины
+      // нет. Ответ при этом честный по форме («отправлено») и бесполезный по существу: WoL
+      // работает только внутри той же локальной сети, что и целевая машина.
+      //
+      // Поэтому адреса считаем по каждому непетлевому IPv4-интерфейсу и шлём в каждый.
+      const targets = [...new Set(['255.255.255.255', ...broadcastAddresses()])]
+      const ports = [9, 7] // 9 — стандарт WoL, 7 — исторический дубль
+      let pending = targets.length * ports.length
       let sendErr: string | undefined
+      let delivered = 0
       const doneOne = (err: Error | null): void => {
-        if (err && !sendErr) sendErr = err.message
-        if (--pending === 0) finish(sendErr ? { ok: false, error: sendErr } : { ok: true })
+        if (err) {
+          if (!sendErr) sendErr = err.message
+        } else delivered++
+        // Успехом считаем хотя бы одну удавшуюся отправку: часть интерфейсов может не
+        // принимать широковещание, и это не повод объявлять отказ.
+        if (--pending === 0)
+          finish(delivered > 0 ? { ok: true } : { ok: false, error: sendErr ?? 'ни один интерфейс не принял пакет' })
       }
-      sock.send(packet, 0, packet.length, 9, '255.255.255.255', doneOne)
-      sock.send(packet, 0, packet.length, 7, '255.255.255.255', doneOne)
+      for (const addr of targets) for (const port of ports) sock.send(packet, 0, packet.length, port, addr, doneOne)
     })
   })
 }
@@ -527,7 +568,7 @@ export async function bootEntries(
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { ok: false, os: '', entries: [], error: 'машина не в сети' }
   if (ep.family === 'linux') {
-    const r = await execOnConn(ep.conn, 'efibootmgr 2>/dev/null || sudo -n efibootmgr 2>/dev/null', 10000)
+    const r = await execOnConn(ep.conn, 'efibootmgr -v 2>/dev/null || sudo -n efibootmgr -v 2>/dev/null', 10000)
     const result = bootEntryListResult(r.ok, r.output, parseEfibootmgr(r.output), r.error)
     return { ...result, os: ep.os }
   }
@@ -542,9 +583,17 @@ export function parseEfibootmgr(out: string): BootEntry[] {
   for (const line of out.split('\n')) {
     const m = line.match(/^Boot([0-9A-Fa-f]{4})\*?\s+(.+)$/)
     if (!m) continue
-    // После имени идёт путь к загрузчику, отделённый табуляцией — он в подписи не нужен.
-    const label = m[2].split('\t')[0].trim()
-    if (label) entries.push({ id: m[1], label })
+    // Путь к загрузчику ОСТАВЛЯЕМ в подписи, и это не украшение.
+    //
+    // Прошивки сплошь и рядом дают одинаковые имена: две записи «Linux Boot Manager» или два
+    // «UEFI OS» — обычное дело на машине с несколькими дисками. Выбросив путь, мы делали такие
+    // записи неразличимыми в списке, и человек назначал загрузку наугад — то есть мог отправить
+    // машину не в ту систему. Ровно от этого и защищает Windows-ветка, где путь загрузчика
+    // стоит в подписи первым.
+    const [rawName, ...restParts] = m[2].split('\t')
+    const name = rawName.trim()
+    const efiPath = restParts.join('\t').match(/\\EFI\\[^\s)]+\.efi/i)
+    if (name) entries.push({ id: m[1], label: efiPath ? `${efiPath[0]} · ${name}` : name })
   }
   return entries
 }

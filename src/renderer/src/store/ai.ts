@@ -3,6 +3,9 @@ import type { AiAccount, AiAccountInput, AiCheck } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
+/** Поколение записи: растёт при каждой правке, чтобы вердикт старого ключа не осел на новом. */
+const generation = new Map<string, number>()
+
 interface AiStore {
   accounts: AiAccount[]
   checks: Record<string, AiCheck>
@@ -62,6 +65,7 @@ export const useAi = create<AiStore>((set, get) => ({
   },
 
   update: async (id, input) => {
+    generation.set(id, (generation.get(id) ?? 0) + 1)
     if (!api) return false
     set({ error: null })
     try {
@@ -94,10 +98,21 @@ export const useAi = create<AiStore>((set, get) => ({
 
   check: async (id) => {
     if (!api) return
+    // Поколение записи растёт при каждой правке. Без него получалось так: ключ меняют, тут же
+    // жмут «проверить», но идущая проверка СТАРОГО ключа ещё не завершилась — новая молча
+    // отбрасывается защитой `checking`, а потом приходит вердикт по старому ключу и оседает
+    // как результат для нового. Человек видит «ключ действителен» про ключ, которого уже нет.
+    const startedAt = generation.get(id) ?? 0
     if (get().checking[id]) return
     set((state) => ({ checking: { ...state.checking, [id]: true } }))
     try {
       const result = await api.ai.check(id)
+      if ((generation.get(id) ?? 0) !== startedAt) {
+        // Запись успели изменить, пока мы спрашивали, — этот вердикт уже не про неё.
+        set((state) => ({ checking: { ...state.checking, [id]: false } }))
+        void get().check(id)
+        return
+      }
       set((state) => ({ checks: { ...state.checks, [id]: result } }))
     } catch (error) {
       set((state) => ({

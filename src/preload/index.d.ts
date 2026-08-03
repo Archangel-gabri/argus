@@ -60,7 +60,11 @@ export interface ArgusApi {
     pickIcon: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
     create: (input: DeviceInput) => Promise<DeviceResult>
     update: (id: string, input: DeviceInput) => Promise<DeviceResult>
-    remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `canForce` — агент на машине отозвать не удалось; удалить можно только осознанно. */
+    remove: (
+      id: string,
+      opts?: { force?: boolean }
+    ) => Promise<{ ok: boolean; error?: string; canForce?: boolean }>
     onGeo: (cb: (p: { device: DeviceDTO }) => void) => () => void
   }
   ssh: {
@@ -122,13 +126,21 @@ export interface ArgusApi {
     list: () => Promise<Subscription[]>
     create: (input: SubscriptionInput) => Promise<Subscription>
     update: (id: string, input: SubscriptionInput) => Promise<Subscription>
-    remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `canForce` — агент на машине отозвать не удалось; удалить можно только осознанно. */
+    remove: (
+      id: string,
+      opts?: { force?: boolean }
+    ) => Promise<{ ok: boolean; error?: string; canForce?: boolean }>
   }
   wallets: {
     list: () => Promise<Wallet[]>
     create: (input: WalletInput) => Promise<Wallet>
     update: (id: string, input: WalletInput) => Promise<Wallet>
-    remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+    /** `canForce` — агент на машине отозвать не удалось; удалить можно только осознанно. */
+    remove: (
+      id: string,
+      opts?: { force?: boolean }
+    ) => Promise<{ ok: boolean; error?: string; canForce?: boolean }>
     balance: (chain: string, address: string) => Promise<WalletBalance>
   }
   metrics: {

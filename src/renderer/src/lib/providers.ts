@@ -64,9 +64,19 @@ export function providerDomain(p: string): string | null {
   return null
 }
 
-/** URL логотипа хостера по домену. Google s2 favicons — реальные фавиконки любого домена,
- *  HTTPS/CSP-ok, стабильны. Для bundled-хостеров всё равно приоритетен локальный лого (ServerCard). */
-export function providerLogoUrl(p: string): string | null {
+/**
+ * URL логотипа хостера по домену — ТОЛЬКО по явному согласию.
+ *
+ * Прежний комментарий утверждал, что это «CSP-ok и стабильно», и умалчивал о главном: каждый
+ * такой запрос сообщает Google, у каких именно хостеров стоят машины владельца. Список
+ * провайдеров — часть приватной топологии, ровно как и адреса, которые мы старательно не
+ * отправляем в гео-сервис.
+ *
+ * Цена вопроса — картинка вместо монограммы, поэтому по умолчанию логотипы не тянутся.
+ * Включается настройкой, и тогда это осознанный обмен, а не побочный эффект.
+ */
+export function providerLogoUrl(p: string, allowRemote = false): string | null {
+  if (!allowRemote) return null
   const d = providerDomain(p)
   return d ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=128` : null
 }
