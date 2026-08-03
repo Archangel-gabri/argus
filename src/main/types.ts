@@ -328,6 +328,15 @@ export interface AiAccountEntry {
   note?: string
   /** Основной — с него работают по умолчанию. */
   primary?: boolean
+  /** Куда идти логиниться. Пусто — берётся типовой адрес провайдера. */
+  loginUrl?: string
+  /** Пароль сохранён в вольте. САМ пароль через IPC не ходит никогда. */
+  hasPassword?: boolean
+  /** У аккаунта есть свой API-ключ — его можно проверить отдельно от остальных. */
+  hasKey?: boolean
+  /** Последняя проверка ключа этого аккаунта. */
+  checkStatus?: string
+  checkedAt?: number
 }
 
 export interface AiAccess {

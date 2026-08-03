@@ -11,6 +11,7 @@ import { checkAccount } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
+import { readLogins } from './browser-passwords'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -372,6 +373,73 @@ export function registerIpc(): void {
     return verdict
   })
   ipcMain.handle('ai:checks', () => (vault.isUnlocked() ? vault.listAiChecks() : []))
+
+  // --- Учётные записи внутри доступа -------------------------------------------------------
+
+  // Сохранить пароль/ключ отдельного аккаунта. Значения приходят из формы и остаются в main.
+  ipcMain.handle('ai:setAccountSecret', (_e, accessId: unknown, email: unknown, patch: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, error: 'Хранилище заперто' }
+    const p = (patch ?? {}) as { password?: string; apiKey?: string }
+    vault.setAccountSecret(asString(accessId), asString(email), p)
+    return { ok: true }
+  })
+
+  // Пароль кладётся в буфер обмена ЗДЕСЬ. Отдать его в renderer значило бы вынести секрет из
+  // main ради одной операции — а копирование main умеет сам.
+  ipcMain.handle('ai:copyAccountPassword', (_e, accessId: unknown, email: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, error: 'Хранилище заперто' }
+    const value = vault.getAccountPassword(asString(accessId), asString(email))
+    if (!value) return { ok: false, error: 'Пароль не сохранён' }
+    clipboard.writeText(value)
+    return { ok: true }
+  })
+
+  // Проверка ключа КОНКРЕТНОГО аккаунта — у каждого он свой, и общий вердикт доступа тут не годится.
+  ipcMain.handle('ai:checkAccountKey', async (_e, accessId: unknown, email: unknown) => {
+    if (!vault.isUnlocked()) return { status: 'error', detail: 'Хранилище заперто' }
+    const id = asString(accessId)
+    const mail = asString(email)
+    const acc = vault.listAiAccess().find((a) => a.id === id)
+    const key = vault.getAccountKey(id, mail)
+    if (!key) return { status: 'nokey' }
+    const verdict = await checkAccount(acc?.provider ?? '', key)
+    vault.recordAccountCheck(id, mail, verdict.status)
+    return verdict
+  })
+
+  // Импорт паролей из браузера владельца: значения читаются, расшифровываются и кладутся в
+  // вольт, наружу уходит только счётчик.
+  ipcMain.handle('ai:importPasswords', (_e, accessId: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, imported: 0, error: 'Хранилище заперто' }
+    const id = asString(accessId)
+    const access = vault.listAiAccess().find((a) => a.id === id)
+    if (!access) return { ok: false, imported: 0, error: 'Доступ не найден' }
+
+    const extra = access.baseUrl ? [access.baseUrl.replace(/^https?:\/\//, '').split('/')[0]] : []
+    const logins = readLogins(access.provider, extra)
+    if (!logins.length) return { ok: true, imported: 0, error: 'Сохранённых паролей для этого провайдера нет' }
+
+    const known = new Map(access.accounts.map((a) => [a.email.toLowerCase(), a]))
+    let imported = 0
+    const added: string[] = []
+    for (const login of logins) {
+      const mail = login.username.trim()
+      if (!mail) continue
+      vault.setAccountSecret(id, mail, { password: login.password })
+      imported++
+      if (!known.has(mail.toLowerCase())) added.push(mail)
+    }
+
+    // Найденные в браузере, но не заведённые аккаунты добавляются в список: они существуют,
+    // и прятать их только потому, что их не вписали руками, — значит держать реестр неполным.
+    if (added.length) {
+      vault.updateAiAccess(id, {
+        provider: access.provider,
+        accounts: [...access.accounts, ...added.map((email) => ({ email, note: 'найден в браузере' }))]
+      })
+    }
+    return { ok: true, imported, added: added.length }
+  })
 
   // Каталог цен: список для экрана, засев вшитого снапшота и живое обновление у OpenRouter.
   ipcMain.handle('ai:prices', (_e, provider: unknown) =>

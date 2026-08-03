@@ -12,6 +12,7 @@ import {
   toUsd,
   totalsFor
 } from '@/lib/ai-account'
+import { AccountList } from '@/components/ai/AccountList'
 import { PlanLimits } from '@/components/ai/PlanLimits'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
@@ -120,46 +121,7 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
         )}
       </div>
 
-      {access.accounts.length > 0 && (
-        <Section title={`Аккаунты · ${access.accounts.length}`}>
-          <ul className="divide-y divide-border/40">
-            {access.accounts.map((a) => {
-              // Платный тариф выделяется: именно его ищут, когда открывают этот список.
-              const paid = Boolean(a.plan) && !/free|бесплат|не провер|неизвест/i.test(a.plan ?? '')
-              return (
-                <li key={a.email} className="flex items-center justify-between gap-3 py-1.5">
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span
-                      className={cn('h-1 w-1 shrink-0 rounded-full', a.primary ? 'bg-accent' : 'bg-slate-700')}
-                      title={a.primary ? 'основной' : undefined}
-                    />
-                    <span className="truncate text-[12px] text-slate-300">{a.email}</span>
-                  </span>
-                  <span
-                    className={cn(
-                      'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
-                      paid ? 'bg-accent/15 text-accent' : 'text-slate-600'
-                    )}
-                  >
-                    {a.plan || 'тариф неизвестен'}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-          {access.accounts.some((a) => a.note) && (
-            <ul className="mt-1.5 space-y-0.5 border-t border-border/40 pt-1.5">
-              {access.accounts
-                .filter((a) => a.note)
-                .map((a) => (
-                  <li key={a.email} className="text-[11px] leading-snug text-slate-600">
-                    <span className="text-slate-500">{a.email}</span> — {a.note}
-                  </li>
-                ))}
-            </ul>
-          )}
-        </Section>
-      )}
+      <AccountList access={access} />
 
       <Section title="Деньги">
         {sub ? (

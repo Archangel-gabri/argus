@@ -37,6 +37,10 @@ interface AiStore {
   deleteModel: (accessId: string, model: string) => Promise<void>
   loadUsage: () => Promise<void>
   collect: () => Promise<void>
+  setAccountSecret: (accessId: string, email: string, patch: { password?: string; apiKey?: string }) => Promise<void>
+  copyAccountPassword: (accessId: string, email: string) => Promise<boolean>
+  checkAccountKey: (accessId: string, email: string) => Promise<void>
+  importPasswords: (accessId: string) => Promise<{ imported: number; added: number } | null>
 }
 
 const messageOf = (error: unknown): string =>
@@ -255,6 +259,56 @@ export const useAi = create<AiStore>((set, get) => ({
       set({ usage: r.days, blocks: r.blocks ?? [], usageCollectedAt: r.collectedAt })
     } catch (error) {
       set({ error: messageOf(error) })
+    }
+  },
+
+  setAccountSecret: async (accessId, email, patch) => {
+    if (!api) return
+    try {
+      await api.ai.setAccountSecret(accessId, email, patch)
+      await get().load(true)
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  copyAccountPassword: async (accessId, email) => {
+    if (!api) return false
+    try {
+      const r = await api.ai.copyAccountPassword(accessId, email)
+      if (!r.ok) set({ error: r.error ?? 'Пароль не скопирован' })
+      return r.ok
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return false
+    }
+  },
+
+  checkAccountKey: async (accessId, email) => {
+    if (!api) return
+    try {
+      await api.ai.checkAccountKey(accessId, email)
+      await get().load(true)
+    } catch (error) {
+      set({ error: messageOf(error) })
+    }
+  },
+
+  importPasswords: async (accessId) => {
+    if (!api) return null
+    set({ error: null })
+    try {
+      const r = await api.ai.importPasswords(accessId)
+      if (!r.ok) {
+        set({ error: r.error ?? 'Импорт не выполнен' })
+        return null
+      }
+      if (r.imported === 0) set({ error: r.error ?? 'Подходящих паролей в браузере нет' })
+      await get().load(true)
+      return { imported: r.imported, added: r.added ?? 0 }
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return null
     }
   },
 

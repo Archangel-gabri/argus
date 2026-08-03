@@ -343,6 +343,18 @@ function migrate(d: Database.Database): void {
     seen_at INTEGER NOT NULL
   )`)
 
+  // Учётные данные ОТДЕЛЬНЫХ аккаунтов внутри доступа. Отдельной таблицей, а не полем в
+  // accounts_json: тот список целиком уходит в интерфейс, и секретам там не место.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_account_secrets (
+    access_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    password TEXT,
+    api_key TEXT,
+    check_status TEXT,
+    checked_at INTEGER,
+    PRIMARY KEY (access_id, email)
+  )`)
+
   // Окна лимита подписки («сессии»). Дневных итогов для них мало: окно длится несколько часов
   // и начинается с первого обращения, а не в полночь.
   d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_blocks (
@@ -1547,7 +1559,22 @@ export function listAiAccess(): AiAccess[] {
   const rows = requireDb()
     .prepare(`SELECT ${AI_SELECT} FROM ai_accounts ORDER BY created_at`)
     .all() as AiAccessRow[]
-  return rows.map(toAccess)
+  return rows.map((r) => {
+    const access = toAccess(r)
+    if (access.accounts.length === 0) return access
+    // Признаки «пароль есть» и «ключ есть» живут в другой таблице — сами значения интерфейсу
+    // не показываются никогда, но знать об их наличии он обязан.
+    const flags = new Map(listAccountSecretFlags(access.id).map((f) => [f.email, f]))
+    return {
+      ...access,
+      accounts: access.accounts.map((a) => {
+        const f = flags.get(a.email)
+        return f
+          ? { ...a, hasPassword: f.hasPassword, hasKey: f.hasKey, checkStatus: f.checkStatus ?? undefined, checkedAt: f.checkedAt ?? undefined }
+          : a
+      })
+    }
+  })
 }
 
 export function createAiAccess(input: AiAccessInput): AiAccess {
@@ -1629,6 +1656,7 @@ export function deleteAiAccess(id: string): void {
   // Привязки моделей пережили бы удаление доступа и всплыли бы у следующего с тем же id
   // (идентификаторы случайные, но чужие строки в базе — всё равно мусор).
   d.prepare('DELETE FROM ai_access_models WHERE access_id = ?').run(id)
+  deleteAccountSecrets(id)
   // Ссылка «чем заменить» указывала на удалённую запись — обнуляем, иначе интерфейс покажет
   // фолбэк, которого нет.
   d.prepare('UPDATE ai_accounts SET fallback_id = NULL WHERE fallback_id = ?').run(id)
@@ -1829,6 +1857,80 @@ export function filterUnseenUsage(ids: string[]): Set<string> {
   })
   run(ids)
   return fresh
+}
+
+// --- Учётные данные отдельных аккаунтов ---
+
+export interface AiAccountSecretRow {
+  email: string
+  hasPassword: boolean
+  hasKey: boolean
+  checkStatus: string | null
+  checkedAt: number | null
+}
+
+/** Признаки наличия секретов — это всё, что вправе увидеть интерфейс. */
+export function listAccountSecretFlags(accessId: string): AiAccountSecretRow[] {
+  const rows = requireDb()
+    .prepare('SELECT email, password, api_key, check_status, checked_at FROM ai_account_secrets WHERE access_id = ?')
+    .all(accessId) as Array<{ email: string; password: string | null; api_key: string | null; check_status: string | null; checked_at: number | null }>
+  return rows.map((r) => ({
+    email: r.email,
+    hasPassword: Boolean(r.password),
+    hasKey: Boolean(r.api_key),
+    checkStatus: r.check_status,
+    checkedAt: r.checked_at
+  }))
+}
+
+/** Сохранить пароль и/или ключ аккаунта. Пустая строка стирает значение, undefined — не трогает. */
+export function setAccountSecret(
+  accessId: string,
+  email: string,
+  patch: { password?: string; apiKey?: string }
+): void {
+  const d = requireDb()
+  const cur = d
+    .prepare('SELECT password, api_key FROM ai_account_secrets WHERE access_id = ? AND email = ?')
+    .get(accessId, email) as { password: string | null; api_key: string | null } | undefined
+  const password = patch.password === undefined ? (cur?.password ?? null) : patch.password || null
+  const apiKey = patch.apiKey === undefined ? (cur?.api_key ?? null) : patch.apiKey || null
+  d.prepare(
+    `INSERT INTO ai_account_secrets (access_id, email, password, api_key)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(access_id, email) DO UPDATE SET password = excluded.password, api_key = excluded.api_key`
+  ).run(accessId, email, password, apiKey)
+}
+
+/** Main-process only: значение пароля. Наружу не отдаётся — только в буфер обмена или в форму входа. */
+export function getAccountPassword(accessId: string, email: string): string | null {
+  const r = requireDb()
+    .prepare('SELECT password FROM ai_account_secrets WHERE access_id = ? AND email = ?')
+    .get(accessId, email) as { password: string | null } | undefined
+  return r?.password ?? null
+}
+
+/** Main-process only: ключ конкретного аккаунта. */
+export function getAccountKey(accessId: string, email: string): string | null {
+  const r = requireDb()
+    .prepare('SELECT api_key FROM ai_account_secrets WHERE access_id = ? AND email = ?')
+    .get(accessId, email) as { api_key: string | null } | undefined
+  return r?.api_key ?? null
+}
+
+export function recordAccountCheck(accessId: string, email: string, status: string): void {
+  requireDb()
+    .prepare(
+      `INSERT INTO ai_account_secrets (access_id, email, check_status, checked_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(access_id, email) DO UPDATE SET check_status = excluded.check_status, checked_at = excluded.checked_at`
+    )
+    .run(accessId, email, status, Date.now())
+}
+
+/** Удаление доступа уносит и учётные данные его аккаунтов. */
+function deleteAccountSecrets(accessId: string): void {
+  requireDb().prepare('DELETE FROM ai_account_secrets WHERE access_id = ?').run(accessId)
 }
 
 // --- Окна лимита ---

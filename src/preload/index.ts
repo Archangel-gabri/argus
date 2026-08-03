@@ -111,7 +111,15 @@ const api = {
     setModel: (model: unknown) => ipcRenderer.invoke('ai:setModel', model),
     deleteModel: (accessId: string, model: string) => ipcRenderer.invoke('ai:deleteModel', accessId, model),
     usage: (since?: string) => ipcRenderer.invoke('ai:usage', since),
-    collect: () => ipcRenderer.invoke('ai:collect')
+    collect: () => ipcRenderer.invoke('ai:collect'),
+    // Значения паролей и ключей аккаунтов уходят в main и обратно НЕ возвращаются.
+    setAccountSecret: (accessId: string, email: string, patch: { password?: string; apiKey?: string }) =>
+      ipcRenderer.invoke('ai:setAccountSecret', accessId, email, patch),
+    copyAccountPassword: (accessId: string, email: string) =>
+      ipcRenderer.invoke('ai:copyAccountPassword', accessId, email),
+    checkAccountKey: (accessId: string, email: string) =>
+      ipcRenderer.invoke('ai:checkAccountKey', accessId, email),
+    importPasswords: (accessId: string) => ipcRenderer.invoke('ai:importPasswords', accessId)
   },
   forward: {
     open: (deviceId: string, localPort: number, remoteHost: string, remotePort: number) =>

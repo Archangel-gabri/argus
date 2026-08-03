@@ -184,6 +184,14 @@ export interface ArgusApi {
     deleteModel: (accessId: string, model: string) => Promise<{ ok: boolean }>
     usage: (since?: string) => Promise<AiUsageSummary>
     collect: () => Promise<{ files: number; records: number; duplicates: number; unpriced: string[] }>
+    setAccountSecret: (
+      accessId: string,
+      email: string,
+      patch: { password?: string; apiKey?: string }
+    ) => Promise<{ ok: boolean; error?: string }>
+    copyAccountPassword: (accessId: string, email: string) => Promise<{ ok: boolean; error?: string }>
+    checkAccountKey: (accessId: string, email: string) => Promise<AiCheck>
+    importPasswords: (accessId: string) => Promise<{ ok: boolean; imported: number; added?: number; error?: string }>
   }
   forward: {
     open: (
