@@ -106,16 +106,40 @@ export interface SeedResult {
   missingKeys: string[]
 }
 
+/** Как запись зовётся в реестре: своя метка, а если её нет — имя провайдера. */
+export function seedLabel(item: { label?: string; provider: string }): string {
+  return (item.label ?? item.provider).trim()
+}
+
 /**
- * Засеять реестр, если он пуст.
+ * Какие записи файла ещё не заведены.
  *
- * Ровно один раз: непустая таблица означает, что владелец уже что-то завёл руками, и
- * подмешивать к этому файл нельзя — получились бы дубли, которые придётся разбирать вручную.
+ * Сравнение по метке без учёта регистра. Дозасев по имени, а не «только на пустой таблице»:
+ * иначе один заведённый вручную доступ навсегда закрывал бы дорогу остальным девятнадцати.
+ * Существующие записи при этом НЕ трогаются — правки владельца важнее файла.
  */
-export function seedAiAccessIfEmpty(): SeedResult {
+export function pickMissing<T extends { label?: string; provider: string }>(existingLabels: string[], items: T[]): T[] {
+  const known = new Set(existingLabels.map((l) => l.trim().toLowerCase()))
+  const out: T[] = []
+  for (const item of items) {
+    const key = seedLabel(item).toLowerCase()
+    // Дубль внутри самого файла тоже отсекаем — иначе он приедет в базу дважды.
+    if (known.has(key)) continue
+    known.add(key)
+    out.push(item)
+  }
+  return out
+}
+
+/**
+ * Досеять в реестр то, чего в нём ещё нет.
+ *
+ * Вызывается при каждом открытии хранилища и обычно не делает ничего. Работает, когда файл
+ * пополнили новыми доступами: они появятся, а заведённое руками останется как есть.
+ */
+export function seedAiAccess(): SeedResult {
   const result: SeedResult = { created: 0, subscriptions: 0, missingKeys: [] }
   if (!vault.isUnlocked()) return result
-  if (vault.listAiAccess().length > 0) return result
 
   const path = seedPath()
   if (!path) return result
@@ -139,12 +163,20 @@ export function seedAiAccessIfEmpty(): SeedResult {
     }
   }
 
+  const existing = vault.listAiAccess()
+  const missing = pickMissing(
+    existing.map((a) => a.label),
+    file.access
+  )
+  if (!missing.length) return result
+
   const existingSubs = vault.listSubscriptions()
   // Сначала все записи без ссылок, потом связываем: фолбэк может указывать на запись,
-  // которой в момент создания ещё нет.
-  const byLabel = new Map<string, string>()
+  // которой в момент создания ещё нет. В карту сразу кладём и уже заведённое — иначе
+  // ссылка «чем заменить» на существующую запись потерялась бы.
+  const byLabel = new Map<string, string>(existing.map((a) => [a.label.toLowerCase(), a.id]))
 
-  for (const item of file.access) {
+  for (const item of missing) {
     let subscriptionId: string | null = null
     if (item.subscription) {
       const s = item.subscription
@@ -191,13 +223,15 @@ export function seedAiAccessIfEmpty(): SeedResult {
       apiKey
     }
     const created = vault.createAiAccess(input)
-    byLabel.set((item.label ?? item.provider).toLowerCase(), created.id)
+    byLabel.set(seedLabel(item).toLowerCase(), created.id)
     result.created++
   }
 
-  for (const item of file.access) {
+  // Ссылки проставляем только у новых записей: у существующих владелец мог поменять фолбэк
+  // руками, и файл не должен это откатывать.
+  for (const item of missing) {
     if (!item.fallback) continue
-    const id = byLabel.get((item.label ?? item.provider).toLowerCase())
+    const id = byLabel.get(seedLabel(item).toLowerCase())
     const target = byLabel.get(item.fallback.toLowerCase())
     if (id && target && id !== target) vault.updateAiAccess(id, { provider: item.provider, fallbackId: target })
   }

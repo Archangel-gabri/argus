@@ -10,7 +10,7 @@ import { walletBalance } from './onchain'
 import { checkAccount } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
-import { seedAiAccessIfEmpty } from './ai-seed'
+import { seedAiAccess } from './ai-seed'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -66,7 +66,7 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 function afterUnlock(): void {
   try {
     seedPricesIfEmpty()
-    seedAiAccessIfEmpty()
+    seedAiAccess()
   } catch {
     /* каталог или файл засева испорчены — приложение работает и без них */
   }

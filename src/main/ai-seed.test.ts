@@ -24,3 +24,31 @@ describe('разбор env-файла с ключами', () => {
     expect(parseEnvFile('=пусто\nпросто текст\n')).toEqual({})
   })
 })
+
+import { pickMissing, seedLabel } from './ai-seed'
+
+// Дозасев по имени, а не «только на пустой таблице»: у владельца в реестре уже могли лежать
+// записи с прошлых версий, и один такой доступ не должен закрывать дорогу остальным.
+describe('что досеивать в реестр', () => {
+  const item = (label?: string, provider = 'openai'): { label?: string; provider: string } => ({ label, provider })
+
+  it('пропускает то, что уже заведено, независимо от регистра и пробелов', () => {
+    const missing = pickMissing(['OpenRouter', '  claude max 5x '], [item('openrouter'), item('Claude Max 5x'), item('Groq')])
+    expect(missing.map((m) => m.label)).toEqual(['Groq'])
+  })
+
+  it('запись без метки узнаётся по имени провайдера', () => {
+    expect(seedLabel(item(undefined, 'anthropic'))).toBe('anthropic')
+    expect(pickMissing(['anthropic'], [item(undefined, 'anthropic')])).toHaveLength(0)
+  })
+
+  it('дубль внутри самого файла заводится один раз', () => {
+    // Иначе повтор в файле молча создаст две одинаковые записи, и человек будет искать,
+    // откуда взялась вторая.
+    expect(pickMissing([], [item('Groq'), item('groq')])).toHaveLength(1)
+  })
+
+  it('пустой реестр принимает всё', () => {
+    expect(pickMissing([], [item('A'), item('B')])).toHaveLength(2)
+  })
+})
