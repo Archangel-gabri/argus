@@ -75,8 +75,16 @@ export function startWatchdog(): void {
   // Дескриптор отложенной проверки надо сохранить. Раньше он выбрасывался, и `stopWatchdog`
   // гасил только интервал: отложенная проверка всё равно срабатывала — уже после остановки,
   // а на выходе из приложения ещё и после блокировки хранилища.
-  firstCheck = setTimeout(check, 90_000)
-  timer = setInterval(check, CHECK_EVERY_MS)
+  //
+  // Интервал взводится ВНУТРИ первой проверки, а не рядом с ней. Иначе отсрочка бессмысленна:
+  // интервал в 60 секунд срабатывал раньше отложенных 90 и приносил ровно ту пачку ложных
+  // тревог, ради избавления от которой отсрочка и сделана.
+  if (firstCheck) return
+  firstCheck = setTimeout(() => {
+    firstCheck = null
+    check()
+    timer = setInterval(check, CHECK_EVERY_MS)
+  }, 90_000)
 }
 
 export function stopWatchdog(): void {

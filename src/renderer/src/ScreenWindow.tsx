@@ -97,7 +97,8 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
       /* ignore */
     }
     clientRef.current = null
-    kbRef.current = null
+    // Сам объект не обнуляем: он один на жизнь окна и переиспользуется при реконнекте.
+    // `reset()` выше уже отпустил всё зажатое.
     scaleRef.current = 1
     mountRef.current?.replaceChildren()
   }, [])
@@ -289,10 +290,14 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     mouse.onmousemove = send
 
     // Клавиатура — на document: окно целиком принадлежит сеансу, ловим всё независимо от фокуса.
-    const keyboard = new Guacamole.Keyboard(document)
-    keyboard.onkeydown = (sym: number): void => client.sendKeyEvent(1, sym)
-    keyboard.onkeyup = (sym: number): void => client.sendKeyEvent(0, sym)
-    kbRef.current = keyboard
+    //
+    // Создаётся ОДИН раз на жизнь окна, а при переподключении только перевешиваются
+    // обработчики. Guacamole.Keyboard вешает свои слушатели на document и снимать их не умеет:
+    // каждый автореконнект (а он с backoff и может случаться десятками) добавлял ещё один
+    // экземпляр, и все они продолжали слать нажатия — на живую машину, по нескольку раз.
+    if (!kbRef.current) kbRef.current = new Guacamole.Keyboard(document)
+    kbRef.current.onkeydown = (sym: number): void => client.sendKeyEvent(1, sym)
+    kbRef.current.onkeyup = (sym: number): void => client.sendKeyEvent(0, sym)
   }, [teardown, pushClipboard])
 
   // Забрать параметры сеанса у main и подключиться.

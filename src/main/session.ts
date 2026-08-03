@@ -101,9 +101,23 @@ export function unlockCmd(sessionId: string): string {
   ].join('\n')
 }
 
-/** Экран Windows: заперт ли. Признак — работающий LogonUI.exe, он же рисует экран блокировки. */
-export const WINDOWS_LOCK_CMD =
-  'tasklist /FI "IMAGENAME eq LogonUI.exe" /NH 2>nul | find /I "LogonUI.exe" >nul && echo LOCKED=yes || echo LOCKED=no'
+/**
+ * Экран Windows: заперт ли. Признак — работающий LogonUI.exe, он же рисует экран блокировки.
+ *
+ * Через `-EncodedCommand`, а не строкой cmd.exe. Причина та же, что у остальных Windows-команд
+ * в этом проекте и уже однажды оплаченная отладкой: DefaultShell у OpenSSH на машине владельца
+ * — PowerShell, а этот синтаксис (`2>nul`, `&&`, `||`, `find /I`) он не разбирает. Под самим
+ * cmd.exe конструкция тоже вырождается: `find` возвращает ненулевой код, и ветка `||` печатает
+ * «LOCKED=no» независимо от того, заперт экран или нет. То есть проба отвечала «не заперт»
+ * всегда — на обоих шеллах, но по разным причинам.
+ */
+const WINDOWS_LOCK_PS =
+  "$p = Get-Process -Name LogonUI -ErrorAction SilentlyContinue; " +
+  "Write-Output ('LOCKED=' + $(if ($p) { 'yes' } else { 'no' }))"
+export const WINDOWS_LOCK_CMD = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(
+  WINDOWS_LOCK_PS,
+  'utf16le'
+).toString('base64')}`
 
 function shellSingleQuote(v: string): string {
   return `'${v.replace(/'/g, `'\\''`)}'`

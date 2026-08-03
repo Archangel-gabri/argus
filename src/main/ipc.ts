@@ -21,6 +21,7 @@ import { lockApplication } from './lockdown'
 import type { DeviceInput, VaultState, AiAccountInput, PowerResult } from './types'
 import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
+import { revokePendingAccess } from './access-epoch'
 
 import { trackedReach } from './reach-memory'
 import { masterPasswordPolicyError } from '../shared/password-strength'
@@ -151,6 +152,12 @@ export function registerIpc(): void {
     try {
       const deviceId = asString(id)
       const force = !!(opts && typeof opts === 'object' && (opts as { force?: unknown }).force)
+
+      // Двигаем поколение доступа ПЕРВЫМ действием. Операции, начатые до удаления, проверяют
+      // билет перед регистрацией ресурса (forward.ts, ssh.ts, sftp.ts) — иначе проброс порта,
+      // открывшийся сразу после удаления записи, становился невидимым и незакрываемым:
+      // устройства уже нет, а localhost-слушатель живёт до перезапуска приложения.
+      revokePendingAccess()
 
       // Установленный агент отзываем ДО удаления записи — иначе отзывать станет нечем.
       //

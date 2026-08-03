@@ -1,6 +1,7 @@
 import { Client, type SFTPWrapper } from 'ssh2'
 import { randomUUID } from 'node:crypto'
 import { dialog, type BrowserWindow } from 'electron'
+import { rename, rm } from 'node:fs'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
 import { beginAccess, isAccessCurrent } from './access-epoch'
 
@@ -136,8 +137,22 @@ export async function sftpDownload(
     : await dialog.showSaveDialog({ defaultPath: base })
   if (res.canceled || !res.filePath) return { ok: false, error: 'canceled' }
   const target = res.filePath
+  // Качаем в соседний временный файл и публикуем переименованием.
+  //
+  // `fastGet` открывает назначение на запись СРАЗУ и усекает его до нуля. Скачивая свежую
+  // копию поверх старой, владелец терял старую в первую же секунду: обрыв канала на середине
+  // (а канал до нод флапает) оставлял на её месте обрубок, и восстановить было неоткуда.
+  const tmp = `${target}.argus-part`
   return new Promise((resolve) => {
-    s.sftp.fastGet(remotePath, target, (err) => resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true }))
+    s.sftp.fastGet(remotePath, tmp, (err) => {
+      if (err) {
+        rm(tmp, { force: true }, () => resolve({ ok: false, error: friendlyErr(err.message) }))
+        return
+      }
+      rename(tmp, target, (e) =>
+        resolve(e ? { ok: false, error: `файл скачан, но не переименован: ${e.message}` } : { ok: true })
+      )
+    })
   })
 }
 
@@ -155,8 +170,20 @@ export async function sftpUpload(
   const local = res.filePaths[0]
   const name = local.split('/').pop() || 'file'
   const remote = remoteDir.replace(/\/$/, '') + '/' + name
+  // То же самое в обратную сторону: заливаем во временное имя, публикуем переименованием.
+  // Иначе прерванная загрузка (в том числе блокировкой приложения, которая рвёт SSH) заменяет
+  // рабочий файл на сервере обрубком — а это уже чужая машина, и чинить придётся руками.
+  const tmpRemote = `${remote}.argus-part`
   return new Promise((resolve) => {
-    s.sftp.fastPut(local, remote, (err) => resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true, name }))
+    s.sftp.fastPut(local, tmpRemote, (err) => {
+      if (err) {
+        s.sftp.unlink(tmpRemote, () => resolve({ ok: false, error: friendlyErr(err.message) }))
+        return
+      }
+      s.sftp.rename(tmpRemote, remote, (e2) =>
+        resolve(e2 ? { ok: false, error: friendlyErr(e2.message) } : { ok: true, name })
+      )
+    })
   })
 }
 

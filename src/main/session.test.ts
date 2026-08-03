@@ -305,17 +305,36 @@ describe('состояние экрана Windows', () => {
   // На Windows экран блокировки живёт на защищённом рабочем столе: агент видит только
   // рабочий стол пользователя, поэтому при блокировке он показал бы застывшую картинку.
   // Признак блокировки — работающий LogonUI.exe, он же её и рисует.
-  it('команда ищет LogonUI и отвечает однозначно', () => {
-    expect(WINDOWS_LOCK_CMD).toContain('LogonUI.exe')
-    expect(WINDOWS_LOCK_CMD).toContain('LOCKED=yes')
-    expect(WINDOWS_LOCK_CMD).toContain('LOCKED=no')
+  /** Что на самом деле выполнится на машине: расшифровываем -EncodedCommand. */
+  const decodedLockScript = (): string => {
+    const b64 = /-EncodedCommand\s+(\S+)/.exec(WINDOWS_LOCK_CMD)?.[1] ?? ''
+    return Buffer.from(b64, 'base64').toString('utf16le')
+  }
+
+  it('идёт через -EncodedCommand, а не строкой cmd.exe', () => {
+    // DefaultShell у OpenSSH на машине владельца — PowerShell, и синтаксис cmd.exe
+    // (`2>nul`, `&&`, `||`, `find /I`) он не разбирает. Под самим cmd.exe прежняя команда тоже
+    // вырождалась: `find` возвращает ненулевой код, ветка `||` печатала «LOCKED=no» независимо
+    // от того, заперт экран или нет. То есть проба отвечала «не заперт» ВСЕГДА — на обоих
+    // шеллах, но по разным причинам.
+    expect(WINDOWS_LOCK_CMD).toContain('-EncodedCommand')
+    expect(WINDOWS_LOCK_CMD).not.toContain('2>nul')
+    expect(WINDOWS_LOCK_CMD).not.toContain('find /I')
   })
 
-  it('команда не падает, когда процесса нет', () => {
-    // tasklist с фильтром без совпадений печатает информационную строку и возвращает 0,
-    // поэтому решение принимает find, а не код возврата tasklist.
-    expect(WINDOWS_LOCK_CMD).toContain('find')
-    expect(WINDOWS_LOCK_CMD).toContain('2>nul')
+  it('расшифрованный сценарий ищет LogonUI и отвечает однозначно', () => {
+    const ps = decodedLockScript()
+    expect(ps).toContain('LogonUI')
+    expect(ps).toContain('LOCKED=')
+    // Обе ветки присутствуют: «нет ответа» и «ответ no» — разные вещи.
+    expect(ps).toContain("'yes'")
+    expect(ps).toContain("'no'")
+  })
+
+  it('отсутствие процесса не считается ошибкой сценария', () => {
+    // Get-Process без совпадений бросает; SilentlyContinue превращает это в пустой $p,
+    // а решение принимает проверка $p, а не код возврата.
+    expect(decodedLockScript()).toContain('SilentlyContinue')
   })
 
   it('открывает агент только после однозначного LOCKED=no', () => {

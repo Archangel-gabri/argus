@@ -199,6 +199,8 @@ interface Session {
   // приглашение/баннер, отправленные между resolve(open) и подпиской onData, терялись.
   attached: boolean
   buffer: string[]
+  /** Снимаемый слушатель уничтожения окна — иначе он копится на каждом терминале. */
+  onDestroyed?: () => void
 }
 
 const sessions = new Map<string, Session>()
@@ -254,8 +256,13 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
           done({ ok: false, error: 'Argus заблокирован' })
           return
         }
-        sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [] })
-        wc.once('destroyed', () => closeShell(id))
+        // Слушатель сохраняем, чтобы снять его в cleanup. `once` срабатывает один раз, но
+        // НЕ снимается, если событие так и не наступило: каждый открытый и закрытый терминал
+        // навсегда оставлял на окне ещё одну ссылку. За долгую сессию их набираются десятки, и
+        // Electron начинает ругаться на утечку слушателей — на симптом, а не на причину.
+        const onDestroyed = (): void => closeShell(id)
+        sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [], onDestroyed })
+        wc.once('destroyed', onDestroyed)
         const forward = (d: Buffer): void => {
           const s = sessions.get(id)
           if (!s) return
@@ -360,6 +367,14 @@ export function closeDevice(deviceId: string): number {
 }
 
 function cleanup(id: string): void {
+  const live = sessions.get(id)
+  if (live?.onDestroyed) {
+    try {
+      live.wc.removeListener('destroyed', live.onDestroyed)
+    } catch {
+      /* окно уже уничтожено — снимать нечего */
+    }
+  }
   // Раньше сессия просто выбрасывалась из карты, а само SSH-соединение оставалось жить с
   // keep-alive до конца работы приложения. Каждый `exit` в терминале утекал одним соединением,
   // и закрыть его было уже нечем: по id сессии в карте больше нет.

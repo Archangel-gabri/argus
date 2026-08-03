@@ -259,6 +259,15 @@ export async function provisionAgent(deviceId: string): Promise<ProvisionResult>
       ? await execOnce(deviceId, psCmd('$env:PROCESSOR_ARCHITECTURE'))
       : await execOnce(deviceId, 'uname -s; uname -m')
   const raw = (archProbe.output || '').trim().toLowerCase()
+  // Неизвестность прекращает установку ДО заливки файла. Раньше пустой ответ молча означал
+  // «linux/amd64»: на Windows- или arm-машину заливался чужой бинарь и затирал рабочий, а
+  // диагноз приходил позже и в другом месте.
+  if (!archProbe.ok || !raw)
+    return {
+      ok: false,
+      step: 'платформа',
+      error: `не удалось определить ОС и архитектуру машины: ${archProbe.error || 'пустой ответ'}`
+    }
   const arch = remoteArch(raw)
   const family = remoteFamily(os.family === 'windows', raw)
 
