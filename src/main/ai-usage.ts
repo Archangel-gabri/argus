@@ -24,7 +24,8 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { ZERO_USAGE, addUsage, costOf, type TokenUsage } from '../shared/ai-pricing'
+import { ZERO_USAGE, addUsage, costOf, totalTokens, type TokenUsage } from '../shared/ai-pricing'
+import { buildBlocks, type BlockInput } from '../shared/ai-blocks'
 import type { AiUsageDay } from './types'
 import * as vault from './vault'
 
@@ -314,6 +315,9 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
         result.duplicates += records.length - fresh.size
         // Сначала складываем по (день, модель), потом считаем деньги: цена одна на группу.
         const buckets = new Map<string, { date: string; model: string; usage: TokenUsage; requests: number }>()
+        // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
+        // обращения, и по дневным итогам их не восстановить.
+        const forBlocks: BlockInput[] = []
         for (const rec of records) {
           if (!fresh.has(rec.id)) continue
           const date = localDate(rec.ts || stat.mtimeMs)
@@ -322,7 +326,36 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
           b.usage = addUsage(b.usage, rec.usage)
           b.requests++
           buckets.set(key, b)
+          if (!rateCache.has(rec.model)) rateCache.set(rec.model, vault.findAiPrice(rec.model))
+          const p = rateCache.get(rec.model) ?? null
+          forBlocks.push({
+            ts: rec.ts || stat.mtimeMs,
+            tokens: totalTokens(rec.usage),
+            costUsd: p
+              ? costOf(rec.usage, {
+                  input: p.input,
+                  output: p.output,
+                  cacheWrite: p.cacheWrite,
+                  cacheWrite1h: p.cacheWrite1h,
+                  cacheRead: p.cacheRead
+                })
+              : 0
+          })
           result.records++
+        }
+
+        if (forBlocks.length) {
+          const blocks = buildBlocks(forBlocks)
+          vault.addUsageBlocks(
+            blocks.map((b) => ({
+              source: src.name,
+              startTs: b.startTs,
+              endTs: b.endTs,
+              tokens: b.tokens,
+              costUsd: b.costUsd,
+              requests: b.requests
+            }))
+          )
         }
         const days: AiUsageDay[] = []
         for (const b of buckets.values()) {

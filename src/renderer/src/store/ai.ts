@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AiAccess, AiAccessInput, AiAccessModel, AiCheck, AiPrice, AiUsageDay } from '@/types'
+import type { AiAccess, AiAccessInput, AiAccessModel, AiCheck, AiPrice, AiUsageBlock, AiUsageDay } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -14,6 +14,8 @@ interface AiStore {
   prices: AiPrice[]
   models: Record<string, AiAccessModel[]>
   usage: AiUsageDay[]
+  /** Окна лимита по источникам — под полосу «текущая сессия». */
+  blocks: AiUsageBlock[]
   usageCollectedAt: number | null
   /** Модели, встреченные в логах, но отсутствующие в каталоге цен. */
   unpriced: string[]
@@ -47,6 +49,7 @@ export const useAi = create<AiStore>((set, get) => ({
   prices: [],
   models: {},
   usage: [],
+  blocks: [],
   usageCollectedAt: null,
   unpriced: [],
   loaded: !api,
@@ -249,7 +252,7 @@ export const useAi = create<AiStore>((set, get) => ({
     if (!api) return
     try {
       const r = await api.ai.usage()
-      set({ usage: r.days, usageCollectedAt: r.collectedAt })
+      set({ usage: r.days, blocks: r.blocks ?? [], usageCollectedAt: r.collectedAt })
     } catch (error) {
       set({ error: messageOf(error) })
     }

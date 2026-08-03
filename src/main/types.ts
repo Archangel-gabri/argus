@@ -310,13 +310,33 @@ export interface AiLimits {
   windowMessages?: number | null
 }
 
+/**
+ * Отдельный аккаунт внутри доступа.
+ *
+ * У одного провайдера их бывает несколько (у владельца шесть почт в OpenAI), и они различаются
+ * тарифом: где-то Plus, где-то free. Строка «6 аккаунтов» этого не сообщает — а именно это и
+ * нужно знать, когда ищешь, на какой почте лежит платная подписка.
+ */
+export interface AiAccountEntry {
+  /** Почта или логин. */
+  email: string
+  /** Тариф именно этого аккаунта: «Plus», «free», «Max 5x». */
+  plan?: string
+  /** Пометка: для чего заведён, чем отличается. */
+  note?: string
+  /** Основной — с него работают по умолчанию. */
+  primary?: boolean
+}
+
 export interface AiAccess {
   id: string
   kind: AiKind
   provider: string
   label: string
-  /** На каком аккаунте/почте куплено. */
+  /** На каком аккаунте/почте куплено (основной). */
   account: string
+  /** Остальные аккаунты того же провайдера — каждый со своим тарифом. */
+  accounts: AiAccountEntry[]
   plan: string
   status: AiStatus
   /** Ссылка на строку в subscriptions — деньги живут только там. */
@@ -345,6 +365,7 @@ export interface AiAccessInput {
   provider: string
   label?: string
   account?: string
+  accounts?: AiAccountEntry[]
   plan?: string
   status?: AiStatus
   subscriptionId?: string | null
@@ -427,9 +448,24 @@ export interface AiUsageDay {
   costUsd: number
 }
 
+/**
+ * Окно лимита подписки: провайдер отмеряет квоту не сутками, а «сессиями» по несколько часов,
+ * причём отсчёт идёт с первого обращения. Хранится по источнику логов.
+ */
+export interface AiUsageBlock {
+  source: string
+  startTs: number
+  endTs: number
+  tokens: number
+  costUsd: number
+  requests: number
+}
+
 /** Итог по источнику за период — то, что показывает экран. */
 export interface AiUsageSummary {
   days: AiUsageDay[]
+  /** Окна лимита по источникам — для полосы «текущая сессия». */
+  blocks: AiUsageBlock[]
   /** Когда последний раз читали логи. */
   collectedAt: number | null
   /** Сколько файлов просмотрено и сколько записей учтено в последнем проходе. */

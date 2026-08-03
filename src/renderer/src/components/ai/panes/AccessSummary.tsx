@@ -12,6 +12,7 @@ import {
   toUsd,
   totalsFor
 } from '@/lib/ai-account'
+import { LimitBar } from '@/components/ai/LimitBar'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess, AiCheck } from '@/types'
@@ -58,6 +59,7 @@ function ago(ts: number, now = Date.now()): string {
 export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Element {
   const subs = useSubs((s) => s.subs)
   const usage = useAi((s) => s.usage)
+  const blocks = useAi((s) => s.blocks)
   const all = useAi((s) => s.access)
   const check = useAi((s) => s.checks[access.id])
   const checking = useAi((s) => s.checking[access.id])
@@ -94,6 +96,8 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
         </p>
       )}
 
+      {source && <LimitBar access={access} blocks={blocks} source={source} />}
+
       <div>
         <Fact label="Тип">{KIND_ONE[access.kind]}</Fact>
         {access.account && <Fact label="Аккаунт">{access.account}</Fact>}
@@ -115,6 +119,33 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
           </Fact>
         )}
       </div>
+
+      {access.accounts.length > 0 && (
+        <Section title={`Аккаунты · ${access.accounts.length}`}>
+          <ul className="space-y-1 py-0.5">
+            {access.accounts.map((a) => (
+              <li key={a.email} className="flex items-baseline justify-between gap-3">
+                <span className="min-w-0 truncate text-[12px] text-slate-300">
+                  {a.email}
+                  {a.primary && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-accent">основной</span>}
+                </span>
+                <span className="shrink-0 text-[11px] text-slate-500">{a.plan || 'тариф неизвестен'}</span>
+              </li>
+            ))}
+          </ul>
+          {access.accounts.some((a) => a.note) && (
+            <ul className="mt-1.5 space-y-0.5 border-t border-border/40 pt-1.5">
+              {access.accounts
+                .filter((a) => a.note)
+                .map((a) => (
+                  <li key={a.email} className="text-[11px] leading-snug text-slate-600">
+                    <span className="text-slate-500">{a.email}</span> — {a.note}
+                  </li>
+                ))}
+            </ul>
+          )}
+        </Section>
+      )}
 
       <Section title="Деньги">
         {sub ? (

@@ -22,6 +22,7 @@ const access = (id: string, over: Partial<AiAccess> = {}): AiAccess => ({
   provider: 'openrouter',
   label: id,
   account: '',
+  accounts: [],
   plan: '',
   status: 'active',
   subscriptionId: null,

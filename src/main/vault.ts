@@ -39,12 +39,14 @@ import type {
   MetricSnapshot,
   AiAccess,
   AiAccessInput,
+  AiAccountEntry,
   AiAccessModel,
   AiKind,
   AiLimits,
   AiPayment,
   AiPrice,
   AiStatus,
+  AiUsageBlock,
   AiUsageDay
 } from './types'
 
@@ -268,6 +270,9 @@ function migrate(d: Database.Database): void {
   addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN used_by TEXT')
   addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN fallback_id TEXT')
   addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN limits_json TEXT')
+  // Несколько аккаунтов одного провайдера, каждый со своим тарифом. Одной строкой `account`
+  // это не выражается: «6 аккаунтов» не отвечает на вопрос, где именно лежит платный.
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN accounts_json TEXT')
 
   // Каталог цен. Не пользовательские данные, а кэш: вшитый снапшот LiteLLM + живой ответ
   // OpenRouter. Живёт в том же зашифрованном файле просто потому, что другой базы у приложения нет.
@@ -336,6 +341,18 @@ function migrate(d: Database.Database): void {
   d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_seen (
     id TEXT PRIMARY KEY,
     seen_at INTEGER NOT NULL
+  )`)
+
+  // Окна лимита подписки («сессии»). Дневных итогов для них мало: окно длится несколько часов
+  // и начинается с первого обращения, а не в полночь.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_usage_blocks (
+    source TEXT NOT NULL,
+    start_ts INTEGER NOT NULL,
+    end_ts INTEGER NOT NULL,
+    tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    requests INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, start_ts)
   )`)
 
   // Последний вердикт проверки ключа. Нужен двум потребителям: экрану — чтобы показать, когда
@@ -1450,6 +1467,7 @@ interface AiAccessRow {
   used_by: string | null
   fallback_id: string | null
   limits_json: string | null
+  accounts_json?: string | null
   notes: string | null
   created_at?: number | null
 }
@@ -1464,6 +1482,20 @@ function parseUsedBy(raw: string | null): string[] {
   try {
     const parsed: unknown = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** Разбор списка аккаунтов. Битый JSON = «списка нет», а не падение экрана. */
+function parseAccounts(raw: string | null): AiAccountEntry[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((v): v is AiAccountEntry => Boolean(v) && typeof v === 'object' && typeof (v as AiAccountEntry).email === 'string')
+      .map((v) => ({ email: v.email, plan: v.plan, note: v.note, primary: v.primary }))
   } catch {
     return []
   }
@@ -1500,13 +1532,15 @@ function toAccess(r: AiAccessRow): AiAccess {
     usedBy: parseUsedBy(r.used_by),
     fallbackId: r.fallback_id,
     limits: parseLimits(r.limits_json),
+    accounts: parseAccounts(r.accounts_json ?? null),
     notes: r.notes,
     createdAt: r.created_at ?? 0
   }
 }
 
 const AI_COLUMNS = `id, kind, provider, label, api_key, plan, account, status, subscription_id,
-   key_ref, key_expires_at, base_url, payment, third_party, used_by, fallback_id, limits_json, notes`
+   key_ref, key_expires_at, base_url, payment, third_party, used_by, fallback_id, limits_json,
+   accounts_json, notes`
 const AI_SELECT = `${AI_COLUMNS}, created_at`
 
 export function listAiAccess(): AiAccess[] {
@@ -1536,6 +1570,7 @@ export function createAiAccess(input: AiAccessInput): AiAccess {
     used_by: JSON.stringify(input.usedBy ?? []),
     fallback_id: input.fallbackId ?? null,
     limits_json: JSON.stringify(input.limits ?? {}),
+    accounts_json: JSON.stringify(input.accounts ?? []),
     notes: input.notes ?? null,
     created_at: Date.now()
   }
@@ -1544,7 +1579,7 @@ export function createAiAccess(input: AiAccessInput): AiAccess {
       `INSERT INTO ai_accounts (${AI_COLUMNS}, created_at)
        VALUES (@id, @kind, @provider, @label, @api_key, @plan, @account, @status, @subscription_id,
                @key_ref, @key_expires_at, @base_url, @payment, @third_party, @used_by, @fallback_id,
-               @limits_json, @notes, @created_at)`
+               @limits_json, @accounts_json, @notes, @created_at)`
     )
     .run(row)
   return toAccess(row)
@@ -1573,6 +1608,7 @@ export function updateAiAccess(id: string, input: AiAccessInput): AiAccess {
     used_by: input.usedBy !== undefined ? JSON.stringify(input.usedBy) : (cur.used_by ?? '[]'),
     fallback_id: input.fallbackId !== undefined ? input.fallbackId : cur.fallback_id,
     limits_json: input.limits !== undefined ? JSON.stringify(input.limits) : (cur.limits_json ?? '{}'),
+    accounts_json: input.accounts !== undefined ? JSON.stringify(input.accounts) : (cur.accounts_json ?? '[]'),
     notes: input.notes !== undefined ? input.notes : cur.notes
   }
   d.prepare(
@@ -1580,7 +1616,7 @@ export function updateAiAccess(id: string, input: AiAccessInput): AiAccess {
        plan=@plan, account=@account, status=@status, subscription_id=@subscription_id,
        key_ref=@key_ref, key_expires_at=@key_expires_at, base_url=@base_url, payment=@payment,
        third_party=@third_party, used_by=@used_by, fallback_id=@fallback_id,
-       limits_json=@limits_json, notes=@notes WHERE id=@id`
+       limits_json=@limits_json, accounts_json=@accounts_json, notes=@notes WHERE id=@id`
   ).run(next)
   // Дата создания в UPDATE не участвует (её нет среди именованных параметров — better-sqlite3
   // отвергает лишние), но в ответе она нужна: без неё правка обнуляла бы возраст записи.
@@ -1793,6 +1829,41 @@ export function filterUnseenUsage(ids: string[]): Set<string> {
   })
   run(ids)
   return fresh
+}
+
+// --- Окна лимита ---
+
+export function listUsageBlocks(source?: string): AiUsageBlock[] {
+  const d = requireDb()
+  const rows = source
+    ? (d.prepare('SELECT * FROM ai_usage_blocks WHERE source = ? ORDER BY start_ts').all(source) as Array<Record<string, unknown>>)
+    : (d.prepare('SELECT * FROM ai_usage_blocks ORDER BY start_ts').all() as Array<Record<string, unknown>>)
+  return rows.map((r) => ({
+    source: r.source as string,
+    startTs: r.start_ts as number,
+    endTs: r.end_ts as number,
+    tokens: r.tokens as number,
+    costUsd: r.cost_usd as number,
+    requests: r.requests as number
+  }))
+}
+
+/** Прибавить к окнам. Как и дневные итоги, проход читает только новый хвост логов. */
+export function addUsageBlocks(blocks: AiUsageBlock[]): void {
+  const d = requireDb()
+  const stmt = d.prepare(
+    `INSERT INTO ai_usage_blocks (source, start_ts, end_ts, tokens, cost_usd, requests)
+     VALUES (@source, @startTs, @endTs, @tokens, @costUsd, @requests)
+     ON CONFLICT(source, start_ts) DO UPDATE SET
+       tokens = tokens + excluded.tokens,
+       cost_usd = cost_usd + excluded.cost_usd,
+       requests = requests + excluded.requests,
+       end_ts = MAX(end_ts, excluded.end_ts)`
+  )
+  const write = d.transaction((list: AiUsageBlock[]) => {
+    for (const b of list) stmt.run(b)
+  })
+  write(blocks)
 }
 
 // --- Вердикты проверки ключей ----------------------------------------------------------------

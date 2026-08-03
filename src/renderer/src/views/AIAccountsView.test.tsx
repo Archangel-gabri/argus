@@ -17,6 +17,7 @@ const access = (id: string, over: Partial<AiAccess> = {}): AiAccess => ({
   provider: 'openrouter',
   label: id,
   account: '',
+  accounts: [],
   plan: '',
   status: 'active',
   subscriptionId: null,
@@ -62,7 +63,13 @@ const sub = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   ...over
 })
 
-async function mount(opts: { access: AiAccess[]; usage?: AiUsageDay[]; subs?: unknown[]; checks?: unknown[] }): Promise<void> {
+async function mount(opts: {
+  access: AiAccess[]
+  usage?: AiUsageDay[]
+  subs?: unknown[]
+  checks?: unknown[]
+  blocks?: unknown[]
+}): Promise<void> {
   const api = {
     ai: {
       list: vi.fn().mockResolvedValue(opts.access),
@@ -74,7 +81,9 @@ async function mount(opts: { access: AiAccess[]; usage?: AiUsageDay[]; subs?: un
         return saved ?? { status: 'valid' }
       }),
       prices: vi.fn().mockResolvedValue([]),
-      usage: vi.fn().mockResolvedValue({ days: opts.usage ?? [], collectedAt: Date.now(), scannedFiles: 0, skipped: 0 }),
+      usage: vi
+        .fn()
+        .mockResolvedValue({ days: opts.usage ?? [], blocks: opts.blocks ?? [], collectedAt: Date.now(), scannedFiles: 0, skipped: 0 }),
       collect: vi.fn().mockResolvedValue({ files: 0, records: 0, duplicates: 0, unpriced: [] }),
       models: vi.fn().mockResolvedValue([])
     },
@@ -163,6 +172,52 @@ describe('экран AI', () => {
     expect(within(panel).getByText(/anthropic · подписка/)).toBeInTheDocument()
     expect(within(panel).getByText('me@example.com')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('окно лимита показывает процент только когда потолок задан', async () => {
+    const now = Date.now()
+    const block = { source: 'claude-code', startTs: now - 3 * 3600_000, endTs: now + 2 * 3600_000, tokens: 570_000, costUsd: 12, requests: 40 }
+
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5, windowTokens: 1_000_000 } })],
+      blocks: [block]
+    })
+    const panel = () => document.querySelector('aside:last-of-type') as HTMLElement
+    expect(within(panel()).getByText('57%')).toBeInTheDocument()
+    expect(within(panel()).getByText(/Сбросится через 2 ч/)).toBeInTheDocument()
+  })
+
+  it('без заданного потолка процент не выдумывается', async () => {
+    // Anthropic порогов не публикует. Вместо доли показываем абсолютный расход и предлагаем
+    // взять потолок из собственных наблюдений.
+    const now = Date.now()
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
+      blocks: [{ source: 'claude-code', startTs: now - 3600_000, endTs: now + 4 * 3600_000, tokens: 570_000, costUsd: 12, requests: 40 }]
+    })
+    const panel = document.querySelector('aside:last-of-type') as HTMLElement
+    expect(within(panel).queryByText(/%$/)).not.toBeInTheDocument()
+    expect(within(panel).getByText(/Взять потолок из наблюдений/)).toBeInTheDocument()
+  })
+
+  it('аккаунты провайдера перечислены с тарифом каждого', async () => {
+    // «6 аккаунтов» не отвечает на вопрос, где лежит платная подписка, — а именно его и задают.
+    await mount({
+      access: [
+        access('ChatGPT', {
+          provider: 'openai',
+          accounts: [
+            { email: 'main@example.com', plan: 'free', primary: true },
+            { email: 'second@example.com', plan: 'Plus' }
+          ]
+        })
+      ]
+    })
+    const panel = document.querySelector('aside:last-of-type') as HTMLElement
+    expect(within(panel).getByRole('heading', { name: /Аккаунты · 2/ })).toBeInTheDocument()
+    expect(within(panel).getByText('main@example.com')).toBeInTheDocument()
+    expect(within(panel).getByText('Plus')).toBeInTheDocument()
+    expect(within(panel).getByText('основной')).toBeInTheDocument()
   })
 
   it('состояние «не оформлен» видно прямо в строке', async () => {

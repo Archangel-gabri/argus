@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { AiAccessInput, AiKind, AiLimits, AiPayment, AiStatus } from './types'
+import type { AiAccessInput, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from './types'
 import * as vault from './vault'
 
 interface SeedSubscription {
@@ -32,6 +32,7 @@ interface SeedAccess {
   provider: string
   label?: string
   account?: string
+  accounts?: AiAccountEntry[]
   plan?: string
   status?: AiStatus
   payment?: AiPayment
@@ -208,6 +209,7 @@ export function seedAiAccess(): SeedResult {
       provider: item.provider,
       label: item.label,
       account: item.account,
+      accounts: item.accounts,
       plan: item.plan,
       status: item.status,
       payment: item.payment,

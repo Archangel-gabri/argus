@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/Page'
 import { providerChangeError, KIND_LABEL, KIND_ORDER, PAYMENT_LABEL, STATUS_LABEL } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
-import type { AiAccess, AiKind, AiLimits, AiPayment, AiStatus } from '@/types'
+import type { AiAccess, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from '@/types'
 
 const PROVIDERS = [
   'anthropic',
@@ -108,7 +108,12 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
   const [windowTokens, setWindowTokens] = useState(
     initial?.limits?.windowTokens != null ? String(initial.limits.windowTokens) : ''
   )
+  const [accounts, setAccounts] = useState<AiAccountEntry[]>(initial?.accounts ?? [])
   const [notes, setNotes] = useState(initial?.notes ?? '')
+
+  /** Правка одного аккаунта в списке. Список короткий — переписываем целиком, это дешевле логики. */
+  const patchAccount = (index: number, patch: Partial<AiAccountEntry>): void =>
+    setAccounts(accounts.map((a, i) => (i === index ? { ...a, ...patch } : a)))
   const [busy, setBusy] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -148,6 +153,15 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
           .map((s) => s.trim())
           .filter(Boolean),
         subscriptionId: subscriptionId || null,
+        // Пустые строки не сохраняем: пустой аккаунт в списке — это забытая правка, а не факт.
+        accounts: accounts
+          .filter((a) => a.email.trim())
+          .map((a) => ({
+            email: a.email.trim(),
+            plan: a.plan?.trim() || undefined,
+            note: a.note?.trim() || undefined,
+            primary: a.primary
+          })),
         limits,
         notes: notes.trim() || null
       }
@@ -278,6 +292,50 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
             placeholder="—"
           />
         </Field>
+
+        <div className="col-span-2">
+          <span className={labelCls}>Другие аккаунты того же провайдера</span>
+          {accounts.map((a, i) => (
+            <div key={i} className="mb-1.5 flex items-center gap-2">
+              <input
+                className={inputCls}
+                value={a.email}
+                onChange={(e) => patchAccount(i, { email: e.target.value })}
+                placeholder="почта или логин"
+              />
+              <input
+                className={`${inputCls} max-w-[11rem]`}
+                value={a.plan ?? ''}
+                onChange={(e) => patchAccount(i, { plan: e.target.value })}
+                placeholder="тариф"
+              />
+              <input
+                className={`${inputCls} max-w-[13rem]`}
+                value={a.note ?? ''}
+                onChange={(e) => patchAccount(i, { note: e.target.value })}
+                placeholder="для чего"
+              />
+              <button
+                type="button"
+                onClick={() => setAccounts(accounts.filter((_, j) => j !== i))}
+                className="shrink-0 rounded p-2 text-slate-600 hover:bg-rose-500/10 hover:text-rose-400"
+                title="Убрать аккаунт"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setAccounts([...accounts, { email: '' }])}
+            className="mt-0.5 rounded px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-border hover:bg-card-hover hover:text-slate-200"
+          >
+            + аккаунт
+          </button>
+          <span className="mt-1 block text-[11px] text-slate-600">
+            Тариф у каждого свой — так видно, на какой почте лежит платная подписка.
+          </span>
+        </div>
 
         <Field label="Заметки" span>
           <textarea className={inputCls} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

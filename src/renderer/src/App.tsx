@@ -68,6 +68,7 @@ export default function App(): React.JSX.Element {
         prices: [],
         models: {},
         usage: [],
+        blocks: [],
         usageCollectedAt: null,
         unpriced: [],
         loaded: false,

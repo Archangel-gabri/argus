@@ -402,9 +402,10 @@ export function registerIpc(): void {
 
   // Расход: дневные итоги из базы и разбор новых хвостов логов по требованию.
   ipcMain.handle('ai:usage', (_e, since: unknown) => {
-    if (!vault.isUnlocked()) return { days: [], collectedAt: null, scannedFiles: 0, skipped: 0 }
+    if (!vault.isUnlocked()) return { days: [], blocks: [], collectedAt: null, scannedFiles: 0, skipped: 0 }
     return {
       days: vault.listUsageDays(since ? asString(since) : undefined),
+      blocks: vault.listUsageBlocks(),
       collectedAt: vault.lastUsageScan(),
       scannedFiles: 0,
       skipped: 0
