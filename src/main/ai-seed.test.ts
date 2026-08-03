@@ -52,3 +52,67 @@ describe('что досеивать в реестр', () => {
     expect(pickMissing([], [item('A'), item('B')])).toHaveLength(2)
   })
 })
+
+import { fillGaps } from './ai-seed'
+import type { AiAccess } from './types'
+
+const saved = (over: Partial<AiAccess> = {}): AiAccess => ({
+  id: 'a1',
+  kind: 'subscription',
+  provider: 'openai',
+  label: 'ChatGPT',
+  account: '',
+  accounts: [],
+  plan: '',
+  status: 'active',
+  subscriptionId: null,
+  hasKey: false,
+  keyRef: null,
+  keyExpiresAt: null,
+  baseUrl: null,
+  payment: 'card',
+  thirdParty: false,
+  usedBy: [],
+  fallbackId: null,
+  limits: {},
+  notes: null,
+  createdAt: 0,
+  ...over
+})
+
+// Дозасев по именам решал половину задачи: когда в файл добавляли новые поля, запись, созданная
+// прошлой версией, оставалась прежней — и владелец не видел ни списка аккаунтов, ни лимитов.
+describe('дополнение уже заведённой записи', () => {
+  it('добавляет то, чего в записи нет', () => {
+    const patch = fillGaps(saved(), {
+      provider: 'openai',
+      accounts: [{ email: 'me@example.com', plan: 'free' }],
+      limits: { windowHours: 5 },
+      usedBy: ['Codex CLI']
+    })
+    expect(patch?.accounts).toHaveLength(1)
+    expect(patch?.limits?.windowHours).toBe(5)
+    expect(patch?.usedBy).toEqual(['Codex CLI'])
+  })
+
+  it('НЕ трогает то, что владелец уже заполнил', () => {
+    const patch = fillGaps(
+      saved({ accounts: [{ email: 'свой@example.com' }], account: 'свой', usedBy: ['своё'] }),
+      { provider: 'openai', accounts: [{ email: 'из-файла@example.com' }], account: 'из файла', usedBy: ['из файла'] }
+    )
+    expect(patch).toBeNull()
+  })
+
+  it('лимиты сливаются по одному полю — свой потолок не теряется', () => {
+    // Иначе появление длительности окна в файле стёрло бы вручную выставленный потолок.
+    const patch = fillGaps(saved({ limits: { windowTokens: 900_000 } }), {
+      provider: 'openai',
+      limits: { windowHours: 5, windowTokens: 123 }
+    })
+    expect(patch?.limits).toEqual({ windowTokens: 900_000, windowHours: 5 })
+  })
+
+  it('нечего дополнять — правки нет', () => {
+    expect(fillGaps(saved(), { provider: 'openai' })).toBeNull()
+  })
+})

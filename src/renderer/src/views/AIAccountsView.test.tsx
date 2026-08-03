@@ -217,7 +217,9 @@ describe('экран AI', () => {
     expect(within(panel).getByRole('heading', { name: /Аккаунты · 2/ })).toBeInTheDocument()
     expect(within(panel).getByText('main@example.com')).toBeInTheDocument()
     expect(within(panel).getByText('Plus')).toBeInTheDocument()
-    expect(within(panel).getByText('основной')).toBeInTheDocument()
+    // Основной аккаунт отмечен точкой, а не словом: список короткий, и подпись на каждой
+    // строке была бы шумом.
+    expect(within(panel).getByTitle('основной')).toBeInTheDocument()
   })
 
   it('состояние «не оформлен» видно прямо в строке', async () => {

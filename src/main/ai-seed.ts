@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { AiAccessInput, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from './types'
+import type { AiAccess, AiAccessInput, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from './types'
 import * as vault from './vault'
 
 interface SeedSubscription {
@@ -102,6 +102,8 @@ function seedPath(): string | null {
 
 export interface SeedResult {
   created: number
+  /** Сколько уже заведённых записей дополнили данными из файла. */
+  updated: number
   subscriptions: number
   /** Записи, которым в файле обещан ключ, но взять его негде. */
   missingKeys: string[]
@@ -133,13 +135,68 @@ export function pickMissing<T extends { label?: string; provider: string }>(exis
 }
 
 /**
- * Досеять в реестр то, чего в нём ещё нет.
+ * Чем дополнить УЖЕ заведённую запись.
  *
- * Вызывается при каждом открытии хранилища и обычно не делает ничего. Работает, когда файл
- * пополнили новыми доступами: они появятся, а заведённое руками останется как есть.
+ * Дозасев по именам решал только половину задачи: когда в файл добавляли новые поля (список
+ * аккаунтов, окно лимита), запись в хранилище оставалась прежней, и владелец не видел ничего
+ * нового, пока не заводил доступ заново.
+ *
+ * Дополняются ТОЛЬКО пустые места. Всё, что владелец заполнил или поправил руками, файл не
+ * трогает: он источник первичных данных, а не хозяин записи.
+ */
+export function fillGaps(existing: AiAccess, item: SeedAccess): AiAccessInput | null {
+  const patch: AiAccessInput = { provider: existing.provider }
+  let changed = false
+
+  if (existing.accounts.length === 0 && item.accounts?.length) {
+    patch.accounts = item.accounts
+    changed = true
+  }
+  if (!existing.account && item.account) {
+    patch.account = item.account
+    changed = true
+  }
+  if (!existing.baseUrl && item.baseUrl) {
+    patch.baseUrl = item.baseUrl
+    changed = true
+  }
+  if (!existing.keyExpiresAt && item.keyExpiresAt) {
+    patch.keyExpiresAt = item.keyExpiresAt
+    changed = true
+  }
+  if (existing.usedBy.length === 0 && item.usedBy?.length) {
+    patch.usedBy = item.usedBy
+    changed = true
+  }
+
+  // Лимиты дополняются по одному полю: у записи может быть задан свой потолок окна, и терять
+  // его из-за того, что в файле появилась длительность, нельзя.
+  if (item.limits) {
+    const merged = { ...existing.limits }
+    let limitsChanged = false
+    for (const [key, value] of Object.entries(item.limits) as Array<[keyof AiLimits, number | null | undefined]>) {
+      if (value == null) continue
+      if (merged[key] == null) {
+        merged[key] = value
+        limitsChanged = true
+      }
+    }
+    if (limitsChanged) {
+      patch.limits = merged
+      changed = true
+    }
+  }
+
+  return changed ? patch : null
+}
+
+/**
+ * Досеять в реестр то, чего в нём ещё нет, и дополнить уже заведённое.
+ *
+ * Вызывается при каждом открытии хранилища и обычно не делает ничего.
  */
 export function seedAiAccess(): SeedResult {
-  const result: SeedResult = { created: 0, subscriptions: 0, missingKeys: [] }
+  const result: SeedResult = { created: 0, updated: 0, subscriptions: 0, missingKeys: [] }
   if (!vault.isUnlocked()) return result
 
   const path = seedPath()
@@ -169,6 +226,19 @@ export function seedAiAccess(): SeedResult {
     existing.map((a) => a.label),
     file.access
   )
+
+  // Сначала дополняем уже заведённое: новые поля файла (список аккаунтов, окно лимита) иначе
+  // никогда не доедут до записи, созданной прошлой версией приложения.
+  const byName = new Map(existing.map((a) => [a.label.trim().toLowerCase(), a]))
+  for (const item of file.access) {
+    const found = byName.get(seedLabel(item).toLowerCase())
+    if (!found) continue
+    const patch = fillGaps(found, item)
+    if (!patch) continue
+    vault.updateAiAccess(found.id, patch)
+    result.updated++
+  }
+
   if (!missing.length) return result
 
   const existingSubs = vault.listSubscriptions()

@@ -306,6 +306,8 @@ export interface AiLimits {
   windowHours?: number | null
   /** Сколько токенов, по наблюдениям владельца, влезает в окно. Argus этого знать не может. */
   windowTokens?: number | null
+  /** Недельный потолок — у подписок он идёт вторым слоем поверх окна сессии. */
+  weekTokens?: number | null
   /** Сообщений в окне — как их считает провайдер. */
   windowMessages?: number | null
 }

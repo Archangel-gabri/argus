@@ -12,7 +12,7 @@ import {
   toUsd,
   totalsFor
 } from '@/lib/ai-account'
-import { LimitBar } from '@/components/ai/LimitBar'
+import { PlanLimits } from '@/components/ai/PlanLimits'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess, AiCheck } from '@/types'
@@ -96,7 +96,7 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
         </p>
       )}
 
-      {source && <LimitBar access={access} blocks={blocks} source={source} />}
+      {source && <PlanLimits access={access} blocks={blocks} days={usage} source={source} />}
 
       <div>
         <Fact label="Тип">{KIND_ONE[access.kind]}</Fact>
@@ -122,16 +122,30 @@ export function AccessSummary({ access }: { access: AiAccess }): React.JSX.Eleme
 
       {access.accounts.length > 0 && (
         <Section title={`Аккаунты · ${access.accounts.length}`}>
-          <ul className="space-y-1 py-0.5">
-            {access.accounts.map((a) => (
-              <li key={a.email} className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 truncate text-[12px] text-slate-300">
-                  {a.email}
-                  {a.primary && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-accent">основной</span>}
-                </span>
-                <span className="shrink-0 text-[11px] text-slate-500">{a.plan || 'тариф неизвестен'}</span>
-              </li>
-            ))}
+          <ul className="divide-y divide-border/40">
+            {access.accounts.map((a) => {
+              // Платный тариф выделяется: именно его ищут, когда открывают этот список.
+              const paid = Boolean(a.plan) && !/free|бесплат|не провер|неизвест/i.test(a.plan ?? '')
+              return (
+                <li key={a.email} className="flex items-center justify-between gap-3 py-1.5">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span
+                      className={cn('h-1 w-1 shrink-0 rounded-full', a.primary ? 'bg-accent' : 'bg-slate-700')}
+                      title={a.primary ? 'основной' : undefined}
+                    />
+                    <span className="truncate text-[12px] text-slate-300">{a.email}</span>
+                  </span>
+                  <span
+                    className={cn(
+                      'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
+                      paid ? 'bg-accent/15 text-accent' : 'text-slate-600'
+                    )}
+                  >
+                    {a.plan || 'тариф неизвестен'}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
           {access.accounts.some((a) => a.note) && (
             <ul className="mt-1.5 space-y-0.5 border-t border-border/40 pt-1.5">
