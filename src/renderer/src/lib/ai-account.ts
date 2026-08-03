@@ -41,6 +41,7 @@ export function providerChangeError(current: string, next: string, newKey: strin
 
 export const KIND_ORDER: AiKind[] = ['subscription', 'api', 'router', 'free-tier', 'local', 'cli-agent']
 
+/** Заголовок группы в списке — множественное число. */
 export const KIND_LABEL: Record<AiKind, string> = {
   subscription: 'Подписки',
   api: 'API-ключи',
@@ -48,6 +49,16 @@ export const KIND_LABEL: Record<AiKind, string> = {
   'free-tier': 'Бесплатные тарифы',
   local: 'Локальные',
   'cli-agent': 'CLI-агенты'
+}
+
+/** Название типа для ОДНОЙ записи. «anthropic · подписки» читается как ошибка, и это она и есть. */
+export const KIND_ONE: Record<AiKind, string> = {
+  subscription: 'подписка',
+  api: 'API-ключ',
+  router: 'роутер',
+  'free-tier': 'бесплатный тариф',
+  local: 'локальный',
+  'cli-agent': 'CLI-агент'
 }
 
 export const STATUS_LABEL: Record<AiAccess['status'], string> = {
@@ -154,6 +165,31 @@ export function monthlyCost(sub: Subscription | undefined): number | null {
 }
 
 /**
+ * Приблизительные курсы к доллару — те же, что в хранилище.
+ *
+ * Нужны в одном месте: расход по логам считается в долларах (цены провайдеров долларовые), а
+ * подписка может быть в евро. Делить одно на другое без перевода — получить красивое число,
+ * которое ничего не значит.
+ */
+const FX_TO_USD: Record<string, number> = {
+  USD: 1,
+  EUR: 1.08,
+  RUB: 0.0126,
+  GBP: 1.27,
+  CNY: 0.14,
+  CHF: 1.11,
+  PLN: 0.25,
+  KZT: 0.0021,
+  TRY: 0.029
+}
+
+/** Сумма в долларах. Неизвестная валюта — null: соврать курсом хуже, чем не показать. */
+export function toUsd(amount: number, currency: string): number | null {
+  const rate = FX_TO_USD[currency]
+  return rate == null ? null : amount * rate
+}
+
+/**
  * Окупаемость подписки: во сколько раз эквивалент по API-ценам больше абонентской платы.
  *
  * Возвращает null, если считать не из чего. Это ВАЖНО: «×0» и «не знаю» — разные ответы,
@@ -181,6 +217,9 @@ export function daysUntilExpiry(iso: string | null, now = Date.now()): number | 
 }
 
 /** Записи, требующие внимания: ключ умер, скоро истечёт или бесплатный доступ так и не взят. */
+/** Ниже этого остатка доступ считается почти исчерпанным — тот же порог, что у сторожа. */
+export const LOW_CREDIT_USD = 5
+
 export function needsAttention(
   access: AiAccess[],
   checks: Record<string, AiCheck>,
@@ -190,8 +229,11 @@ export function needsAttention(
     if (a.status === 'expired') return true
     const days = daysUntilExpiry(a.keyExpiresAt, now)
     if (days !== null && days <= 14) return true
-    const status = checks[a.id]?.status
-    return status === 'invalid'
+    const check = checks[a.id]
+    // Кончающийся баланс — то же «требует внимания»: без него экран показывал ноль проблем,
+    // пока строка рядом честно горела предупреждением об остатке в двадцать центов.
+    if (typeof check?.remaining === 'number' && check.remaining <= LOW_CREDIT_USD) return true
+    return check?.status === 'invalid'
   })
 }
 

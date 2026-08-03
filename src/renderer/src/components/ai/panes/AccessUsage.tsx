@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Loader2, RefreshCw } from 'lucide-react'
-import { Sparkline } from '@/components/ui/Sparkline'
+import { UsageBars } from '@/components/ai/UsageBars'
 import { money } from '@/lib/format'
 import { byModel, daysAgoDate, dailySeries, totalsFor } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
@@ -35,8 +34,6 @@ function tokens(n: number): string {
 
 export function AccessUsage({ access }: { access: AiAccess }): React.JSX.Element {
   const usage = useAi((s) => s.usage)
-  const collect = useAi((s) => s.collect)
-  const collecting = useAi((s) => s.collecting)
   const collectedAt = useAi((s) => s.usageCollectedAt)
   const unpriced = useAi((s) => s.unpriced)
   const [span, setSpan] = useState(30)
@@ -84,14 +81,6 @@ export function AccessUsage({ access }: { access: AiAccess }): React.JSX.Element
             </button>
           ))}
         </div>
-        <button
-          onClick={() => void collect()}
-          disabled={collecting}
-          className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
-        >
-          {collecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Перечитать логи
-        </button>
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-3">
@@ -133,7 +122,7 @@ export function AccessUsage({ access }: { access: AiAccess }): React.JSX.Element
       {series.some((v) => v > 0) && (
         <div className="mt-4 rounded-lg bg-bg/40 p-3">
           <div className="mb-2 text-[11px] text-slate-500">По дням</div>
-          <Sparkline data={series} width={520} height={48} />
+          <UsageBars data={series} width={340} height={44} />
         </div>
       )}
 

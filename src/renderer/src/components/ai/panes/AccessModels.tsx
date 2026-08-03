@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, RefreshCw, Star } from 'lucide-react'
+import { Calculator, Loader2, RefreshCw, Star } from 'lucide-react'
+import { cn } from '@/lib/cn'
+import { CostCalculator } from '@/components/ai/CostCalculator'
 import { priceLabel } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
 import type { AiAccess, AiAccessModel, AiPrice } from '@/types'
@@ -37,6 +39,7 @@ export function AccessModels({ access }: { access: AiAccess }): React.JSX.Elemen
   const pricesLoading = useAi((s) => s.pricesLoading)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
+  const [calc, setCalc] = useState(false)
 
   useEffect(() => {
     void loadModels(access.id)
@@ -84,14 +87,33 @@ export function AccessModels({ access }: { access: AiAccess }): React.JSX.Elemen
       <div className="flex items-center gap-2">
         <input className={inputCls} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск модели" />
         <button
+          onClick={() => setCalc((v) => !v)}
+          title="Посчитать стоимость задачи"
+          aria-pressed={calc}
+          className={cn(
+            'shrink-0 rounded p-2 ring-1 ring-border transition-colors',
+            calc ? 'bg-accent/15 text-accent' : 'text-slate-500 hover:bg-card-hover hover:text-slate-200'
+          )}
+        >
+          <Calculator className="h-3.5 w-3.5" />
+        </button>
+        <button
           onClick={() => void refreshPrices(access.hasKey ? access.id : undefined)}
           disabled={pricesLoading}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
+          title="Обновить каталог цен"
+          className="shrink-0 rounded p-2 text-slate-500 ring-1 ring-border transition-colors hover:bg-card-hover hover:text-slate-200 disabled:opacity-50"
         >
           {pricesLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-          Обновить цены
         </button>
       </div>
+
+      {/* Калькулятор живёт здесь, а не в шапке экрана: считают стоимость, когда уже смотрят на
+          цены, и почти никогда — открывая раздел. */}
+      {calc && (
+        <div className="mt-3">
+          <CostCalculator prices={rows.length ? prices.filter((p) => p.provider === catalogProvider(access)) : prices} />
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
