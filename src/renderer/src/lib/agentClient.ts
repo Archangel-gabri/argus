@@ -94,7 +94,9 @@ export class AgentClient {
     ws.onclose = (): void => {
       if (!this.closed) this.h.onClose?.()
     }
-    ws.onopen = (): void => this.bindInput()
+    // Ввод подключается НЕ здесь, а после первого кадра (ветка 'hello' ниже). Открытый
+    // сокет ещё не означает картинку: между ним и первым кадром человек «печатал вслепую» в
+    // живую систему, не видя ни курсора, ни того, какое окно в фокусе.
   }
 
   private onText(raw: string): void {
@@ -112,6 +114,8 @@ export class AgentClient {
       const hello = msg as unknown as AgentHello
       this.h.onHello?.(hello)
       this.setupDecoder(hello.codec || 'avc1.42E01F')
+      // Картинка есть — теперь ввод осмыслен. Сервер симметрично не принимает его раньше.
+      this.bindInput()
       this.startStats()
       return
     }

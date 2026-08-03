@@ -168,6 +168,12 @@ func waylandOptions(_, _, fallbackFPS int) []captureOption {
 // ensureSessionEnv добавляет переменные графического сеанса, если процесс запущен из-под SSH
 // (там их нет), — иначе клиент портала не найдёт ни шину, ни композитор.
 func ensureSessionEnv(cmd *exec.Cmd) {
+	// Дополняем окружение, а не заменяем его. При cmd.Env == nil дочерний процесс наследует
+	// окружение родителя; как только мы что-то в Env кладём, наследование ПРОПАДАЕТ целиком —
+	// и вместе с ним PATH, HOME и всё, на чём держится запуск ffmpeg и портала.
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
 	uid := strconv.Itoa(os.Getuid())
 	run := os.Getenv("XDG_RUNTIME_DIR")
 	if run == "" {

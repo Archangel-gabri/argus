@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -262,13 +263,16 @@ func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int
 	// Вторая половина замера считается отдельно: смысл проверки в том, ЧТО ИЗМЕНИЛОСЬ после
 	// смены ступени, а не в среднем по всему прогону.
 	var frames2, bytes2 int
-	var switchAt time.Time
-	var firstAt time.Time
+	// Метки времени атомарные: `switchAt` пишет отдельная горутина смены ступени, а читают её
+	// и колбэк кадров, и итоговый расчёт. Обычное присваивание time.Time здесь — гонка,
+	// которую `go test -race` увидит, а обычный прогон замолчит.
+	var switchAtNs atomic.Int64
+	var firstAtNs atomic.Int64
 	done := make(chan error, 1)
 	go func() {
 		done <- st.Run(ctx, func(au AU) {
 			if frames == 0 {
-				firstAt = time.Now()
+				firstAtNs.Store(time.Now().UnixNano())
 				// Отсчёт времени идёт от ПЕРВОГО кадра, а не от запуска: в запуск входят
 				// переговоры с порталом и перебор вариантов, и они смазали бы результат.
 				go func() {
@@ -282,7 +286,7 @@ func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int
 							fmt.Printf("смена ступени не удалась: %v\n", err)
 							return
 						}
-						switchAt = time.Now()
+						switchAtNs.Store(time.Now().UnixNano())
 						fmt.Printf("ступень сменена: битрейт %d кбит/с, частота %d\n", swBitrate, swFPS)
 					}()
 				}
@@ -292,7 +296,7 @@ func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int
 			if au.IsKey {
 				keys++
 			}
-			if !switchAt.IsZero() {
+			if switchAtNs.Load() != 0 {
 				frames2++
 				bytes2 += len(au.Data)
 			}
@@ -307,7 +311,7 @@ func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int
 			ch.source, ch.encoder)
 		os.Exit(1)
 	}
-	elapsed := time.Since(firstAt).Seconds()
+	elapsed := time.Since(time.Unix(0, firstAtNs.Load())).Seconds()
 	if elapsed <= 0 {
 		elapsed = float64(seconds)
 	}
@@ -315,8 +319,8 @@ func runBench(seconds, fps, w, h int, only string, swAfter, swBitrate, swFPS int
 	fmt.Printf("  кадров: %d за %.1fс = %.1f к/с (ключевых %d)\n", frames, elapsed, float64(frames)/elapsed, keys)
 	fmt.Printf("  поток: %.1f Мбит/с, средний кадр %.0f КБ\n",
 		float64(bytes)*8/elapsed/1e6, float64(bytes)/float64(frames)/1024)
-	if !switchAt.IsZero() && frames2 > 0 {
-		after := time.Since(switchAt).Seconds()
+	if ns := switchAtNs.Load(); ns != 0 && frames2 > 0 {
+		after := time.Since(time.Unix(0, ns)).Seconds()
 		before := elapsed - after
 		fmt.Printf("  ДО смены:    %.1f к/с, %.1f Мбит/с\n",
 			float64(frames-frames2)/before, float64(bytes-bytes2)*8/before/1e6)

@@ -80,11 +80,39 @@ func sendKey(vk uint16, up bool) {
 	send(&in)
 }
 
-type winInjector struct{ prevButtons int }
+type winInjector struct {
+	prevButtons int
+	// Что сейчас зажато. Нужно ровно для одного: отпустить при разрыве сеанса.
+	held map[uint16]bool
+}
 
-func newInjector() (Injector, error) { return &winInjector{}, nil }
+func newInjector() (Injector, error) { return &winInjector{held: map[uint16]bool{}}, nil }
 
-func (w *winInjector) Close() {}
+// Close отпускает всё, что осталось зажатым.
+//
+// Разрыв сеанса происходит в произвольный момент — в том числе когда человек держит Alt+Tab
+// или тянет окно мышью. Ответного «отпустил» уже не придёт, и машина остаётся с зажатыми
+// клавишами и кнопкой: дальше она сама по себе выделяет текст, повторяет символы и открывает
+// переключатель окон. Владелец при этом уже не подключён и починить не может.
+func (w *winInjector) Close() {
+	for vk := range w.held {
+		sendKey(vk, true)
+	}
+	w.held = map[uint16]bool{}
+	for _, b := range []struct {
+		mask int
+		up   uint32
+	}{
+		{BtnLeft, mouseeventfLeftUp},
+		{BtnRight, mouseeventfRightUp},
+		{BtnMiddle, mouseeventfMiddleUp},
+	} {
+		if w.prevButtons&b.mask != 0 {
+			sendMouse(b.up, 0, 0, 0)
+		}
+	}
+	w.prevButtons = 0
+}
 
 func (w *winInjector) Mouse(x, y float64, buttons int) {
 	// Абсолютные координаты по ВИРТУАЛЬНОМУ рабочему столу — иначе на втором мониторе промах.
@@ -128,6 +156,14 @@ func (w *winInjector) Key(code string, down bool) {
 	vk, ok := winVK[code]
 	if !ok {
 		return
+	}
+	if w.held == nil {
+		w.held = map[uint16]bool{}
+	}
+	if down {
+		w.held[vk] = true
+	} else {
+		delete(w.held, vk)
 	}
 	sendKey(vk, !down)
 }

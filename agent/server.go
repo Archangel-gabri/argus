@@ -161,7 +161,16 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	// Состояние сеанса объявлено ДО чтения ввода: обработчик наблюдений клиента обращается
 	// и к подстройке, и к отправке, поэтому они должны существовать раньше него.
 	st := NewStreamer(s.fps, s.w, s.h)
-	sentHello := false
+	// Атомарный, а не плоский bool: колбэк потока зовут горутины РАЗНЫХ вариантов захвата,
+	// и порядок между ними ничем не задан — обычное чтение-запись здесь гонка.
+	var sentHello atomic.Bool
+	// Пока не ушёл первый кадр, ввод в машину не инжектится.
+	//
+	// Иначе получается неприятное: WebSocket открыт, клиент уже шлёт движения мыши и нажатия,
+	// а картинки ещё нет — человек «печатает вслепую» в живую систему, не видя, куда попадает
+	// курсор и какое окно в фокусе. Наблюдения о качестве (`stats`) при этом пропускаем: они
+	// ничего не трогают на машине.
+	var streaming atomic.Bool
 	var seq atomic.Uint32
 	started := time.Now()
 	gov := &qualityGovernor{}
@@ -188,6 +197,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}
 			var m InputMsg
 			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			// Ввод — только после первого кадра. `stats` пропускаем всегда: они безобидны.
+			if m.Type != "stats" && !streaming.Load() {
 				continue
 			}
 			switch m.Type {
@@ -219,8 +232,9 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	err = st.Run(ctx, func(au AU) {
-		if !sentHello {
-			sentHello = true
+		// CompareAndSwap: два варианта захвата могут отдать первый кадр одновременно, и без
+		// атомарной проверки клиент получил бы два разных `hello`.
+		if sentHello.CompareAndSwap(false, true) {
 			ch := st.Chosen()
 			// Размеры и частоту берём У ПОТОКА, а не из флагов запуска: на мониторе 3440×1440
 			// флаги говорили «1920×1080», и клиент растягивал картинку в чужие пропорции.
@@ -237,6 +251,8 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 			}, false); err != nil && ctx.Err() == nil {
 				log.Printf("не удалось отправить приветствие: %v", err)
 			}
+			// С этого момента у клиента есть картинка — значит ввод перестал быть слепым.
+			streaming.Store(true)
 		}
 		// Заголовок кадра: флаги, порядковый номер, метка времени захвата.
 		// Номер нужен, чтобы отличить потерю в сети от сброса кадра на сервере: без него
