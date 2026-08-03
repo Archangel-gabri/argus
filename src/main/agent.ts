@@ -497,7 +497,20 @@ export function buildLinuxInstallCommand(): string {
     'systemctl --user restart argus-agent.service',
     // uinput остаётся best-effort и проверяется самотестом: просмотр не должен падать вместе с вводом.
     `{ sudo -n sh -c 'modprobe uinput; usermod -aG input '"$USER"'; printf %s "KERNEL==\\"uinput\\", GROUP=\\"input\\", MODE=\\"0660\\"\\n" > /etc/udev/rules.d/99-argus-uinput.rules; udevadm control --reload-rules; udevadm trigger' >/dev/null 2>&1 || true; }`,
-    'echo ok'
+    // Доказательство вместо слова «ok».
+    //
+    // Раньше последней строкой стоял безусловный `echo ok`, а `set -e` здесь нет — и код
+    // возврата всей команды брался от него. То есть провалившийся `systemctl --user` (самый
+    // частый случай: в exec-сессии без XDG_RUNTIME_DIR он не находит шину пользователя)
+    // давал exit 0, и установка объявлялась успешной при неподнятой службе.
+    //
+    // Хуже всего это на ПЕРЕустановке поверх работающего агента: новый бинарь уже положен,
+    // но не запущен, а на /health отвечает старый процесс — с тем же сертификатом и той же
+    // версией. Проверка готовности проходит, человеку сказано «установлено», и агент
+    // исчезает после ближайшей перезагрузки.
+    'systemctl --user is-active --quiet argus-agent.service || { echo ARGUS_SVC_INACTIVE; exit 1; }',
+    'systemctl --user is-enabled --quiet argus-agent.service || { echo ARGUS_SVC_DISABLED; exit 1; }',
+    'echo ARGUS_SVC_OK'
   ].join('\n')
 }
 
@@ -552,7 +565,16 @@ async function installService(
   }
 
   const r = await execOnce(deviceId, buildLinuxInstallCommand())
-  if (r.ok) return { ok: true }
+  if (r.ok && /ARGUS_SVC_OK/.test(r.output)) return { ok: true }
+  if (/ARGUS_SVC_INACTIVE/.test(r.output))
+    return {
+      ok: false,
+      error:
+        'служба агента не запустилась через systemd --user. Обычная причина — недоступная шина ' +
+        'пользователя в неинтерактивном сеансе SSH (нет XDG_RUNTIME_DIR).'
+    }
+  if (/ARGUS_SVC_DISABLED/.test(r.output))
+    return { ok: false, error: 'служба агента запущена, но не включена в автозапуск — после перезагрузки её не будет' }
   if (/LINGER_NOT_ENABLED/.test(r.output)) {
     return {
       ok: false,

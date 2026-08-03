@@ -115,3 +115,27 @@ describe('interpretRdpEnable', () => {
     expect(v.error).toMatch(/registry access/)
   })
 })
+
+// ── Незакреплённый пароль не переживает блокировку ─────────────────────────────────────────────
+// Пароль, набранный с галочкой «запомнить», но не подтверждённый рабочим столом, лежит в памяти
+// ОТКРЫТЫМ ТЕКСТОМ и ждёт подтверждения. Смысл границы блокировки — уронить секреты ДО закрытия
+// базы; без явной очистки он переживал и блокировку, и удаление устройства, оставаясь в куче
+// main-процесса до конца его жизни — а значит, в дампе и в странице подкачки.
+describe('границы жизни неподтверждённого пароля экрана', () => {
+  it('closeAllScreens очищает отложенные пароли', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')
+    )
+    const body = src.slice(src.indexOf('export function closeAllScreens'))
+    expect(body).toContain('pendingPasswords.clear()')
+  })
+
+  it('closeDeviceScreens забывает пароль именно этого устройства', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync(new URL('./screen.ts', import.meta.url), 'utf8')
+    )
+    const start = src.indexOf('export function closeDeviceScreens')
+    const body = src.slice(start, src.indexOf('export function closeAllScreens', start))
+    expect(body).toContain('pendingPasswords.delete(deviceId)')
+  })
+})

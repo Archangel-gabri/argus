@@ -143,8 +143,13 @@ export function BanksView(): React.JSX.Element {
           </div>
         }
       />
+      {/* key даёт форме идентичность цели правки. Без него переход «карандаш у A →
+          карандаш у B» не перемонтирует компонент: React видит тот же элемент,
+          useState сохраняет значения формы A, а «Сохранить» отправляет их с
+          идентификатором B — то есть молча подменяет чужую запись. */}
       {(adding || editing) && (
         <WalletForm
+          key={editing?.id ?? 'new'}
           initial={editing}
           error={error}
           onSubmit={async (input) => {

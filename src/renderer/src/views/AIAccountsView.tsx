@@ -202,8 +202,13 @@ export function AIAccountsView(): React.JSX.Element {
             </button>
           </div>
         )}
+        {/* key даёт форме идентичность цели правки. Без него переход «карандаш у A →
+            карандаш у B» не перемонтирует компонент: React видит тот же элемент,
+            useState сохраняет значения формы A, а «Сохранить» отправляет их с
+            идентификатором B — то есть молча подменяет чужую запись. */}
         {(adding || editing) && (
           <AccountForm
+            key={editing?.id ?? 'new'}
             initial={editing}
             onClose={() => {
               setAdding(false)

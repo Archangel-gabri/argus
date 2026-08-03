@@ -82,3 +82,43 @@ describe('Linux linger contract', () => {
     expect(syntaxOk(cmd)).toBe(true)
   })
 })
+
+// ── Linux-установка обязана доказывать результат ───────────────────────────────────────────────
+// Та же болезнь, что уже закрыта для Windows и macOS, но в Linux-ветке она оставалась:
+// последней строкой стоял безусловный `echo ok`, а `set -e` здесь нет — код возврата всей
+// команды брался от него. Провалившийся `systemctl --user` (самый частый случай: в exec-сессии
+// без XDG_RUNTIME_DIR не находится шина пользователя) давал exit 0, и установка объявлялась
+// успешной при неподнятой службе.
+describe('buildLinuxInstallCommand — доказательство вместо слова «ok»', () => {
+  const cmd = buildLinuxInstallCommand()
+
+  it('не заканчивается безусловным «ok»', () => {
+    const last = cmd.trim().split('\n').pop() ?? ''
+    expect(last).not.toBe('echo ok')
+    expect(last).toContain('ARGUS_SVC_OK')
+  })
+
+  it('проверяет, что служба ДЕЙСТВИТЕЛЬНО запущена', () => {
+    expect(cmd).toContain('systemctl --user is-active --quiet argus-agent.service')
+    expect(cmd).toContain('ARGUS_SVC_INACTIVE')
+  })
+
+  it('проверяет автозапуск отдельно — иначе агент исчезнет после перезагрузки', () => {
+    expect(cmd).toContain('systemctl --user is-enabled --quiet argus-agent.service')
+    expect(cmd).toContain('ARGUS_SVC_DISABLED')
+  })
+
+  it('маркер успеха идёт ПОСЛЕ обеих проверок, а не до них', () => {
+    const lines = cmd.split('\n')
+    const active = lines.findIndex((l) => l.includes('is-active'))
+    const enabled = lines.findIndex((l) => l.includes('is-enabled'))
+    const ok = lines.findIndex((l) => l.includes('ARGUS_SVC_OK'))
+    expect(active).toBeGreaterThan(-1)
+    expect(ok).toBeGreaterThan(active)
+    expect(ok).toBeGreaterThan(enabled)
+  })
+
+  it('проверка linger осталась на месте — без неё агент умрёт с выходом пользователя', () => {
+    expect(cmd).toContain('LINGER_NOT_ENABLED')
+  })
+})
