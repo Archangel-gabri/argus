@@ -33,7 +33,13 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   const [selftest, setSelftest] = useState<string | null>(null)
   // Факт наличия сохранённого пароля приходит из main; само значение через IPC не ходит.
   const [saved, setSaved] = useState(!!device.hasScreenSecret)
-  useEffect(() => setSaved(!!device.hasScreenSecret), [device.hasScreenSecret, device.id])
+  /** Пароль отправлен с галочкой «запомнить», но рабочий стол его ещё не подтвердил. */
+  const [pendingSave, setPendingSave] = useState(false)
+  useEffect(() => {
+    setSaved(!!device.hasScreenSecret)
+    // Подтверждение пришло — ожидание больше не показываем.
+    if (device.hasScreenSecret) setPendingSave(false)
+  }, [device.hasScreenSecret, device.id])
 
   const probe = async (): Promise<void> => {
     if (!api) return
@@ -83,7 +89,11 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
       setErr(r.error ?? 'не удалось запустить сеанс')
       return
     }
-    if (password && remember) setSaved(true)
+    // «Сохранён» НЕ утверждаем здесь. Мост guacd поднимается раньше, чем RDP проверит пароль
+    // по NLA: при опечатке интерфейс говорил «сохранён», а в хранилище не появлялось ничего.
+    // Признак приходит из самого устройства (`hasScreenSecret`) после подтверждения рабочим
+    // столом — до тех пор честнее сказать, что произойдёт, чем утверждать, что уже произошло.
+    if (password && remember) setPendingSave(true)
     setPassword('') // пароль ушёл в main и больше в интерфейсе не нужен
   }
 
@@ -189,6 +199,12 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
         {saved ? (
           <span className="inline-flex items-center gap-1.5 text-emerald-300/80">
             <Lock className="h-3 w-3" /> пароль сохранён
+          </span>
+        ) : pendingSave ? (
+          // Обещание, а не утверждение: мост guacd поднимается раньше, чем RDP проверит пароль
+          // по NLA, и при опечатке в хранилище не появится ничего.
+          <span className="inline-flex items-center gap-1.5 text-slate-400">
+            <Lock className="h-3 w-3" /> пароль запомнится после успешного входа
           </span>
         ) : (
           <label className="inline-flex cursor-pointer items-center gap-1.5 text-slate-500">

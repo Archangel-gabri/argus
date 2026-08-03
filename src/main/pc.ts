@@ -149,6 +149,14 @@ export interface PcMetrics {
   metrics?: LiveMetrics
 }
 
+// Отсутствие счётчика отдаётся как $null, а НЕ приводится к нулю.
+//
+// `[int64]$dsk.DiskReadBytesPersec` при $dsk = $null даёт 0 — и разбор не может отличить
+// «диск простаивал» от «счётчика не было». Ноль уезжал в карточку и в историю как измеренный,
+// а признак diskIoAvailable, который специально для этого и заведён, всегда был true.
+// Счётчики Win32_PerfFormattedData отваливаются не так редко: их ломает повреждённый реестр
+// производительности, и лечится это отдельной командой.
+//
 // Богатый Windows-зонд — ровно тот же контракт LiveMetrics, что у LINUX_PROBE_V2, иначе вкладка
 // «Метрики» у ПК на Windows оставалась пустой (она рендерит именно LiveMetrics, а старый сборщик
 // отдавал только cpu/ram/disk/uptime для карточки). Классы Win32_PerfFormattedData_* отдают уже
@@ -183,10 +191,11 @@ if (Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) {
     $gpu = [ordered]@{ util=[int]$p[0]; temp=[int]$p[1]; memUsed=[math]::Round([double]$p[2]/1024,1); memTotal=[math]::Round([double]$p[3]/1024,1); power=[math]::Round([double]$p[4],0) } } }
 $sys = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($env:SystemDrive)'" | Select-Object -First 1
 $diskPct = if ($sys -and $sys.Size) { [int]((([double]$sys.Size - [double]$sys.FreeSpace) / [double]$sys.Size) * 100) } else { $null }
-[ordered]@{ cpu=[int]$total; cores=$cores; ramTotalGb=[math]::Round($ramBytes/1GB,1)
+[ordered]@{ cpu=if($null -ne $total){[int]$total}else{$null}; cores=$cores; ramTotalGb=[math]::Round($ramBytes/1GB,1)
   ramUsedGb=[math]::Round(([double]$os.TotalVisibleMemorySize - [double]$os.FreePhysicalMemory)/1MB,1)
   swapUsedGb=[math]::Round([double]$pf.CurrentUsage/1024,1); swapTotGb=[math]::Round([double]$pf.AllocatedBaseSize/1024,1)
-  netRx=[int64]$rx; netTx=[int64]$tx; diskR=[int64]$dsk.DiskReadBytesPersec; diskW=[int64]$dsk.DiskWriteBytesPersec
+  netRx=if($null -ne $rx){[int64]$rx}else{$null}; netTx=if($null -ne $tx){[int64]$tx}else{$null}
+  diskR=if($dsk){[int64]$dsk.DiskReadBytesPersec}else{$null}; diskW=if($dsk){[int64]$dsk.DiskWriteBytesPersec}else{$null}
   diskPct=$diskPct; uptimeSec=[int]((Get-Date) - $os.LastBootUpTime).TotalSeconds; tempCpu=$tempC; gpu=$gpu
   mounts=$mounts; top=$top } | ConvertTo-Json -Compress -Depth 4`
 

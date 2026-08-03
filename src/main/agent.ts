@@ -75,6 +75,8 @@ export function darwinTargetPaths(home: string): DarwinTargetPaths {
 }
 
 const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+/** Одинарные кавычки PowerShell экранируются УДВОЕНИЕМ, а не обратной косой. */
+const psQuote = (s: string): string => `'${s.replace(/'/g, "''")}'`
 const xmlText = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 const DARWIN_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'
@@ -630,7 +632,10 @@ async function uploadFile(
       const mv = await execOnce(
         deviceId,
         psCmd(
-          `$t='${remote}'; $n='${tmp}'; if (Test-Path $t) { Move-Item -Force $t "$t.old" -EA SilentlyContinue }; ` +
+          // Путь приходит из %LOCALAPPDATA% чужой машины. Апостроф в имени пользователя
+          // (`C:\Users\D'Artagnan\...`) закрывал бы литерал раньше времени и превращал
+          // остаток пути в исполняемый код — поэтому подстановка идёт через psQuote.
+          `$t=${psQuote(remote)}; $n=${psQuote(tmp)}; if (Test-Path $t) { Move-Item -Force $t "$t.old" -EA SilentlyContinue }; ` +
             `Move-Item -Force $n $t; Remove-Item "$t.old" -Force -EA SilentlyContinue; 'ok'`
         )
       )
