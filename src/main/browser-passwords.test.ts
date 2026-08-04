@@ -82,3 +82,21 @@ describe('сопоставление записи с провайдером', ()
     expect(classifyLogin('https://appleid.apple.com/', 'deepseek')).toBeNull()
   })
 })
+
+import { chromeTimeToMs } from './browser-passwords'
+
+describe('давность использования пароля', () => {
+  it('переводит время Chromium в обычное', () => {
+    // 13 400 000 000 000 000 мкс от 1601 года — это 2025-08-14.
+    const ms = chromeTimeToMs(13_400_000_000_000_000)
+    expect(ms).not.toBeNull()
+    expect(new Date(ms as number).getUTCFullYear()).toBe(2025)
+  })
+
+  it('ноль означает «никогда», а не 1601 год', () => {
+    // Иначе неиспользованная запись выглядит как древняя, но настоящая — и попадает в реестр
+    // как действующий аккаунт.
+    expect(chromeTimeToMs(0)).toBeNull()
+    expect(chromeTimeToMs(-5)).toBeNull()
+  })
+})

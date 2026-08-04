@@ -43,6 +43,22 @@ export interface BrowserLogin {
   kind: LoginKind
   /** Через кого входим, если вход не прямой: Google, GitHub, Apple. */
   via?: string
+  /** Сколько раз браузер подставлял этот пароль. Ноль — аккаунт заведён, но им не пользовались. */
+  timesUsed: number
+  /** Когда подставлял в последний раз (мс). null — никогда. */
+  lastUsedAt: number | null
+}
+
+/**
+ * Время Chromium — микросекунды с 1601 года.
+ *
+ * Ноль означает «никогда», а не 1601-й: без этой проверки все неиспользованные записи получают
+ * дату из семнадцатого века и выглядят как древние, но настоящие.
+ */
+export function chromeTimeToMs(value: number): number | null {
+  if (!value || value <= 0) return null
+  const ms = value / 1000 - 11_644_473_600_000
+  return ms > 0 ? Math.round(ms) : null
 }
 
 /** Подходит ли сохранённая запись провайдеру: прямой пароль сервиса или вход через Google. */
@@ -110,10 +126,14 @@ export function readLogins(provider: string, extraDomains: string[] = [], home =
     // База браузера обычная, без шифрования файла: тот же драйвер, что и у вольта, читает её
     // как есть — отдельная зависимость ради этого не нужна.
     const db = new Database(copy, { readonly: true })
-    const rows = db.prepare('SELECT origin_url, username_value, password_value FROM logins').all() as Array<{
+    const rows = db
+      .prepare('SELECT origin_url, username_value, password_value, times_used, date_last_used FROM logins')
+      .all() as Array<{
       origin_url: string
       username_value: string
       password_value: Buffer
+      times_used: number | null
+      date_last_used: number | null
     }>
     db.close()
 
@@ -131,7 +151,15 @@ export function readLogins(provider: string, extraDomains: string[] = [], home =
       const password = decryptValue(Buffer.from(r.password_value), key)
       if (!password) continue
       seen.add(dedupe)
-      out.push({ origin: r.origin_url, username: r.username_value, password, kind: match.kind, via: match.via })
+      out.push({
+        origin: r.origin_url,
+        username: r.username_value,
+        password,
+        kind: match.kind,
+        via: match.via,
+        timesUsed: r.times_used ?? 0,
+        lastUsedAt: chromeTimeToMs(r.date_last_used ?? 0)
+      })
     }
     return out
   } catch {

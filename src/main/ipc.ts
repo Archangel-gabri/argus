@@ -158,16 +158,28 @@ function applyLogins(access: AiAccess, logins: BrowserLogin[]): { imported: numb
   for (const login of logins) {
     const mail = login.username.trim()
     if (!mail) continue
+
+    // Действующим считается аккаунт, которым ДЕЙСТВИТЕЛЬНО входили: браузер считает подстановки
+    // пароля. Ноль — это либо заброшенная регистрация, либо сохранённый и забытый черновик;
+    // такие в реестре только шумят и выдают себя за рабочие доступы.
+    const used = login.timesUsed > 0 || login.lastUsedAt != null
+    const existing = known.get(mail.toLowerCase())
+    if (!used && !existing) continue
+
     vault.setAccountSecret(access.id, mail, { password: login.password })
     imported++
-    const existing = known.get(mail.toLowerCase())
+
     if (existing) {
-      // У заведённого аккаунта достраиваем только способ входа — остальное владельца.
+      // У заведённого аккаунта достраиваем факты, которых не было, — остальное владельца.
       if (login.via && !existing.via) existing.via = login.via
+      if (login.lastUsedAt && (existing.lastUsedAt ?? 0) < login.lastUsedAt) existing.lastUsedAt = login.lastUsedAt
+      if (used) existing.verified = true
       continue
     }
-    const entry: AiAccountEntry = { email: mail, note: 'найден в браузере' }
+
+    const entry: AiAccountEntry = { email: mail, note: 'вход подтверждён браузером', verified: true }
     if (login.via) entry.via = login.via
+    if (login.lastUsedAt) entry.lastUsedAt = login.lastUsedAt
     known.set(mail.toLowerCase(), entry)
     fresh.push(entry)
   }
@@ -508,6 +520,11 @@ export function registerIpc(): void {
     if (!key) return { status: 'nokey' }
     const verdict = await checkAccount(acc?.provider ?? '', key)
     vault.recordAccountCheck(id, mail, verdict.status)
+    // Ответивший ключ — такое же подтверждение, как вход в браузере.
+    if (acc && (verdict.status === 'valid' || verdict.status === 'quota')) {
+      const accounts = acc.accounts.map((a) => (a.email === mail ? { ...a, verified: true } : a))
+      vault.updateAiAccess(id, { provider: acc.provider, accounts })
+    }
     return verdict
   })
 

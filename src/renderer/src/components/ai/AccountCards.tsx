@@ -25,6 +25,17 @@ const LOGIN_URL: Record<string, string> = {
   firecrawl: 'https://www.firecrawl.dev/app'
 }
 
+/** «3 мес назад» — давность важнее точной даты: она отвечает на вопрос «этим ещё пользуются?». */
+function ago(ts: number, now = Date.now()): string {
+  const days = Math.floor((now - ts) / 86_400_000)
+  if (days <= 0) return 'сегодня'
+  if (days === 1) return 'вчера'
+  if (days < 30) return `${days} дн. назад`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} мес. назад`
+  return `${Math.floor(months / 12)} г. назад`
+}
+
 /** Платный тариф выделяется: именно его ищут, открывая список из семи почт. */
 function isPaid(plan?: string): boolean {
   return Boolean(plan) && !/free|бесплат|не провер|неизвест|нет\b/i.test(plan ?? '')
@@ -59,7 +70,11 @@ function AccountCard({
     <div
       className={cn(
         'rounded-lg border p-3 transition-colors',
-        account.primary ? 'border-accent/30 bg-accent/[0.04]' : 'border-border bg-card/40'
+        account.primary
+          ? 'border-accent/30 bg-accent/[0.04]'
+          : account.verified
+            ? 'border-border bg-card/40'
+            : 'border-border/50 bg-card/20 opacity-70'
       )}
     >
       <div className="flex items-start justify-between gap-2">
@@ -70,6 +85,8 @@ function AccountCard({
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-slate-600">
             {account.primary && <span className="text-accent">основной</span>}
             {account.via && <span>вход через {account.via}</span>}
+            {account.lastUsedAt && <span>вход {ago(account.lastUsedAt)}</span>}
+            {!account.verified && <span className="text-slate-700">не подтверждён</span>}
             {ownerId !== access.id && <span>из «{ownerLabel}»</span>}
           </div>
         </div>
@@ -153,10 +170,18 @@ function AccountCard({
  */
 export function AccountCards({ access }: { access: AiAccess }): React.JSX.Element | null {
   const all = useAi((s) => s.access)
-  const rows = familyAccounts(access, all)
+  const rows = [...familyAccounts(access, all)].sort((x, y) => {
+    const a = x.account
+    const b = y.account
+    if (Boolean(a.primary) !== Boolean(b.primary)) return a.primary ? -1 : 1
+    // Подтверждённые выше: список нужен, чтобы найти рабочий аккаунт, а не полный перечень почт.
+    if (Boolean(a.verified) !== Boolean(b.verified)) return a.verified ? -1 : 1
+    return (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0)
+  })
   if (rows.length === 0) return null
 
   const authorized = rows.filter((r) => r.account.hasPassword || r.account.hasKey).length
+  const confirmed = rows.filter((r) => r.account.verified).length
 
   return (
     <section>
@@ -165,7 +190,8 @@ export function AccountCards({ access }: { access: AiAccess }): React.JSX.Elemen
           Аккаунты · {rows.length}
         </span>
         <span className="text-[11px] text-slate-600">
-          {authorized === rows.length ? 'все с доступом' : `с доступом ${authorized} из ${rows.length}`}
+          {confirmed === rows.length ? 'все действующие' : `действующих ${confirmed} из ${rows.length}`}
+          {authorized < rows.length && ` · с паролем ${authorized}`}
         </span>
       </h3>
 

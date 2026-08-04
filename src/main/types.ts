@@ -340,6 +340,10 @@ export interface AiAccountEntry {
   /** Последняя проверка ключа этого аккаунта. */
   checkStatus?: string
   checkedAt?: number
+  /** Когда владелец в последний раз им входил (по данным браузера). */
+  lastUsedAt?: number
+  /** Аккаунт подтверждён: им пользовались или ключ ответил. Неподтверждённые в реестр не берём. */
+  verified?: boolean
 }
 
 export interface AiAccess {
