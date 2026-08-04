@@ -12,6 +12,7 @@ import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
 import { migrateToAccounts } from './ai-accounts-migrate'
+import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
 import { fetchModels } from './ai-models'
 import { collectUsage } from './ai-usage'
@@ -81,6 +82,9 @@ function afterUnlock(): void {
     // Слияние способов доступа в аккаунты: «ChatGPT» и «Codex CLI» — это один аккаунт с двумя
     // каналами, а не две записи. Срабатывает один раз, дальше молчит.
     migrateToAccounts()
+    // Уборка за прежним импортом: он принимал вход через Google за учётку сервиса и заводил
+    // чужие почты десятками.
+    pruneUnverifiedAccounts()
   } catch {
     /* каталог или файл засева испорчены — приложение работает и без них */
   }
@@ -163,11 +167,18 @@ function applyLogins(access: AiAccess, logins: BrowserLogin[]): { imported: numb
     const mail = login.username.trim()
     if (!mail) continue
 
-    // Действующим считается аккаунт, которым ДЕЙСТВИТЕЛЬНО входили: браузер считает подстановки
-    // пароля. Ноль — это либо заброшенная регистрация, либо сохранённый и забытый черновик;
-    // такие в реестре только шумят и выдают себя за рабочие доступы.
-    const used = login.timesUsed > 0 || login.lastUsedAt != null
     const existing = known.get(mail.toLowerCase())
+
+    // Пароль от accounts.google.com — это НЕ аккаунт OpenAI. Вход через Google существует, но
+    // из него не следует, что у владельца есть учётка сервиса: иначе каждая почта, которой он
+    // когда-либо входил в Google, приезжает в реестр как «аккаунт ChatGPT». Так и случилось —
+    // шестнадцать записей, включая телефоны. Пароль поставщика входа сохраняем только тому
+    // аккаунту, который владелец завёл сам.
+    if (login.kind === 'identity' && !existing) continue
+
+    // Действующим считается аккаунт, которым ДЕЙСТВИТЕЛЬНО входили: браузер считает подстановки
+    // пароля. Ноль — это либо заброшенная регистрация, либо сохранённый и забытый черновик.
+    const used = login.timesUsed > 0 || login.lastUsedAt != null
     if (!used && !existing) continue
 
     vault.setAccountSecret(access.id, mail, { password: login.password })
