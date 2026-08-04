@@ -40,6 +40,7 @@ import type {
   AiAccess,
   AiAccessInput,
   AiAccountEntry,
+  AiChannel,
   AiAccessModel,
   AiKind,
   AiLimits,
@@ -273,6 +274,11 @@ function migrate(d: Database.Database): void {
   // Несколько аккаунтов одного провайдера, каждый со своим тарифом. Одной строкой `account`
   // это не выражается: «6 аккаунтов» не отвечает на вопрос, где именно лежит платный.
   addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN accounts_json TEXT')
+  // Чем пользуются на аккаунте: веб, CLI, ключ. До этого каналы были отдельными записями
+  // реестра, и одна квота показывалась дважды — у «ChatGPT» и у «Codex CLI».
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN channels_json TEXT')
+  // Подтверждён ли аккаунт: входили, ответил ключ или владелец сказал сам.
+  addColumn(exec, 'ALTER TABLE ai_accounts ADD COLUMN verified INTEGER NOT NULL DEFAULT 0')
 
   // Каталог цен. Не пользовательские данные, а кэш: вшитый снапшот LiteLLM + живой ответ
   // OpenRouter. Живёт в том же зашифрованном файле просто потому, что другой базы у приложения нет.
@@ -1485,6 +1491,8 @@ interface AiAccessRow {
   fallback_id: string | null
   limits_json: string | null
   accounts_json?: string | null
+  channels_json?: string | null
+  verified?: number | null
   notes: string | null
   created_at?: number | null
 }
@@ -1513,6 +1521,20 @@ function parseAccounts(raw: string | null): AiAccountEntry[] {
     return parsed
       .filter((v): v is AiAccountEntry => Boolean(v) && typeof v === 'object' && typeof (v as AiAccountEntry).email === 'string')
       .map((v) => ({ email: v.email, plan: v.plan, note: v.note, primary: v.primary }))
+  } catch {
+    return []
+  }
+}
+
+/** Разбор каналов. Битый JSON = «каналы неизвестны», а не падение экрана. */
+function parseChannels(raw: string | null): AiChannel[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (v): v is AiChannel => Boolean(v) && typeof v === 'object' && typeof (v as AiChannel).label === 'string'
+    )
   } catch {
     return []
   }
@@ -1550,6 +1572,8 @@ function toAccess(r: AiAccessRow): AiAccess {
     fallbackId: r.fallback_id,
     limits: parseLimits(r.limits_json),
     accounts: parseAccounts(r.accounts_json ?? null),
+    channels: parseChannels(r.channels_json ?? null),
+    verified: Boolean(r.verified),
     notes: r.notes,
     createdAt: r.created_at ?? 0
   }
@@ -1557,7 +1581,7 @@ function toAccess(r: AiAccessRow): AiAccess {
 
 const AI_COLUMNS = `id, kind, provider, label, api_key, plan, account, status, subscription_id,
    key_ref, key_expires_at, base_url, payment, third_party, used_by, fallback_id, limits_json,
-   accounts_json, notes`
+   accounts_json, channels_json, verified, notes`
 const AI_SELECT = `${AI_COLUMNS}, created_at`
 
 export function listAiAccess(): AiAccess[] {
@@ -1603,6 +1627,8 @@ export function createAiAccess(input: AiAccessInput): AiAccess {
     fallback_id: input.fallbackId ?? null,
     limits_json: JSON.stringify(input.limits ?? {}),
     accounts_json: JSON.stringify(input.accounts ?? []),
+    channels_json: JSON.stringify(input.channels ?? []),
+    verified: input.verified ? 1 : 0,
     notes: input.notes ?? null,
     created_at: Date.now()
   }
@@ -1611,7 +1637,7 @@ export function createAiAccess(input: AiAccessInput): AiAccess {
       `INSERT INTO ai_accounts (${AI_COLUMNS}, created_at)
        VALUES (@id, @kind, @provider, @label, @api_key, @plan, @account, @status, @subscription_id,
                @key_ref, @key_expires_at, @base_url, @payment, @third_party, @used_by, @fallback_id,
-               @limits_json, @accounts_json, @notes, @created_at)`
+               @limits_json, @accounts_json, @channels_json, @verified, @notes, @created_at)`
     )
     .run(row)
   return toAccess(row)
@@ -1641,6 +1667,8 @@ export function updateAiAccess(id: string, input: AiAccessInput): AiAccess {
     fallback_id: input.fallbackId !== undefined ? input.fallbackId : cur.fallback_id,
     limits_json: input.limits !== undefined ? JSON.stringify(input.limits) : (cur.limits_json ?? '{}'),
     accounts_json: input.accounts !== undefined ? JSON.stringify(input.accounts) : (cur.accounts_json ?? '[]'),
+    channels_json: input.channels !== undefined ? JSON.stringify(input.channels) : (cur.channels_json ?? '[]'),
+    verified: (input.verified ?? Boolean(cur.verified)) ? 1 : 0,
     notes: input.notes !== undefined ? input.notes : cur.notes
   }
   d.prepare(
@@ -1648,7 +1676,8 @@ export function updateAiAccess(id: string, input: AiAccessInput): AiAccess {
        plan=@plan, account=@account, status=@status, subscription_id=@subscription_id,
        key_ref=@key_ref, key_expires_at=@key_expires_at, base_url=@base_url, payment=@payment,
        third_party=@third_party, used_by=@used_by, fallback_id=@fallback_id,
-       limits_json=@limits_json, accounts_json=@accounts_json, notes=@notes WHERE id=@id`
+       limits_json=@limits_json, accounts_json=@accounts_json, channels_json=@channels_json,
+       verified=@verified, notes=@notes WHERE id=@id`
   ).run(next)
   // Дата создания в UPDATE не участвует (её нет среди именованных параметров — better-sqlite3
   // отвергает лишние), но в ответе она нужна: без неё правка обнуляла бы возраст записи.

@@ -13,6 +13,7 @@ import type {
   AiAccessInput,
   AiAccessModel,
   AiAccountEntry,
+  AiChannel,
   AiCheck,
   AiPrice,
   AiUsageSummary,

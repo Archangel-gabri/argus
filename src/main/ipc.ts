@@ -11,6 +11,7 @@ import { checkAccount } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
+import { migrateToAccounts } from './ai-accounts-migrate'
 import { readLogins, type BrowserLogin } from './browser-passwords'
 import { fetchModels } from './ai-models'
 import { collectUsage } from './ai-usage'
@@ -77,6 +78,9 @@ function afterUnlock(): void {
   try {
     seedPricesIfEmpty()
     seedAiAccess()
+    // Слияние способов доступа в аккаунты: «ChatGPT» и «Codex CLI» — это один аккаунт с двумя
+    // каналами, а не две записи. Срабатывает один раз, дальше молчит.
+    migrateToAccounts()
   } catch {
     /* каталог или файл засева испорчены — приложение работает и без них */
   }

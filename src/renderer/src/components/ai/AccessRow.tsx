@@ -129,7 +129,10 @@ export function AccessRow({
           )}
         </span>
         <span className="mt-0.5 block truncate text-[11px] text-slate-600">
-          {access.account || access.plan || access.provider}
+          {/* Каналы вместо повтора имени: строка отвечает «чем я на этом аккаунте работаю». */}
+          {access.channels.length > 0
+            ? access.channels.map((c) => c.label).join(' · ')
+            : access.account || access.plan || access.provider}
         </span>
       </span>
 

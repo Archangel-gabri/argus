@@ -20,6 +20,7 @@ export type {
   AiAccessInput,
   AiAccessModel,
   AiAccountEntry,
+  AiChannel,
   AiCheck,
   AiKind,
   AiLimits,

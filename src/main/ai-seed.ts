@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import type { AiAccess, AiAccessInput, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from './types'
+import type { AiAccess, AiAccessInput, AiAccountEntry, AiChannel, AiKind, AiLimits, AiPayment, AiStatus } from './types'
 import * as vault from './vault'
 
 interface SeedSubscription {
@@ -41,6 +41,8 @@ interface SeedAccess {
   keyRef?: string
   keyExpiresAt?: string
   usedBy?: string[]
+  channels?: AiChannel[]
+  verified?: boolean
   limits?: AiLimits
   notes?: string
   /** Значение ключа прямо в файле — путь для тех случаев, когда env-файла нет. */
@@ -168,6 +170,14 @@ export function fillGaps(existing: AiAccess, item: SeedAccess): AiAccessInput | 
     patch.usedBy = item.usedBy
     changed = true
   }
+  if (existing.channels.length === 0 && item.channels?.length) {
+    patch.channels = item.channels
+    changed = true
+  }
+  if (!existing.verified && item.verified) {
+    patch.verified = true
+    changed = true
+  }
 
   // Лимиты дополняются по одному полю: у записи может быть задан свой потолок окна, и терять
   // его из-за того, что в файле появилась длительность, нельзя.
@@ -289,6 +299,8 @@ export function seedAiAccess(): SeedResult {
       keyRef: item.keyRef ?? (item.apiKeyEnv ? `${file.envFile ?? 'env'} → ${item.apiKeyEnv}` : null),
       keyExpiresAt: item.keyExpiresAt ?? null,
       usedBy: item.usedBy,
+      channels: item.channels,
+      verified: item.verified,
       limits: item.limits,
       notes: item.notes ?? null,
       subscriptionId,

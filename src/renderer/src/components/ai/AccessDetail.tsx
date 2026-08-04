@@ -4,6 +4,7 @@ import { money } from '@/lib/format'
 import { ProviderMark } from '@/components/ai/ProviderMark'
 import { LimitCards } from '@/components/ai/LimitCards'
 import { AccountCards } from '@/components/ai/AccountCards'
+import { ChannelList } from '@/components/ai/ChannelList'
 import { UsageSection } from '@/components/ai/UsageSection'
 import { ModelsSection } from '@/components/ai/ModelsSection'
 import {
@@ -22,7 +23,7 @@ import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess } from '@/types'
 
-type Block = 'limits' | 'accounts' | 'usage' | 'models'
+type Block = 'limits' | 'channels' | 'accounts' | 'usage' | 'models'
 
 /**
  * Порядок блоков под тип доступа.
@@ -35,16 +36,16 @@ export function blocksFor(access: AiAccess): Block[] {
   switch (access.kind) {
     case 'subscription':
     case 'cli-agent':
-      return ['limits', 'usage', 'accounts', 'models']
+      return ['limits', 'channels', 'usage', 'accounts', 'models']
     case 'router':
     case 'api':
-      return ['limits', 'models', 'usage', 'accounts']
+      return ['limits', 'channels', 'models', 'usage', 'accounts']
     case 'free-tier':
-      return ['limits', 'models', 'accounts', 'usage']
+      return ['limits', 'channels', 'models', 'accounts', 'usage']
     case 'local':
-      return ['models', 'usage', 'limits', 'accounts']
+      return ['channels', 'models', 'usage', 'limits', 'accounts']
     default:
-      return ['limits', 'accounts', 'usage', 'models']
+      return ['limits', 'channels', 'accounts', 'usage', 'models']
   }
 }
 
@@ -103,9 +104,19 @@ export function AccessDetail({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-slate-500">
-              {access.provider} · {KIND_ONE[access.kind]}
-              {access.account && <span className="text-slate-600"> · {access.account}</span>}
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 truncate text-[12px] text-slate-500">
+              <span>{access.provider}</span>
+              <span className="text-slate-700">·</span>
+              <span>{KIND_ONE[access.kind]}</span>
+              {access.verified ? (
+                <span className="text-emerald-400/80" title="Вход подтверждён">
+                  · аккаунт подтверждён
+                </span>
+              ) : (
+                <span className="text-slate-600" title="Ни входа, ни ответа ключа">
+                  · не подтверждён
+                </span>
+              )}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
@@ -199,6 +210,7 @@ export function AccessDetail({
                 check={check}
               />
             )
+          if (block === 'channels') return <ChannelList key={block} access={access} />
           if (block === 'accounts') return <AccountCards key={block} access={access} />
           // Расход показывается, только когда есть чей считать: заглушка «логов нет» на
           // полэкрана — это блок, объясняющий собственную бесполезность.

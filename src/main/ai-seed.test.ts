@@ -63,6 +63,8 @@ const saved = (over: Partial<AiAccess> = {}): AiAccess => ({
   label: 'ChatGPT',
   account: '',
   accounts: [],
+  channels: [],
+  verified: true,
   plan: '',
   status: 'active',
   subscriptionId: null,

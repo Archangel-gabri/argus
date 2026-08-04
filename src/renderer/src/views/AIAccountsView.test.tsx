@@ -18,6 +18,8 @@ const access = (id: string, over: Partial<AiAccess> = {}): AiAccess => ({
   label: id,
   account: '',
   accounts: [],
+  channels: [],
+  verified: true,
   plan: '',
   status: 'active',
   subscriptionId: null,
@@ -168,8 +170,9 @@ describe('экран AI', () => {
     await mount({ access: [access('Claude Max 5x', { kind: 'subscription', provider: 'anthropic', account: 'me@example.com' })] })
     const panel = document.querySelector('aside') as HTMLElement
     expect(within(panel).getByRole('heading', { name: 'Claude Max 5x' })).toBeInTheDocument()
-    // Тип записи в единственном числе: «anthropic · подписки» читается как ошибка.
-    expect(within(panel).getByText(/anthropic · подписка/)).toBeInTheDocument()
+    // Тип записи в единственном числе: «подписки» про одну запись читается как ошибка.
+    expect(within(panel).getByText('подписка')).toBeInTheDocument()
+    expect(within(panel).getByText('anthropic')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 

@@ -11,6 +11,8 @@ const access = (over: Partial<AiAccess> = {}): AiAccess => ({
   label: 'x',
   account: '',
   accounts: [],
+  channels: [],
+  verified: true,
   plan: '',
   status: 'active',
   subscriptionId: null,
