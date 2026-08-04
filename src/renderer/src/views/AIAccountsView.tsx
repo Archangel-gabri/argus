@@ -4,7 +4,6 @@ import { money } from '@/lib/format'
 import {
   MONEY_GROUP_LABEL,
   attentionList,
-  aiSummary,
   dailySeries,
   daysAgoDate,
   groupByMoney,
@@ -46,6 +45,7 @@ export function AIAccountsView(): React.JSX.Element {
   const checks = useAi((s) => s.checks)
   const usage = useAi((s) => s.usage)
   const blocks = useAi((s) => s.blocks)
+  const quotas = useAi((s) => s.quotas)
   const loaded = useAi((s) => s.loaded)
   const loading = useAi((s) => s.loading)
   const error = useAi((s) => s.error)
@@ -96,15 +96,32 @@ export function AIAccountsView(): React.JSX.Element {
   // течение дня. Ради него сюда и заходят посреди работы.
   const mainWindow = (() => {
     const paid = owned
-      .filter((a) => a.subscriptionId && sourceOf(a))
+      .filter((a) => a.subscriptionId)
       .sort((x, y) => (monthlyCost(subs.find((s) => s.id === y.subscriptionId)) ?? 0) - (monthlyCost(subs.find((s) => s.id === x.subscriptionId)) ?? 0))[0]
     if (!paid) return null
+
+    // Цифра провайдера бьёт нашу всегда: она считает расход АККАУНТА, включая телефон и второй
+    // ноутбук, а локальные логи знают только эту машину.
+    const slices = quotas[paid.id] ?? []
+    const session = slices.find((s) => s.scope === 'session')
+    const week = slices.find((s) => s.scope === 'week')
+    if (session?.ratio != null) {
+      return {
+        label: paid.label,
+        used: session.ratio,
+        exact: true,
+        resetsInMs: session.resetsAt ? session.resetsAt - Date.now() : null,
+        week: week?.ratio ?? null
+      }
+    }
+
     const src = sourceOf(paid)
     if (!src) return null
     const state = windowState(blocks.filter((b) => b.source === src), paid.limits.windowTokens)
-    return state ? { label: paid.label, state } : null
+    return state
+      ? { label: paid.label, used: state.used, exact: false, resetsInMs: state.resetsInMs, week: null }
+      : null
   })()
-  const summary = aiSummary(access, checks)
 
   // Выбор держится за идентификатором: запись могла обновиться или исчезнуть.
   const selected = access.find((a) => a.id === selectedId) ?? null
@@ -122,6 +139,41 @@ export function AIAccountsView(): React.JSX.Element {
           пятую часть экрана и повторяли то, что и так видно в списке. */}
       <header className="flex items-center gap-5 border-b border-border px-6 py-3">
         <div className="flex min-w-0 flex-1 items-baseline gap-5 text-[12px]">
+          {/* Окно идёт первым: это единственное число здесь, которое меняется в течение часа, а
+              заходят сюда посреди работы — узнать, упрусь ли сейчас в лимит. Плата за месяц
+              меняется раз в месяц и ждёт своей очереди. */}
+          {mainWindow && (
+            <span className="flex items-baseline gap-2 text-slate-500">
+              <span className="truncate text-slate-300">{mainWindow.label}</span>
+              {mainWindow.used != null && (
+                <>
+                  <span className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-border align-middle">
+                    <span
+                      className={cn(
+                        'block h-full rounded-full',
+                        mainWindow.used >= 1 ? 'bg-rose-500' : mainWindow.used >= 0.8 ? 'bg-amber-400' : 'bg-accent',
+                        mainWindow.exact ? '' : 'opacity-50'
+                      )}
+                      style={{ width: `${Math.max(3, Math.min(1, mainWindow.used) * 100)}%` }}
+                    />
+                  </span>
+                  <span className="tabular-nums text-slate-200">
+                    {mainWindow.exact ? '' : '≈'}
+                    {Math.round(mainWindow.used * 100)}%
+                  </span>
+                </>
+              )}
+              {mainWindow.resetsInMs != null && mainWindow.resetsInMs > 0 && (
+                <span className="text-slate-600">сброс {formatResetIn(mainWindow.resetsInMs)}</span>
+              )}
+              {mainWindow.week != null && (
+                <span className="text-slate-600">
+                  · неделя <span className="tabular-nums text-slate-400">{Math.round(mainWindow.week * 100)}%</span>
+                </span>
+              )}
+            </span>
+          )}
+
           <span className="text-slate-500">
             Плачу{' '}
             {monthly.length === 0 ? (
@@ -137,17 +189,6 @@ export function AIAccountsView(): React.JSX.Element {
             <span className="text-slate-600"> в месяц</span>
           </span>
 
-          {mainWindow && (
-            <span className="text-slate-500">
-              Окно{' '}
-              <span className="text-slate-300">{mainWindow.label}</span>
-              {mainWindow.state.used != null && (
-                <span className="ml-1 tabular-nums text-slate-200">{Math.round(mainWindow.state.used * 100)}%</span>
-              )}
-              <span className="text-slate-600"> · сброс {formatResetIn(mainWindow.state.resetsInMs)}</span>
-            </span>
-          )}
-
           <span className="text-slate-500">
             {/* Сослагательное наклонение не случайно: «сожжено» читается как списанные деньги,
                 а по подписке это лишь оценка того, во что обошёлся бы тот же объём. */}
@@ -159,12 +200,6 @@ export function AIAccountsView(): React.JSX.Element {
           <span className="text-slate-500">
             <span className="tabular-nums text-slate-200">{loaded ? owned.length : '—'}</span> доступов
             {available > 0 && <span className="text-slate-600"> · {available} можно взять</span>}
-            {summary.workingKeys && (
-              <span className="text-slate-600" title="Среди тех ключей, которые уже успели проверить">
-                {' '}
-                · проверено ключей {summary.workingKeys}
-              </span>
-            )}
           </span>
 
         </div>
@@ -250,11 +285,6 @@ export function AIAccountsView(): React.JSX.Element {
               <section key={group.group} className="mb-1">
                 <h2 className="flex items-baseline justify-between gap-2 px-6 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
                   <span>{MONEY_GROUP_LABEL[group.group]}</span>
-                  {group.group === 'paid' && monthly.length > 0 && (
-                    <span className="normal-case tracking-normal text-slate-500">
-                      {monthly.map(([cur, sum]) => money(Math.round(sum * 100) / 100, cur)).join(' + ')}/мес
-                    </span>
-                  )}
                 </h2>
                 {group.items.map((a) => {
                   const src = sourceOf(a)

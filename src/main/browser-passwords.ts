@@ -66,7 +66,8 @@ export function matchesProvider(originUrl: string, provider: string, extraDomain
   return classifyLogin(originUrl, providerFamily(provider), extraDomains) !== null
 }
 
-function safeStorageKey(): Buffer {
+/** Ключ Safe Storage браузера. Экспортирован: на нём же зашифрованы куки (`browser-cookies.ts`). */
+export function safeStorageKey(): Buffer {
   for (const [folder, entry] of KWALLET_ENTRIES) {
     try {
       const out = execFileSync('kwallet-query', ['-f', folder, '-r', entry, 'kdewallet'], {

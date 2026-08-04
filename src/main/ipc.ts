@@ -7,7 +7,7 @@ import * as forward from './forward'
 import { parseSshConfig, type ParsedHost } from './sshconfig'
 import { discoverTailscale } from './discovery'
 import { walletBalance } from './onchain'
-import { checkAccount } from './ai'
+import { checkAccount, keyEndpointBase } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
@@ -134,12 +134,17 @@ async function refreshEverything(): Promise<void> {
   }
 
   try {
-    // Квоты бесплатных тарифов: у них тоже есть предел, просто считается кредитами.
+    // Квота у самого провайдера. Это единственная цифра раздела, которая знает про телефон и
+    // второй ноутбук: локальные логи по определению видят только эту машину.
     let quotas = 0
     for (const access of vault.listAiAccess()) {
-      const q = await fetchQuota(access, vault.getAiKey(access.id))
-      if (!q) continue
-      vault.setQuota({ accessId: access.id, checkedAt: Date.now(), ...q })
+      const { slices } = await fetchQuota(access, vault.getAiKey(access.id))
+      if (!slices.length) continue
+      const checkedAt = Date.now()
+      vault.replaceQuotas(
+        access.id,
+        slices.map((s) => ({ ...s, accessId: access.id, checkedAt }))
+      )
       quotas++
     }
     if (quotas > 0) announceAiUpdated('quota')
@@ -512,7 +517,7 @@ export function registerIpc(): void {
   ipcMain.handle('ai:check', async (_e, id: unknown) => {
     const accessId = asString(id)
     const acc = vault.listAiAccess().find((a) => a.id === accessId)
-    const verdict = await checkAccount(acc?.provider ?? '', vault.getAiKey(accessId) ?? '')
+    const verdict = await checkAccount(acc?.provider ?? '', vault.getAiKey(accessId) ?? '', acc && keyEndpointBase(acc))
     // Вердикт сохраняется, чтобы его увидел сторож (он сам в сеть не ходит) и чтобы на карточке
     // было видно, когда ключ последний раз отвечал.
     if (acc) vault.recordAiCheck(accessId, verdict)
@@ -549,7 +554,7 @@ export function registerIpc(): void {
     const acc = vault.listAiAccess().find((a) => a.id === id)
     const key = vault.getAccountKey(id, mail)
     if (!key) return { status: 'nokey' }
-    const verdict = await checkAccount(acc?.provider ?? '', key)
+    const verdict = await checkAccount(acc?.provider ?? '', key, acc && keyEndpointBase(acc))
     vault.recordAccountCheck(id, mail, verdict.status)
     // Ответивший ключ — такое же подтверждение, как вход в браузере.
     if (acc && (verdict.status === 'valid' || verdict.status === 'quota')) {

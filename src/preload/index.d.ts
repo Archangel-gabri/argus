@@ -16,7 +16,7 @@ import type {
   AiChannel,
   AiCheck,
   AiPrice,
-  AiQuota,
+  AiQuotaSlice,
   AiUsageSummary,
   PowerResult,
   PowerDiag,
@@ -178,7 +178,7 @@ export interface ArgusApi {
         lastOkAt: number | null
       }>
     >
-    quotas: () => Promise<AiQuota[]>
+    quotas: () => Promise<AiQuotaSlice[]>
     prices: (provider?: string) => Promise<AiPrice[]>
     priceCount: () => Promise<number>
     refreshPrices: (accessId?: string) => Promise<{ ok: boolean; count: number; error?: string }>

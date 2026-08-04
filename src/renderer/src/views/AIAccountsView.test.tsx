@@ -71,6 +71,7 @@ async function mount(opts: {
   subs?: unknown[]
   checks?: unknown[]
   blocks?: unknown[]
+  quotas?: unknown[]
 }): Promise<void> {
   const api = {
     ai: {
@@ -87,7 +88,8 @@ async function mount(opts: {
         .fn()
         .mockResolvedValue({ days: opts.usage ?? [], blocks: opts.blocks ?? [], collectedAt: Date.now(), scannedFiles: 0, skipped: 0 }),
       collect: vi.fn().mockResolvedValue({ files: 0, records: 0, duplicates: 0, unpriced: [] }),
-      models: vi.fn().mockResolvedValue([])
+      models: vi.fn().mockResolvedValue([]),
+      quotas: vi.fn().mockResolvedValue(opts.quotas ?? [])
     },
     subs: { list: vi.fn().mockResolvedValue(opts.subs ?? []) }
   }
@@ -291,5 +293,74 @@ describe('экран AI', () => {
     // Ни одна цифра не должна утверждать «$0»: нечего считать — значит прочерк.
     expect(within(header()).getByText('—')).toBeInTheDocument()
     expect(within(header()).getByText('ничего')).toBeInTheDocument()
+  })
+})
+
+describe('квота от провайдера', () => {
+  const slice = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    accessId: 'Claude',
+    scope: 'session',
+    label: 'Текущая сессия',
+    ratio: 0.24,
+    used: null,
+    limit: null,
+    unit: '%',
+    resetsAt: Date.now() + 100 * 60_000,
+    plan: null,
+    model: null,
+    checkedAt: Date.now(),
+    ...over
+  })
+
+  it('доля провайдера показывается точной — без «≈»', async () => {
+    // Эту цифру считает сам аккаунт: она включает телефон и второй ноутбук владельца, а не
+    // только эту машину. Помечать её оценкой значило бы приравнять измерение к догадке.
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
+      quotas: [slice()]
+    })
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getByText('24%')).toBeInTheDocument()
+    expect(within(panel).queryByText('≈24%')).not.toBeInTheDocument()
+  })
+
+  it('своя оценка за тот же период рядом не показывается', async () => {
+    // Два разных ответа на один вопрос рядом читаются как ошибка — и читаются правильно.
+    const now = Date.now()
+    const H = 3600_000
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
+      blocks: [
+        { source: 'claude-code', startTs: now - 30 * H, endTs: now - 25 * H, tokens: 1_000_000, costUsd: 20, requests: 90 },
+        { source: 'claude-code', startTs: now - H, endTs: now + 4 * H, tokens: 500_000, costUsd: 10, requests: 40 }
+      ],
+      quotas: [slice()]
+    })
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getAllByText(/Текущая сессия/)).toHaveLength(1)
+    expect(within(panel).queryByText('≈50%')).not.toBeInTheDocument()
+  })
+
+  it('устаревший снимок подписан датой, свежий молчит', async () => {
+    await mount({
+      access: [access('Claude', { provider: 'anthropic' })],
+      quotas: [slice({ checkedAt: Date.now() - 3 * 24 * 3600_000 })]
+    })
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getByText(/сверено/)).toBeInTheDocument()
+  })
+
+  it('текущий период не считается собственным максимумом', async () => {
+    // Иначе доля выходит ровно 100 % каждый раз: период сравнивается сам с собой. На экране
+    // владельца «Последние 7 дней» так и горели красными 100 % при спокойной неделе.
+    const now = Date.now()
+    const H = 3600_000
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
+      blocks: [{ source: 'claude-code', startTs: now - H, endTs: now + 4 * H, tokens: 900_000, costUsd: 10, requests: 40 }]
+    })
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).queryByText('≈100%')).not.toBeInTheDocument()
+    expect(within(panel).queryByText('100%')).not.toBeInTheDocument()
   })
 })

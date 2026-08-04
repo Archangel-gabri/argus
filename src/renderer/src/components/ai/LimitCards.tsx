@@ -3,7 +3,7 @@ import { money } from '@/lib/format'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { DEFAULT_WINDOW_HOURS, formatResetIn, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
-import type { AiAccess, AiCheck, AiQuota, AiUsageBlock, AiUsageDay } from '@/types'
+import type { AiAccess, AiCheck, AiQuotaSlice, AiUsageBlock, AiUsageDay } from '@/types'
 
 function tokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -11,12 +11,84 @@ function tokens(n: number): string {
   return String(n)
 }
 
+/** Сутки. Снимок квоты старше — уже не «сейчас», и об этом надо сказать. */
+const STALE_MS = 24 * 60 * 60 * 1000
+
+function amount(value: number, unit: string): string {
+  if (unit === '$') return money(Math.round(value * 100) / 100)
+  if (unit === 'токенов') return tokens(value)
+  return value.toLocaleString('ru-RU')
+}
+
 /**
- * Одна плашка лимита.
+ * Квота, названная самим провайдером.
  *
- * Устроена так же, как её показывают сами провайдеры: слева что это и когда обновится, справа
- * доля, между ними полоса. Доля берётся только от известного потолка — провайдеры своих порогов
- * не публикуют, и процент без знаменателя был бы выдумкой.
+ * Это единственная цифра раздела, которая знает про все устройства владельца: расход по локальным
+ * логам видит только эту машину, а тут отвечает сам аккаунт. Поэтому доля — сплошная и без «≈»:
+ * она измерена, а не оценена.
+ *
+ * У Anthropic знаменателя нет вовсе — он публикует проценты и не публикует потолок. Подставлять
+ * туда токены из своих логов нельзя: получится дробь, у которой числитель с одной машины, а
+ * знаменатель со всех.
+ */
+function ProviderCard({ slice, now }: { slice: AiQuotaSlice; now: number }): React.JSX.Element {
+  const ratio = slice.ratio ?? (slice.limit && slice.limit > 0 && slice.used != null ? slice.used / slice.limit : null)
+  const over = ratio != null && ratio >= 1
+  const nearing = ratio != null && ratio >= 0.8
+  const stale = now - slice.checkedAt > STALE_MS
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="truncate text-[12px] font-medium text-slate-200">{slice.label}</span>
+        <span className={cn('text-[15px] font-semibold tabular-nums', over ? 'text-rose-400' : 'text-white')}>
+          {ratio != null ? `${Math.round(ratio * 100)}%` : slice.used != null ? amount(slice.used, slice.unit) : '—'}
+        </span>
+      </div>
+
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+        <div
+          className={cn(
+            'h-full rounded-full transition-[width] duration-700',
+            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : 'bg-accent'
+          )}
+          style={{ width: `${Math.max(2, Math.min(1, ratio ?? 0) * 100)}%` }}
+        />
+      </div>
+
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-500">
+        <span className="truncate">
+          {slice.resetsAt
+            ? slice.resetsAt - now > 0 && slice.resetsAt - now < 7 * 24 * 60 * 60 * 1000
+              ? `сброс ${formatResetIn(slice.resetsAt - now)}`
+              : `до ${new Date(slice.resetsAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`
+            : (slice.plan ?? '')}
+        </span>
+        <span className="shrink-0 tabular-nums">
+          {slice.used != null && slice.limit != null
+            ? `${amount(slice.used, slice.unit)} из ${amount(slice.limit, slice.unit)}`
+            : slice.limit === 0
+              ? 'включённого расхода нет'
+              : ''}
+        </span>
+      </div>
+
+      {/* Свежий снимок молчит: нормальная работа не отчитывается. Говорит только устаревший. */}
+      {stale && (
+        <div className="mt-1 text-[11px] text-amber-400/70">
+          сверено {new Date(slice.checkedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Одна плашка лимита, посчитанного по локальным логам.
+ *
+ * Отличается от провайдерской намеренно: доля здесь считается от наблюдаемого максимума, то есть
+ * это оценка снизу по истории ОДНОЙ машины. Знак «≈» и приглушённая полоса — не украшение, а
+ * единственное, что отличает её от измерения.
  */
 function LimitCard({
   title,
@@ -24,7 +96,7 @@ function LimitCard({
   spent,
   limit,
   elapsed,
-  unit = 'токенов',
+  elapsedNote,
   peak
 }: {
   title: string
@@ -33,8 +105,9 @@ function LimitCard({
   limit: number | null
   /** Доля прошедшего времени периода — полоса, когда мерить не от чего. */
   elapsed: number
-  unit?: string
-  /** Самый нагруженный такой же период в истории. */
+  /** Чем подписать полосу времени: «прошло 16 ч из 24». */
+  elapsedNote?: string
+  /** Самый нагруженный ЗАВЕРШЁННЫЙ период того же рода. */
   peak?: number
 }): React.JSX.Element {
   // Потолок владельца — это факт, наблюдаемый максимум — оценка. Считаем от того, что есть:
@@ -59,8 +132,6 @@ function LimitCard({
         </span>
       </div>
 
-      {/* Без известного потолка полоса отмеряет ВРЕМЯ периода, а не долю квоты. Чтобы её не
-          читали как заполнение лимита, она рисуется штриховкой и приглушённо. */}
       {/* Сплошная полоса — доля известного потолка. Приглушённая — доля наблюдаемого максимума,
           то есть оценка. Штриховая — вообще не про расход, а про прошедшее время периода. */}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
@@ -81,22 +152,21 @@ function LimitCard({
         />
       </div>
 
-      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-500">
         <span>{caption}</span>
         <span className="tabular-nums">
           {own
             ? `${tokens(spent)} из ${tokens(own)}`
             : observed
               ? `${tokens(spent)} из ${tokens(observed)} — наблюдаемый максимум`
-              : `${unit} · полоса — прошедшее время`}
+              : (elapsedNote ?? '')}
         </span>
       </div>
-
     </div>
   )
 }
 
-/** Плашка денег для доступов, где провайдер отдаёт баланс (сейчас это OpenRouter). */
+/** Остаток денег, когда провайдер отдаёт его проверкой ключа, а не квотой. */
 function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
   const remaining = check.remaining ?? 0
   const spent = check.usage ?? 0
@@ -118,7 +188,7 @@ function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
           style={{ width: `${Math.max(2, left * 100)}%` }}
         />
       </div>
-      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-500">
         <span>{low ? 'почти исчерпан' : 'осталось'}</span>
         <span className="tabular-nums">потрачено {money(Math.round(spent * 100) / 100)}</span>
       </div>
@@ -126,45 +196,21 @@ function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
   )
 }
 
-/** Квота бесплатного тарифа: предел есть, просто считается не деньгами, а кредитами. */
-function QuotaCard({ quota }: { quota: AiQuota }): React.JSX.Element {
-  const used = quota.limit && quota.limit > 0 ? quota.used / quota.limit : null
-  const low = used != null && used >= 0.8
-
-  return (
-    <div className="rounded-lg border border-border bg-card/50 p-3.5">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[12px] font-medium text-slate-200">Квота{quota.plan ? ` · ${quota.plan}` : ''}</span>
-        <span className={cn('text-[15px] font-semibold tabular-nums', low ? 'text-amber-400' : 'text-white')}>
-          {used != null ? `${Math.round(used * 100)}%` : quota.used.toLocaleString('ru-RU')}
-        </span>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
-        <div
-          className={cn('h-full rounded-full', low ? 'bg-amber-400' : 'bg-accent')}
-          style={{ width: `${Math.max(2, Math.min(1, used ?? 0) * 100)}%` }}
-        />
-      </div>
-      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
-        <span>
-          {quota.periodEnd
-            ? `обновится ${new Date(quota.periodEnd).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`
-            : 'за расчётный период'}
-        </span>
-        <span className="tabular-nums">
-          {quota.used.toLocaleString('ru-RU')}
-          {quota.limit ? ` из ${quota.limit.toLocaleString('ru-RU')}` : ''} {quota.unit}
-        </span>
-      </div>
-    </div>
-  )
+/** Какие периоды провайдер уже закрыл сам — по ним своя оценка больше не нужна. */
+export function coveredScopes(slices: AiQuotaSlice[]): { session: boolean; week: boolean } {
+  return {
+    session: slices.some((s) => s.scope === 'session'),
+    week: slices.some((s) => s.scope === 'week' || s.scope === 'week-model')
+  }
 }
 
 /**
- * Лимиты доступа: окно сессии, сутки и неделя — ровно те периоды, которыми считают провайдеры.
+ * Лимиты доступа.
  *
- * Для доступов без своих логов расхода показывается то, что известно: баланс, если провайдер его
- * отдаёт, и объявленные лимиты запросов.
+ * Порядок один и тот же везде: сначала то, что сказал провайдер, потом то, что мы посчитали сами.
+ * Если провайдер уже назвал долю за период, своя оценка за тот же период не показывается вовсе —
+ * два разных ответа на один вопрос рядом читаются как ошибка, и правильно читаются: один из них
+ * неверный.
  */
 export function LimitCards({
   access,
@@ -172,7 +218,7 @@ export function LimitCards({
   days,
   source,
   check,
-  quota,
+  quotas = [],
   now = Date.now()
 }: {
   access: AiAccess
@@ -181,12 +227,19 @@ export function LimitCards({
   /** Источник логов расхода или null, если своих логов у доступа нет. */
   source: string | null
   check?: AiCheck
-  quota?: AiQuota
+  /** Срезы квоты, полученные от провайдера. */
+  quotas?: AiQuotaSlice[]
   now?: number
 }): React.JSX.Element | null {
+  const covered = coveredScopes(quotas)
   const mine = source ? blocks.filter((b) => b.source === source) : []
   const state = source ? windowState(mine, access.limits.windowTokens, now) : null
-  const sessionPeak = mine.reduce((max, b) => Math.max(max, b.tokens), 0)
+
+  // Пик считается по ЗАВЕРШЁННЫМ периодам. Текущий период — сам себе максимум, и если включить
+  // его в расчёт, доля всегда выйдет ровно 100 %: полоса упиралась в край каждый день.
+  const sessionPeak = mine
+    .filter((b) => b.startTs !== state?.block.startTs)
+    .reduce((max, b) => Math.max(max, b.tokens), 0)
 
   const today = source ? totalsFor(days, { since: daysAgoDate(0), source }) : null
   const week = source ? totalsFor(days, { since: daysAgoDate(6), source }) : null
@@ -194,11 +247,11 @@ export function LimitCards({
   const weekTokens = week ? totalTokens(week.usage) : 0
 
   // Пик недели — по скользящим неделям истории: разовый всплеск важнее среднего, потому что
-  // лимит бьёт именно по нему.
+  // лимит бьёт именно по нему. Отсчёт с прошлой недели — текущая ещё не дожита.
   const weekPeak = (() => {
     if (!source) return 0
     let max = 0
-    for (let offset = 0; offset < 8; offset++) {
+    for (let offset = 1; offset <= 8; offset++) {
       const since = daysAgoDate(6 + offset * 7)
       const until = daysAgoDate(offset * 7)
       const sum = days
@@ -211,55 +264,60 @@ export function LimitCards({
 
   const dayPeak = (() => {
     if (!source) return 0
+    const todayDate = daysAgoDate(0)
     const byDate = new Map<string, number>()
     for (const d of days) {
-      if (d.source !== source) continue
+      if (d.source !== source || d.date >= todayDate) continue
       byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.input + d.output + d.cacheWrite + d.cacheWrite1h + d.cacheRead)
     }
     return Math.max(0, ...byDate.values())
   })()
 
-
-  const hasBalance = typeof check?.remaining === 'number'
+  const hasBalance = typeof check?.remaining === 'number' && quotas.length === 0
   // Объявленные лимиты тарифа — тоже повод показать блок: у бесплатного доступа это всё, что
   // о нём известно, и прятать их значит оставлять такие записи вовсе без лимитов.
   const declared = access.limits.rpd != null || access.limits.rpm != null || access.limits.tpmo != null
-  if (!source && !hasBalance && !quota && !declared) return null
+  if (!source && !hasBalance && quotas.length === 0 && !declared) return null
 
   const hours = access.limits.windowHours ?? DEFAULT_WINDOW_HOURS
   const nowDate = new Date(now)
-  const dayElapsed = (nowDate.getHours() * 60 + nowDate.getMinutes()) / (24 * 60)
+  const dayElapsedHours = nowDate.getHours()
+  const dayElapsed = (dayElapsedHours * 60 + nowDate.getMinutes()) / (24 * 60)
 
   return (
     <section>
       <h3 className="mb-2 flex items-baseline gap-2">
         <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Лимиты</span>
-        {access.plan && <span className="truncate text-[11px] text-slate-600">{access.plan}</span>}
+        {access.plan && <span className="truncate text-[11px] text-slate-500">{access.plan}</span>}
       </h3>
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {quotas.map((q) => (
+          <ProviderCard key={`${q.scope}-${q.label}`} slice={q} now={now} />
+        ))}
         {hasBalance && check && <BalanceCard check={check} />}
-        {quota && <QuotaCard quota={quota} />}
 
         {source && (
           <>
-            {state ? (
-              <LimitCard
-                title="Текущая сессия"
-                caption={`сбросится ${formatResetIn(state.resetsInMs)}`}
-                spent={state.block.tokens}
-                limit={access.limits.windowTokens ?? null}
-                elapsed={state.elapsed}
-                peak={sessionPeak}
-              />
-            ) : (
-              <div className="rounded-lg border border-border bg-card/50 p-3.5">
-                <div className="text-[12px] font-medium text-slate-200">Текущая сессия</div>
-                <p className="mt-2 text-[11px] text-slate-600">
-                  не начата — окно {hours} ч открывается с первого запроса
-                </p>
-              </div>
-            )}
+            {!covered.session &&
+              (state ? (
+                <LimitCard
+                  title="Текущая сессия"
+                  caption={`сбросится ${formatResetIn(state.resetsInMs)}`}
+                  spent={state.block.tokens}
+                  limit={access.limits.windowTokens ?? null}
+                  elapsed={state.elapsed}
+                  elapsedNote={`окно ${hours} ч`}
+                  peak={sessionPeak}
+                />
+              ) : (
+                <div className="rounded-lg border border-border bg-card/50 p-3.5">
+                  <div className="text-[12px] font-medium text-slate-200">Текущая сессия</div>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    не начата — окно {hours} ч открывается с первого запроса
+                  </p>
+                </div>
+              ))}
 
             <LimitCard
               title="Сегодня"
@@ -267,26 +325,29 @@ export function LimitCards({
               spent={todayTokens}
               limit={access.limits.tpd ?? null}
               elapsed={dayElapsed}
+              elapsedNote={`прошло ${dayElapsedHours} ч из 24`}
               peak={dayPeak}
             />
 
-            <LimitCard
-              title="Последние 7 дней"
-              caption="скользящее окно"
-              spent={weekTokens}
-              limit={access.limits.weekTokens ?? null}
-              // Окно скользящее, поэтому «прошедшего времени» у него нет: показываем полную
-              // полосу. Раньше здесь стоял день календарной недели — расход считался за одно,
-              // а полоса рисовалась про другое.
-              elapsed={1}
-              peak={weekPeak}
-            />
+            {!covered.week && (
+              <LimitCard
+                title="Последние 7 дней"
+                caption="скользящее окно"
+                spent={weekTokens}
+                limit={access.limits.weekTokens ?? null}
+                // Окно скользящее, поэтому «прошедшего времени» у него нет: показываем полную
+                // полосу. Раньше здесь стоял день календарной недели — расход считался за одно,
+                // а полоса рисовалась про другое.
+                elapsed={1}
+                peak={weekPeak}
+              />
+            )}
           </>
         )}
       </div>
 
       {(access.limits.rpm != null || access.limits.rpd != null || access.limits.rpmo != null || access.limits.tpmo != null) && (
-        <p className="mt-2 text-[11px] text-slate-600">
+        <p className="mt-2 text-[11px] text-slate-500">
           {/* Это условия тарифа, а не измерение: провайдер их объявил, но сколько израсходовано,
               по ним не узнать. Подписываем отдельно, чтобы не путались с посчитанным расходом. */}
           По условиям тарифа:{' '}

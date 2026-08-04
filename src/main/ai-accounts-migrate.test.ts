@@ -1,7 +1,7 @@
 // Слияние записей в аккаунты трогает то, что владелец уже завёл. Ошибка здесь либо склеит
 // чужие доступы в один, либо продублирует каналы при повторном запуске.
 import { describe, expect, it } from 'vitest'
-import { channelFor, planMerge } from './ai-accounts-migrate'
+import { channelFor, planMerge, repairLabel } from './ai-accounts-migrate'
 import type { AiAccess } from './types'
 
 const rec = (over: Partial<AiAccess> = {}): AiAccess => ({
@@ -54,7 +54,9 @@ describe('слияние в аккаунты', () => {
     ])
     expect(plans).toHaveLength(1)
     expect(plans[0].keepId).toBe('web')
-    expect(plans[0].label).toBe('me@example.com')
+    // Имя записи — название сервиса, а не почта: три строки «me@example.com» подряд не
+    // различить глазами, а выбирать из них приходится каждый раз.
+    expect(plans[0].label).toBe('ChatGPT')
     expect(plans[0].channels.map((c) => c.label).sort()).toEqual(['ChatGPT', 'Codex CLI'])
     expect(plans[0].dropIds).toEqual(['cli'])
   })
@@ -97,5 +99,42 @@ describe('слияние в аккаунты', () => {
       rec({ id: 'b', account: 'me@example.com', accounts: [{ email: 'me@example.com', verified: true }] })
     ])
     expect(plans[0].verified).toBe(true)
+  })
+})
+
+describe('починка имени', () => {
+  it('запись, переименованная в почту, забирает название у своего канала', () => {
+    // Прошлая версия слияния звала записи почтой владельца, и список превращался в столбик
+    // одинаковых строк. Настоящее название при этом уцелело — оно уехало в канал.
+    const fixed = repairLabel({
+      label: 'me@example.com',
+      account: 'me@example.com',
+      channels: [{ kind: 'web', label: 'ChatGPT' }]
+    })
+    expect(fixed).toBe('ChatGPT')
+  })
+
+  it('нормальное имя не трогается', () => {
+    expect(repairLabel({ label: 'Claude Max 5x', account: 'me@example.com', channels: [] })).toBeNull()
+  })
+
+  it('без второго названия чинить нечем — почта остаётся', () => {
+    expect(
+      repairLabel({ label: 'me@example.com', account: 'me@example.com', channels: [{ kind: 'web', label: 'me@example.com' }] })
+    ).toBeNull()
+  })
+})
+
+describe('«other» — это не семья провайдеров', () => {
+  it('разные сервисы под «other» не сливаются одной почтой владельца', () => {
+    // Под «other» стоит всё, у чего своего провайдера в справочнике нет: Cursor, Brave Search,
+    // случайный чат. Общая почта владельца не делает их одним аккаунтом — так ChatInfo.ru
+    // однажды стал «каналом» Cursor.
+    const plans = planMerge([
+      rec({ id: 'cursor', provider: 'other', label: 'Cursor', account: 'me@example.com' }),
+      rec({ id: 'chat', provider: 'other', label: 'ChatInfo.ru', account: 'me@example.com' })
+    ])
+    expect(plans).toHaveLength(2)
+    expect(plans.map((p) => p.label).sort()).toEqual(['ChatInfo.ru', 'Cursor'])
   })
 })

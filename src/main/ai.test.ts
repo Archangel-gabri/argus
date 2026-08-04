@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { checkAccount } from './ai'
+import { checkAccount, keyEndpointBase } from './ai'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -92,5 +92,31 @@ describe('проверка AI-доступа', () => {
       status: 'error',
       detail: 'Автопроверка для провайдера недоступна'
     })
+  })
+})
+
+describe('у кого спрашивать про ключ', () => {
+  it('адрес берётся у канала, если на самой записи его нет', () => {
+    // Ключ Codex выписан сторонним роутером и в api.openai.com не действует НИКОГДА. Проверка,
+    // стучавшаяся туда всегда, объявляла рабочий ключ протухшим и вешала тревогу «перевыпустить».
+    expect(
+      keyEndpointBase({
+        baseUrl: null,
+        channels: [
+          { kind: 'web', label: 'ChatGPT' },
+          { kind: 'cli', label: 'Codex CLI', hasKey: true, baseUrl: 'https://cli.neutrino.su/v1' }
+        ]
+      })
+    ).toBe('https://cli.neutrino.su/v1')
+  })
+
+  it('адрес самой записи важнее канального', () => {
+    expect(keyEndpointBase({ baseUrl: 'https://a/v1', channels: [{ kind: 'api', label: 'k', hasKey: true, baseUrl: 'https://b/v1' }] })).toBe(
+      'https://a/v1'
+    )
+  })
+
+  it('канал без ключа адреса не задаёт', () => {
+    expect(keyEndpointBase({ baseUrl: null, channels: [{ kind: 'web', label: 'веб', baseUrl: 'https://web' }] })).toBeNull()
   })
 })

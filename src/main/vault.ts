@@ -46,7 +46,7 @@ import type {
   AiLimits,
   AiPayment,
   AiPrice,
-  AiQuota,
+  AiQuotaSlice,
   AiStatus,
   AiUsageBlock,
   AiUsageDay
@@ -380,15 +380,26 @@ function migrate(d: Database.Database): void {
   )`)
 
   // Квоты бесплатных тарифов: кредиты и запросы, которые сервис сам о себе сообщает.
-  d.exec(`CREATE TABLE IF NOT EXISTS ai_quota (
-    access_id TEXT PRIMARY KEY,
-    used REAL NOT NULL DEFAULT 0,
+  // Квота приходит от провайдера НЕСКОЛЬКИМИ срезами: у Anthropic это окно сессии, неделя и
+  // недельный лимит на отдельную модель, у Firecrawl — кредиты и токены. Прежняя таблица держала
+  // одну строку на доступ и потому вмещала только один из них.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_quota_slice (
+    access_id TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    label TEXT NOT NULL,
+    ratio REAL,
+    used REAL,
     limit_value REAL,
     unit TEXT NOT NULL DEFAULT 'единиц',
+    resets_at INTEGER,
     plan TEXT,
-    period_end INTEGER,
-    checked_at INTEGER NOT NULL
+    model TEXT,
+    checked_at INTEGER NOT NULL,
+    PRIMARY KEY (access_id, scope, label)
   )`)
+  // Старая одностроковая таблица была кэшем ответов провайдера, а не историей: держать её ради
+  // совместимости значит оставить в базе цифры, которые никто больше не обновляет.
+  d.exec('DROP TABLE IF EXISTS ai_quota')
 
   // Последний вердикт проверки ключа. Нужен двум потребителям: экрану — чтобы показать, когда
   // ключ в последний раз отвечал, и сторожу — чтобы заметить умерший ключ, НЕ ходя в сеть
@@ -2067,25 +2078,46 @@ export function addUsageBlocks(blocks: AiUsageBlock[]): void {
 
 // --- Квоты ---
 
-export function listQuotas(): AiQuota[] {
+export function listQuotas(): AiQuotaSlice[] {
   return requireDb()
     .prepare(
-      `SELECT access_id as accessId, used, limit_value as "limit", unit, plan,
-              period_end as periodEnd, checked_at as checkedAt FROM ai_quota`
+      `SELECT access_id as accessId, scope, label, ratio, used, limit_value as "limit", unit,
+              resets_at as resetsAt, plan, model, checked_at as checkedAt
+       FROM ai_quota_slice ORDER BY access_id, rowid`
     )
-    .all() as AiQuota[]
+    .all() as AiQuotaSlice[]
 }
 
-export function setQuota(q: AiQuota): void {
-  requireDb()
-    .prepare(
-      `INSERT INTO ai_quota (access_id, used, limit_value, unit, plan, period_end, checked_at)
-       VALUES (@accessId, @used, @limit, @unit, @plan, @periodEnd, @checkedAt)
-       ON CONFLICT(access_id) DO UPDATE SET used=excluded.used, limit_value=excluded.limit_value,
-         unit=excluded.unit, plan=excluded.plan, period_end=excluded.period_end,
-         checked_at=excluded.checked_at`
-    )
-    .run({ ...q, plan: q.plan ?? null, periodEnd: q.periodEnd ?? null })
+/**
+ * Заменить все срезы доступа разом.
+ *
+ * Именно заменить, а не дописать: срезы приходят от провайдера комплектом, и исчезнувший срез
+ * (сняли недельный лимит на модель, кончился расчётный период) обязан исчезнуть с экрана, а не
+ * остаться лежать вечной цифрой из прошлого. Дозапись оставила бы его навсегда.
+ */
+export function replaceQuotas(accessId: string, slices: AiQuotaSlice[]): void {
+  const d = requireDb()
+  const del = d.prepare('DELETE FROM ai_quota_slice WHERE access_id = ?')
+  const ins = d.prepare(
+    `INSERT INTO ai_quota_slice (access_id, scope, label, ratio, used, limit_value, unit,
+                                 resets_at, plan, model, checked_at)
+     VALUES (@accessId, @scope, @label, @ratio, @used, @limit, @unit, @resetsAt, @plan, @model, @checkedAt)`
+  )
+  const write = d.transaction((list: AiQuotaSlice[]) => {
+    del.run(accessId)
+    for (const s of list) {
+      ins.run({
+        ...s,
+        ratio: s.ratio ?? null,
+        used: s.used ?? null,
+        limit: s.limit ?? null,
+        resetsAt: s.resetsAt ?? null,
+        plan: s.plan ?? null,
+        model: s.model ?? null
+      })
+    }
+  })
+  write(slices)
 }
 
 // --- Вердикты проверки ключей ----------------------------------------------------------------

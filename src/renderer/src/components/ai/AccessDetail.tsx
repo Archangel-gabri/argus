@@ -80,7 +80,7 @@ export function AccessDetail({
   const blocks = useAi((s) => s.blocks)
   const all = useAi((s) => s.access)
   const check = useAi((s) => s.checks[access.id])
-  const quota = useAi((s) => s.quotas[access.id])
+  const quotas = useAi((s) => s.quotas[access.id])
 
   const sub = subs.find((s) => s.id === access.subscriptionId)
   const monthly = monthlyCost(sub)
@@ -214,7 +214,7 @@ export function AccessDetail({
                 days={usage}
                 source={source}
                 check={check}
-                quota={quota}
+                quotas={quotas}
               />
             )
           if (block === 'channels') return <ChannelList key={block} access={access} />

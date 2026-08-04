@@ -43,16 +43,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
     [rows, since, unpriced]
   )
 
-  if (!source)
-    return (
-      <section>
-        <h3 className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Расход</h3>
-        <p className="rounded-lg border border-dashed border-border px-4 py-5 text-[12px] text-slate-600">
-          У этого доступа нет инструмента, который пишет локальные логи. Расход по нему виден там, где
-          провайдер отдаёт его сам, — в плашке баланса выше.
-        </p>
-      </section>
-    )
+  if (!source) return null
 
   return (
     <section>
@@ -61,9 +52,9 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
           Расход {source === 'claude-code' ? 'Claude Code' : source === 'codex' ? 'Codex' : ''}
         </h3>
         <div className="flex items-center gap-3">
-          {collectedAt && (
-            <span className="text-[10px] text-slate-700">
-              логи прочитаны {new Date(collectedAt).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}
+          {collectedAt && Date.now() - collectedAt > 24 * 60 * 60 * 1000 && (
+            <span className="text-[10px] text-amber-400/70">
+              логи прочитаны {new Date(collectedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
             </span>
           )}
           <div className="flex gap-1">
@@ -111,12 +102,6 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
           </div>
           {series.some((v) => v > 0) && <UsageBars data={series} width={360} height={44} />}
         </div>
-
-        {access.kind === 'subscription' && totals.costUsd > 0 && (
-          <p className="mt-3 text-[11px] text-slate-600">
-            По подписке это не списанные деньги: столько стоил бы тот же объём по ценам API.
-          </p>
-        )}
 
         {missingPrices.length > 0 && (
           <p className="mt-2 text-[11px] text-amber-400/80">

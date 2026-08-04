@@ -75,6 +75,8 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
   }, [models, prices, provider, query, filter])
 
   const lastFetch = models.reduce((max, m) => Math.max(max, m.fetchedAt ?? 0), 0)
+  // Дата списка нужна, только если он устарел: работающая норма не отчитывается о себе.
+  const stale = lastFetch > 0 && Date.now() - lastFetch > 7 * 24 * 60 * 60 * 1000
 
   const toggleFavorite = (model: string): void => {
     const cur = models.find((m) => m.model === model)
@@ -122,11 +124,11 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
             </button>
           ))}
         </div>
-        <span className="shrink-0 text-[10px] text-slate-600">
-          {lastFetch > 0
-            ? `список от провайдера, обновлён ${new Date(lastFetch).toLocaleDateString('ru-RU')}`
-            : 'список обновляется при запуске'}
-        </span>
+        {stale && (
+          <span className="shrink-0 text-[10px] text-slate-500">
+            список от {new Date(lastFetch).toLocaleDateString('ru-RU')}
+          </span>
+        )}
       </div>
 
       {calc && (
@@ -136,11 +138,7 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
       )}
 
       {rows.length === 0 ? (
-        <div className="mt-4 rounded border border-dashed border-border py-10 text-center text-[12px] text-slate-600">
-          {models.length === 0
-            ? 'Список ещё не получен — он обновляется при запуске приложения.'
-            : 'Под фильтр ничего не подошло'}
-        </div>
+        <div className="mt-4 text-[12px] text-slate-500">Под фильтр ничего не подошло</div>
       ) : (
         <div className="mt-3 max-h-[22rem] overflow-y-auto rounded-lg border border-border bg-card/40 px-3">
           <table className="w-full text-left text-[11px]">

@@ -1,4 +1,17 @@
-import type { AiCheck } from './types'
+import type { AiAccess, AiCheck } from './types'
+
+/**
+ * У кого спрашивать про ключ этой записи.
+ *
+ * Ключ выписывает тот, к кому он подходит, и адрес его живёт не всегда на самой записи: после
+ * перехода на модель «аккаунт → каналы» ключ Codex лежит в КАНАЛЕ аккаунта OpenAI вместе со своим
+ * `baseUrl` стороннего роутера. Проверка, смотревшая только на запись, спрашивала api.openai.com,
+ * получала 401 и объявляла рабочий ключ протухшим.
+ */
+export function keyEndpointBase(access: Pick<AiAccess, 'baseUrl' | 'channels'>): string | null {
+  if (access.baseUrl) return access.baseUrl
+  return access.channels.find((c) => c.hasKey && c.baseUrl)?.baseUrl ?? null
+}
 
 // Validity / quota probes for stored AI keys. Keys stay in main; only the verdict crosses IPC.
 // OpenRouter exposes real remaining credit; others are validity-only (status from HTTP code).
@@ -29,7 +42,14 @@ function unknownHttp(status: number): AiCheck {
   return { status: 'error', detail: `HTTP ${status} — результат неизвестен` }
 }
 
-export async function checkAccount(provider: string, apiKey: string): Promise<AiCheck> {
+/**
+ * Проверить ключ.
+ *
+ * `baseUrl` — не украшение: ключ Codex выписан сторонним роутером и в api.openai.com не действует
+ * никогда. Проверка, стучавшаяся туда всегда, объявляла рабочий ключ протухшим и вешала на экран
+ * тревогу «перевыпустить». Спрашивать надо у того, кто ключ выдал.
+ */
+export async function checkAccount(provider: string, apiKey: string, baseUrl?: string | null): Promise<AiCheck> {
   if (!apiKey) return { status: 'nokey' }
   const p = provider.toLowerCase()
   try {
@@ -67,7 +87,8 @@ export async function checkAccount(provider: string, apiKey: string): Promise<Ai
       return unknownHttp(r.status)
     }
     if (p.includes('openai') || p.includes('codex') || p.includes('chatgpt')) {
-      const r = await fetchForCheck('https://api.openai.com/v1/models', {
+      const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+      const r = await fetchForCheck(`${base}/models`, {
         headers: { Authorization: `Bearer ${apiKey}` }
       })
       const failure = knownFailure(r.status)

@@ -26,7 +26,7 @@ export type {
   AiLimits,
   AiPayment,
   AiPrice,
-  AiQuota,
+  AiQuotaSlice,
   AiStatus,
   AiUsageBlock,
   AiUsageDay,

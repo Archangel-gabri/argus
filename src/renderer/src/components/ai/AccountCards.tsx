@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, Copy, ExternalLink, KeyRound, Loader2, RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react'
+import { Check, Copy, ExternalLink, Loader2, RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { familyAccounts } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
@@ -90,14 +90,17 @@ function AccountCard({
             {ownerId !== access.id && <span>из «{ownerLabel}»</span>}
           </div>
         </div>
-        <span
-          className={cn(
-            'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
-            isPaid(account.plan) ? 'bg-accent/15 text-accent' : 'bg-white/[0.04] text-slate-500'
-          )}
-        >
-          {account.plan || 'тариф неизвестен'}
-        </span>
+        {/* Неизвестный тариф честнее показать отсутствием плашки, чем плашкой «неизвестно». */}
+        {account.plan && (
+          <span
+            className={cn(
+              'shrink-0 rounded px-1.5 py-0.5 text-[10px]',
+              isPaid(account.plan) ? 'bg-accent/15 text-accent' : 'bg-white/[0.04] text-slate-500'
+            )}
+          >
+            {account.plan}
+          </span>
+        )}
       </div>
 
       <div className="mt-2.5 flex items-center justify-between gap-2">
@@ -207,12 +210,6 @@ export function AccountCards({ access }: { access: AiAccess }): React.JSX.Elemen
         ))}
       </div>
 
-      {authorized < rows.length && (
-        <p className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-slate-600">
-          <KeyRound className="h-3 w-3" />
-          Пароли подтягиваются из браузера при запуске — те, что без доступа, там не нашлись.
-        </p>
-      )}
     </section>
   )
 }

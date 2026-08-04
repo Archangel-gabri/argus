@@ -267,6 +267,14 @@ export function seedAiAccess(): SeedResult {
       if (retire.has(a.label.trim().toLowerCase())) {
         vault.deleteAiAccess(a.id)
         result.retired++
+        continue
+      }
+      // Выбывший доступ мог успеть стать КАНАЛОМ другой записи — тогда удаление по названию его
+      // не достаёт, и он продолжает висеть внутри чужого аккаунта.
+      const kept = a.channels.filter((c) => !retire.has(c.label.trim().toLowerCase()))
+      if (kept.length !== a.channels.length) {
+        vault.updateAiAccess(a.id, { provider: a.provider, channels: kept })
+        result.retired++
       }
     }
   }
