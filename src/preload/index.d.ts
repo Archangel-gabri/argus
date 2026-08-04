@@ -17,6 +17,8 @@ import type {
   AiCheck,
   AiPrice,
   AiQuotaSlice,
+  FinanceAccount,
+  FinanceAccountInput,
   AiUsageSummary,
   PowerResult,
   PowerDiag,
@@ -137,6 +139,12 @@ export interface ArgusApi {
       id: string,
       opts?: { force?: boolean }
     ) => Promise<{ ok: boolean; error?: string; canForce?: boolean }>
+  }
+  accounts: {
+    list: () => Promise<FinanceAccount[]>
+    create: (input: FinanceAccountInput) => Promise<FinanceAccount>
+    update: (id: string, input: FinanceAccountInput) => Promise<FinanceAccount>
+    remove: (id: string) => Promise<{ ok: boolean }>
   }
   wallets: {
     list: () => Promise<Wallet[]>

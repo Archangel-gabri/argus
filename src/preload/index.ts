@@ -85,6 +85,12 @@ const api = {
     update: (id: string, input: unknown) => ipcRenderer.invoke('subs:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('subs:delete', id)
   },
+  accounts: {
+    list: () => ipcRenderer.invoke('accounts:list'),
+    create: (input: unknown) => ipcRenderer.invoke('accounts:create', input),
+    update: (id: string, input: unknown) => ipcRenderer.invoke('accounts:update', id, input),
+    remove: (id: string) => ipcRenderer.invoke('accounts:delete', id)
+  },
   wallets: {
     list: () => ipcRenderer.invoke('wallets:list'),
     create: (input: unknown) => ipcRenderer.invoke('wallets:create', input),

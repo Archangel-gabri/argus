@@ -4,8 +4,12 @@ import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/P
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
 import { money } from '@/lib/format'
+import { toUsd } from '@/data/subscriptions'
 import { cn } from '@/lib/cn'
 import { MOCK_HOLDINGS, KIND_COLOR } from '@/data/finance'
+import { AccountList } from '@/components/finance/AccountList'
+import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
+import { useAccounts } from '@/store/accounts'
 import { useWallets } from '@/store/wallets'
 import type { Wallet, WalletInput } from '@/types'
 
@@ -77,6 +81,9 @@ function WalletForm({
 }
 
 export function BanksView(): React.JSX.Element {
+  const accounts = useAccounts((s) => s.accounts)
+  const accountsLoaded = useAccounts((s) => s.loaded)
+  const loadAccounts = useAccounts((s) => s.load)
   const wallets = useWallets((s) => s.wallets)
   const balances = useWallets((s) => s.balances)
   const balanceLoading = useWallets((s) => s.balanceLoading)
@@ -95,17 +102,28 @@ export function BanksView(): React.JSX.Element {
   useEffect(() => {
     if (!loaded) load()
   }, [loaded, load])
+  useEffect(() => {
+    if (!accountsLoaded) void loadAccounts()
+  }, [accountsLoaded, loadAccounts])
 
   // Демо остаётся только у browser-preview без Electron bridge. В desktop ни одна
   // зашитая сумма не участвует ни в итогах, ни в строках холдингов.
+  const accountSums = accountTotals(accounts, Date.now())
   const preview = typeof window !== 'undefined' && window.api ? [] : MOCK_HOLDINGS
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
   const previewUsd = preview.reduce((s, h) => s + h.usd, 0)
-  const net = liveUsd + previewUsd
+  const net = liveUsd + previewUsd + accountSums.usd
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   const byKind = [
     { label: 'crypto', value: liveUsd },
+    ...Object.entries(
+      accounts.reduce<Record<string, number>>((a, x) => {
+        if (x.balance == null) return a
+        a[KIND_LABEL[x.kind]] = (a[KIND_LABEL[x.kind]] ?? 0) + toUsd(x.balance, x.currency)
+        return a
+      }, {})
+    ).map(([label, value]) => ({ label, value })),
     ...Object.entries(
       preview.reduce<Record<string, number>>((a, h) => {
         a[h.kind] = (a[h.kind] ?? 0) + h.usd
@@ -121,7 +139,7 @@ export function BanksView(): React.JSX.Element {
     <Page>
       <PageHeader
         title="Финансы"
-        subtitle="публичные on-chain кошельки · брокередж и кэш пока не подключены"
+        subtitle="банки и биржи — остаток вписывается вручную · криптокошельки читаются из сети"
         action={
           <div className="flex items-center gap-2">
             <button
@@ -168,12 +186,22 @@ export function BanksView(): React.JSX.Element {
       )}
 
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="Подтверждено" value={money(net)} hint="только известные USD-значения" />
-        <StatTile label="Кошельки" value={String(wallets.length)} hint="адреса из зашифрованного vault" />
+        {/* «Известно», а не «Всего»: счёт без внесённого остатка в сумму не входит, и цифра
+            описывает не состояние владельца, а ту его часть, которую мы правда знаем. */}
         <StatTile
-          label={preview.length ? 'Демо' : 'Недоступно'}
-          value={preview.length ? money(previewUsd) : String(unavailable)}
-          hint={preview.length ? 'только browser preview' : 'RPC/цена не подтверждены'}
+          label="Известно"
+          value={money(net)}
+          hint={`по ${accountSums.known + wallets.length} источникам из ${accounts.length + wallets.length}`}
+        />
+        <StatTile
+          label="Не внесено"
+          value={String(accountSums.unknown + unavailable)}
+          hint="счета без остатка и кошельки без ответа RPC"
+        />
+        <StatTile
+          label="Устарело"
+          value={String(accountSums.stale)}
+          hint="остатки, вписанные больше месяца назад"
         />
       </div>
 
@@ -181,7 +209,13 @@ export function BanksView(): React.JSX.Element {
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold text-white">Холдинги</h2>
+          {accounts.length > 0 && (
+            <div className="mb-5">
+              <h2 className="mb-3 text-sm font-semibold text-white">Счета</h2>
+              <AccountList accounts={accounts} />
+            </div>
+          )}
+          <h2 className="mb-3 text-sm font-semibold text-white">Криптокошельки</h2>
           <div className="divide-y divide-border">
             {wallets.map((w) => {
               const bal = balances[w.id]

@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from 'node:fs'
 import Database from 'better-sqlite3-multiple-ciphers'
+import { CURRENCY_CODES } from './types'
 import { deriveKeyHex } from './crypto'
 import { prepareVaultInitialization, type VaultMeta } from './vault-init'
 import { addColumn } from './migrate-guard'
@@ -47,6 +48,8 @@ import type {
   AiPayment,
   AiPrice,
   AiQuotaSlice,
+  FinanceAccount,
+  FinanceAccountInput,
   AiStatus,
   AiUsageBlock,
   AiUsageDay
@@ -224,6 +227,23 @@ function migrate(d: Database.Database): void {
     const mark = d.prepare('UPDATE subscriptions SET manual_renewal = 1 WHERE id = ?')
     for (const row of legacy) if (legacyManualRenewal(row.notes)) mark.run(row.id)
   }
+  // Счета, на которых лежат деньги: банк, брокер, биржа, наличные. Отдельно от `wallets`:
+  // у блокчейн-адреса баланс спрашивается у сети и ключа не требует, а здесь остаток либо
+  // вписан руками, либо получен по ключу — и эта разница должна быть видна в самой записи.
+  d.exec(`CREATE TABLE IF NOT EXISTS finance_accounts (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'bank',
+    name TEXT NOT NULL,
+    institution TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT 'RUB',
+    source TEXT NOT NULL DEFAULT 'manual',
+    balance REAL,
+    balance_at INTEGER,
+    key_ref TEXT,
+    notes TEXT,
+    created_at INTEGER NOT NULL
+  )`)
+
   d.exec(`CREATE TABLE IF NOT EXISTS wallets (
     id TEXT PRIMARY KEY,
     chain TEXT NOT NULL,
@@ -2119,6 +2139,80 @@ export function replaceQuotas(accessId: string, slices: AiQuotaSlice[]): void {
     }
   })
   write(slices)
+}
+
+// --- Счета (банки, брокеры, биржи, наличные) ---------------------------------------------------
+
+export function listFinanceAccounts(): FinanceAccount[] {
+  return requireDb()
+    .prepare(
+      `SELECT id, kind, name, institution, currency, source, balance,
+              balance_at as balanceAt, key_ref as keyRef, notes, created_at as createdAt
+         FROM finance_accounts ORDER BY created_at`
+    )
+    .all() as FinanceAccount[]
+}
+
+function financeRow(input: FinanceAccountInput, current?: FinanceAccount): Omit<FinanceAccount, 'id' | 'createdAt'> {
+  const name = String(input.name ?? '').trim()
+  if (!name) throw new Error('Название счёта не может быть пустым')
+  const balance = input.balance === undefined ? (current?.balance ?? null) : input.balance
+  if (balance !== null && (!Number.isFinite(balance) || balance < 0))
+    throw new Error('Остаток должен быть конечным неотрицательным числом')
+  const currency = (input.currency ?? current?.currency ?? 'RUB') as Currency
+  if (!(CURRENCY_CODES as readonly string[]).includes(currency)) throw new Error('Валюта не поддерживается')
+
+  return {
+    kind: input.kind ?? current?.kind ?? 'bank',
+    name,
+    institution: input.institution ?? current?.institution ?? '',
+    currency,
+    source: input.source ?? current?.source ?? 'manual',
+    balance,
+    // Момент, на который остаток верен. Меняется вместе с остатком, а не с любой правкой записи:
+    // переименовать счёт — не значит пересчитать деньги.
+    balanceAt:
+      input.balanceAt !== undefined
+        ? input.balanceAt
+        : balance !== (current?.balance ?? null)
+          ? Date.now()
+          : (current?.balanceAt ?? null),
+    keyRef: input.keyRef ?? current?.keyRef ?? null,
+    notes: input.notes ?? current?.notes ?? null
+  }
+}
+
+export function createFinanceAccount(input: FinanceAccountInput): FinanceAccount {
+  const row = financeRow(input)
+  const account: FinanceAccount = { id: randomUUID(), createdAt: Date.now(), ...row }
+  requireDb()
+    .prepare(
+      `INSERT INTO finance_accounts (id, kind, name, institution, currency, source, balance,
+                                     balance_at, key_ref, notes, created_at)
+       VALUES (@id, @kind, @name, @institution, @currency, @source, @balance, @balanceAt,
+               @keyRef, @notes, @createdAt)`
+    )
+    .run(account)
+  return account
+}
+
+export function updateFinanceAccount(id: string, input: FinanceAccountInput): FinanceAccount {
+  const current = listFinanceAccounts().find((a) => a.id === id)
+  if (!current) throw new Error('Счёт не найден')
+  const row = financeRow(input, current)
+  const account: FinanceAccount = { ...current, ...row }
+  requireDb()
+    .prepare(
+      `UPDATE finance_accounts SET kind=@kind, name=@name, institution=@institution,
+              currency=@currency, source=@source, balance=@balance, balance_at=@balanceAt,
+              key_ref=@keyRef, notes=@notes WHERE id=@id`
+    )
+    .run(account)
+  return account
+}
+
+export function deleteFinanceAccount(id: string): boolean {
+  return requireDb().prepare('DELETE FROM finance_accounts WHERE id = ?').run(id).changes > 0
 }
 
 // --- Вердикты проверки ключей ----------------------------------------------------------------

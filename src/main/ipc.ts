@@ -12,6 +12,7 @@ import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
 import { seedSubscriptions } from './subs-seed'
+import { seedFinanceAccounts } from './finance-seed'
 import { migrateToAccounts } from './ai-accounts-migrate'
 import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
@@ -28,7 +29,16 @@ import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
-import type { DeviceInput, VaultState, AiAccess, AiAccessInput, AiAccessModel, AiAccountEntry, PowerResult } from './types'
+import type {
+  DeviceInput,
+  VaultState,
+  AiAccess,
+  AiAccessInput,
+  AiAccessModel,
+  AiAccountEntry,
+  FinanceAccountInput,
+  PowerResult
+} from './types'
 import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
 import { revokePendingAccess } from './access-epoch'
@@ -84,6 +94,8 @@ function afterUnlock(): void {
     // Подписки: суммы и даты продления, сверенные по чекам. В отличие от инвентаря, засев их
     // ОБНОВЛЯЕТ — устаревшая сумма хуже отсутствующей, потому что выглядит достоверной.
     seedSubscriptions()
+    // Счета: банки и биржи владельца — тем же файловым засевом, что подписки.
+    seedFinanceAccounts()
     // Слияние способов доступа в аккаунты: «ChatGPT» и «Codex CLI» — это один аккаунт с двумя
     // каналами, а не две записи. Срабатывает один раз, дальше молчит.
     migrateToAccounts()
@@ -494,6 +506,20 @@ export function registerIpc(): void {
   })
 
   // Crypto wallets — addresses in the vault, balances from public keyless endpoints
+  // Счета: банки, брокеры, биржи, наличные. Остаток у них либо вписан руками, либо получен
+  // по ключу — обе возможности живут в одной записи, поэтому и обработчик один.
+  ipcMain.handle('accounts:list', () => (vault.isUnlocked() ? vault.listFinanceAccounts() : []))
+  ipcMain.handle('accounts:create', (_e, input: unknown) =>
+    vault.createFinanceAccount(input as FinanceAccountInput)
+  )
+  ipcMain.handle('accounts:update', (_e, id: unknown, input: unknown) =>
+    vault.updateFinanceAccount(asString(id), input as FinanceAccountInput)
+  )
+  ipcMain.handle('accounts:delete', (_e, id: unknown) => {
+    vault.deleteFinanceAccount(asString(id))
+    return { ok: true }
+  })
+
   ipcMain.handle('wallets:list', () => (vault.isUnlocked() ? vault.listWallets() : []))
   ipcMain.handle('wallets:create', (_e, input: unknown) => vault.createWallet(parseWalletInput(input)))
   ipcMain.handle('wallets:update', (_e, id: unknown, input: unknown) =>

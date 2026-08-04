@@ -185,6 +185,53 @@ export interface SubscriptionInput {
   manualRenewal?: boolean
 }
 
+/**
+ * Счёт, на котором лежат деньги: банк, брокер, биржа, наличные.
+ *
+ * Ключевое поле — `source`, то есть откуда взялся баланс. У российских банков публичного API для
+ * личного счёта не существует вовсе, поэтому их остаток можно только вписать руками; у бирж и
+ * брокера есть ключ только на чтение; у блокчейн-адреса баланс спрашивается у сети и ключа не
+ * требует. Это три разные степени достоверности, и складывать их в одну цифру, не показав
+ * разницы, значит выдавать позавчерашнюю запись за остаток на сейчас.
+ *
+ * Блокчейн-адреса живут отдельной таблицей `wallets` — у них своя механика опроса.
+ */
+export type FinanceKind = 'bank' | 'broker' | 'exchange' | 'cash' | 'ewallet'
+
+/** Как узнаётся остаток. `manual` — вписан человеком и стареет; `api` — спрошен у сервиса. */
+export type BalanceSource = 'manual' | 'api'
+
+export interface FinanceAccount {
+  id: string
+  kind: FinanceKind
+  /** Как называет его владелец: «Сбербанк», «Т-Банк», «Bybit». */
+  name: string
+  /** Организация, если отличается от названия. */
+  institution: string
+  currency: Currency
+  source: BalanceSource
+  /** Остаток. null — неизвестен, и это не ноль. */
+  balance: number | null
+  /** Когда этот остаток был верен (мс). Для вписанного руками — момент ввода. */
+  balanceAt: number | null
+  /** Указатель на ключ: имя переменной в env или место хранения. Значения здесь никогда нет. */
+  keyRef: string | null
+  notes: string | null
+  createdAt: number
+}
+
+export interface FinanceAccountInput {
+  kind?: FinanceKind
+  name: string
+  institution?: string
+  currency?: Currency
+  source?: BalanceSource
+  balance?: number | null
+  balanceAt?: number | null
+  keyRef?: string | null
+  notes?: string | null
+}
+
 export interface Wallet {
   id: string
   chain: string
