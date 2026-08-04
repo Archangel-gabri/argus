@@ -91,7 +91,9 @@ const api = {
     update: (id: string, input: unknown) => ipcRenderer.invoke('accounts:update', id, input),
     remove: (id: string) => ipcRenderer.invoke('accounts:delete', id),
     setCreds: (id: string, creds: unknown) => ipcRenderer.invoke('accounts:setCreds', id, creds),
-    refresh: () => ipcRenderer.invoke('accounts:refresh')
+    refresh: () => ipcRenderer.invoke('accounts:refresh'),
+    bankLogin: (bank: string) => ipcRenderer.invoke('accounts:bankLogin', bank),
+    bankSession: (bank: string) => ipcRenderer.invoke('accounts:bankSession', bank)
   },
   wallets: {
     list: () => ipcRenderer.invoke('wallets:list'),

@@ -21,6 +21,7 @@ import { fetchQuota } from './ai-quota'
 import { exchangeOf, fetchExchangeBalance } from './exchanges'
 import { fetchTinvestPortfolio } from './tinvest'
 import { fetchTbankBalance } from './tbank'
+import { BANKS, bankCookies, bankRequest, hasBankSession, openBankLogin, type BankId } from './bank-session'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -211,7 +212,11 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
     // ТОЛЬКО счета, у которых это прямо разрешено (`source: 'api'`): доступ к сессии банка не
     // должен включаться сам собой оттого, что счёт назван «Т-Банк».
     if (account.kind === 'bank' && account.source === 'api' && /т-банк|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)) {
-      const cabinet = await fetchTbankBalance()
+      const cabinet = await fetchTbankBalance({
+        hasSession: () => hasBankSession('tbank'),
+        sessionId: async () => (await bankCookies('tbank')).psid ?? null,
+        request: (url, referer) => bankRequest('tbank', url, referer)
+      })
       const value = cabinet.totals[account.currency]
       if (cabinet.status !== 'ok' || value === undefined) {
         failed++
@@ -589,6 +594,20 @@ export function registerIpc(): void {
     vault.setAccountCreds(asString(id), c)
     return { ok: true }
   })
+  // Вход в банк — окно внутри Argus со своим постоянным разделом сессии. Внешний браузер не
+  // нужен: приложение само себе браузер, и куки не покидают его.
+  ipcMain.handle('accounts:bankLogin', (_e, bank: unknown) => {
+    const id = asString(bank) as BankId
+    if (!BANKS[id]) return { ok: false, error: 'Неизвестный банк' }
+    openBankLogin(id)
+    return { ok: true }
+  })
+  ipcMain.handle('accounts:bankSession', async (_e, bank: unknown) => {
+    const id = asString(bank) as BankId
+    if (!BANKS[id]) return { logged: false }
+    return { logged: await hasBankSession(id) }
+  })
+
   ipcMain.handle('accounts:refresh', async () => {
     if (!vault.isUnlocked()) return { updated: 0, failed: 0 }
     return refreshExchangeBalances()

@@ -126,8 +126,6 @@ export interface ArgusApi {
     list: () => Promise<Snippet[]>
     create: (name: string, command: string) => Promise<Snippet>
     remove: (id: string) => Promise<{ ok: boolean }>
-    setCreds: (id: string, creds: { apiKey?: string; secret?: string; passphrase?: string }) => Promise<{ ok: boolean; error?: string }>
-    refresh: () => Promise<{ updated: number; failed: number }>
   }
   discovery: {
     tailscale: () => Promise<ParsedHost[]>
@@ -152,6 +150,8 @@ export interface ArgusApi {
       creds: { apiKey?: string; secret?: string; passphrase?: string }
     ) => Promise<{ ok: boolean; error?: string }>
     refresh: () => Promise<{ updated: number; failed: number }>
+    bankLogin: (bank: string) => Promise<{ ok: boolean; error?: string }>
+    bankSession: (bank: string) => Promise<{ logged: boolean }>
   }
   wallets: {
     list: () => Promise<Wallet[]>

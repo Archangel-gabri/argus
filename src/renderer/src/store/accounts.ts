@@ -14,6 +14,7 @@ interface AccountsStore {
   remove: (id: string) => Promise<boolean>
   setCreds: (id: string, creds: { apiKey: string; secret: string; passphrase?: string }) => Promise<boolean>
   refresh: () => Promise<void>
+  bankLogin: (bank: string) => Promise<void>
 }
 
 const messageOf = (error: unknown): string =>
@@ -82,6 +83,15 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
     } catch (error) {
       set({ error: messageOf(error) })
       return false
+    }
+  },
+
+  bankLogin: async (bank) => {
+    if (!api) return
+    try {
+      await api.accounts.bankLogin(bank)
+    } catch (error) {
+      set({ error: messageOf(error) })
     }
   },
 

@@ -62,11 +62,54 @@ describe('разбор ответа кабинета', () => {
 })
 
 describe('поход в кабинет', () => {
-  it('без куки сессии запрос не делается вовсе', async () => {
-    // Иначе на экране будет «кабинет отверг», хотя честный ответ — «в браузере не залогинены».
-    const r = await fetchTbankBalance(() => ({}), NOW)
+  const answerOf = (body: unknown) => async () => ({ ok: true, status: 200, body: JSON.stringify(body) })
+  const alive = { hasSession: async () => true, sessionId: async () => 'session-id' }
+
+  it('без входа запрос не делается вовсе', async () => {
+    // Иначе на экране будет «кабинет отверг», хотя честный ответ — «войдите».
+    const r = await fetchTbankBalance({ hasSession: async () => false, sessionId: async () => null, request: answerOf({}) }, NOW)
     expect(r.status).toBe('no-session')
-    expect(r.error).toMatch(/не залогинены|войдите/i)
+    expect(r.error).toMatch(/войдите/i)
     expect(r.fetchedAt).toBe(NOW)
+  })
+
+  it('вход был, но куки сессии нет — тоже «войдите», а не ошибка', async () => {
+    const r = await fetchTbankBalance({ hasSession: async () => true, sessionId: async () => null, request: answerOf({}) }, NOW)
+    expect(r.status).toBe('no-session')
+  })
+
+  it('обрыв связи — отдельное состояние, не мёртвая сессия', async () => {
+    // Иначе владельца позовут входить заново там, где входить некуда: сети нет.
+    const r = await fetchTbankBalance(
+      { ...alive, request: async () => ({ ok: false, status: 0, body: '', offline: true }) },
+      NOW
+    )
+    expect(r.status).toBe('offline')
+  })
+
+  it('живая сессия даёт остатки', async () => {
+    const r = await fetchTbankBalance(
+      { ...alive, request: answerOf(answer) },
+      NOW
+    )
+    expect(r.status).toBe('ok')
+    expect(r.totals).toEqual({ RUB: 142350.75, USD: 120.5 })
+  })
+
+  it('истёкшая сессия видна по телу ответа, а не по коду HTTP', async () => {
+    const r = await fetchTbankBalance(
+      { ...alive, request: answerOf({ resultCode: 'INSUFFICIENT_PRIVILEGES' }) },
+      NOW
+    )
+    expect(r.status).toBe('no-session')
+  })
+
+  it('нечитаемый ответ не превращается в нулевой баланс', async () => {
+    const r = await fetchTbankBalance(
+      { ...alive, request: async () => ({ ok: true, status: 200, body: 'не json' }) },
+      NOW
+    )
+    expect(r.status).toBe('error')
+    expect(r.totals).toEqual({})
   })
 })

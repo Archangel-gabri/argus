@@ -5,28 +5,25 @@
 // видны вовсе. Единственный оставшийся путь — тот же, что с claude.ai и cursor.com: читать
 // собственную сессию владельца из его браузера.
 //
-// ── Чем это отличается от квоты Claude ─────────────────────────────────────────────────────────
+// ── Границы, раз это банк ──────────────────────────────────────────────────────────────────────
 //
-// Тем, что это банк, и об этом надо сказать прямо.
-//
-// 1. Отправляются ВСЕ куки домена, а не одна кука сессии: кабинет отвергает запрос, в котором
-//    есть только идентификатор сессии (`INSUFFICIENT_PRIVILEGES`) — проверено. Это ровно тот
-//    набор, который браузер и так шлёт этому хосту, но набор большой, и делать вид, что мы взяли
-//    «только нужное», неправильно.
-// 2. Ничего не сохраняется: куки читаются в момент запроса, живут в памяти main и туда же
-//    исчезают. В хранилище Argus не попадает ни одна из них.
-// 3. Запрос ТОЛЬКО читающий. Ни один эндпоинт кабинета, кроме списка счетов, отсюда не
-//    вызывается, и никогда не должен: доступ к сессии банка — это доступ к деньгам, и
+// 1. Вход выполняется ВНУТРИ Argus, в собственном постоянном разделе сессии (`bank-session.ts`).
+//    Чужой браузер не нужен: раньше куки читались из Brave, и приложение было несамостоятельным.
+// 2. Запрос ТОЛЬКО читающий, и ровно один — список счетов. Ни один другой эндпоинт кабинета
+//    отсюда не вызывается и не должен: доступ к сессии банка это доступ к деньгам, и
 //    единственная защита здесь — узость того, что мы себе позволяем.
-// 4. Сессия кабинета живёт минуты. Поэтому отказ — это норма, а не поломка, и он обязан
-//    приводить к «остаток устарел», а не к нулю и не к молчаливому сохранению старой цифры как
-//    свежей.
+// 3. Сессия кабинета живёт минуты, после чего молча не восстанавливается (проверено). Поэтому
+//    отказ — норма, а не поломка, и он обязан приводить к «нужен вход», а не к нулю и не к
+//    молчаливому сохранению старой цифры как свежей.
+// 4. Отсутствие сети — третье состояние, отдельное от первых двух: при обрыве нельзя ни трогать
+//    прошлую цифру, ни звать владельца входить заново.
 
-import { cookieHeader, readAllCookies } from './browser-cookies'
+// Здесь НЕТ импорта Electron, и это намеренно: как только модуль тянет `electron`, его нельзя
+// проверить обычным тестом — вся логика различения состояний уезжает в непроверяемую часть.
+// Транспорт передаётся снаружи (`ipc.ts` даёт настоящий, тест — поддельный).
 
 const HOST = 'www.tbank.ru'
 const PATH = '/api/common/v1/accounts_light_ib'
-const TIMEOUT_MS = 20_000
 
 /** Параметры, которыми представляется сам кабинет. Без них запрос отвергается. */
 const APP_PARAMS = {
@@ -45,7 +42,8 @@ export interface TbankAccount {
 }
 
 export interface TbankBalance {
-  status: 'ok' | 'no-session' | 'error'
+  /** `offline` — сети нет; это не про сессию и не повод что-то менять на экране. */
+  status: 'ok' | 'no-session' | 'offline' | 'error'
   accounts: TbankAccount[]
   /** Суммы по валютам: разные валюты не сводятся по выдуманному курсу. */
   totals: Record<string, number>
@@ -109,48 +107,51 @@ export function parseAccounts(data: unknown, now: number = Date.now()): TbankBal
 }
 
 /**
- * Спросить остатки у кабинета.
+ * Спросить остатки у кабинета из собственной сессии Argus.
  *
- * `cookies` подставляется в тестах: настоящий поход в базу браузера там не нужен и невозможен.
+ * Зависимости подставляются в тестах: настоящий поход в сессию Electron там невозможен.
  */
-export async function fetchTbankBalance(
-  cookies: (domain: string) => Record<string, string> = readAllCookies,
-  now: number = Date.now()
-): Promise<TbankBalance> {
-  const jar = cookies('tbank.ru')
-  // Без куки сессии запрос бессмыслен: ответ будет отказом, а на экране появится «кабинет
-  // отверг», хотя честный ответ — «в браузере не залогинены».
-  if (!jar.psid) {
+export interface TbankTransport {
+  /** Был ли вход в кабинет вообще. */
+  hasSession: () => Promise<boolean>
+  /** Идентификатор сессии из куки `psid`. */
+  sessionId: () => Promise<string | null>
+  request: (url: string, referer: string) => Promise<{ ok: boolean; status: number; body: string; offline?: boolean }>
+}
+
+export async function fetchTbankBalance(deps: TbankTransport, now: number = Date.now()): Promise<TbankBalance> {
+  const { hasSession, sessionId, request } = deps
+
+  if (!(await hasSession())) {
     return {
       status: 'no-session',
       accounts: [],
       totals: {},
-      error: 'В браузере нет сессии т-банк.ру — войдите в кабинет',
+      error: 'Входа в кабинет ещё не было — войдите в окне Argus',
       fetchedAt: now
     }
   }
 
-  const query = new URLSearchParams({ ...APP_PARAMS, sessionid: jar.psid }).toString()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const psid = await sessionId()
+  if (!psid) {
+    return { status: 'no-session', accounts: [], totals: {}, error: 'Сессия кабинета не найдена — войдите заново', fetchedAt: now }
+  }
+
+  const query = new URLSearchParams({ ...APP_PARAMS, sessionid: psid }).toString()
+  const res = await request(`https://${HOST}${PATH}?${query}`, `https://${HOST}/mybank/`)
+
+  if (res.offline) {
+    // Обрыв связи — не отказ банка. Прошлая цифра остаётся как есть, звать владельца входить
+    // заново незачем: входить некуда.
+    return { status: 'offline', accounts: [], totals: {}, error: 'Нет связи с кабинетом', fetchedAt: now }
+  }
+  if (!res.ok) {
+    return { status: 'error', accounts: [], totals: {}, error: `Кабинет ответил HTTP ${res.status}`, fetchedAt: now }
+  }
+
   try {
-    const r = await fetch(`https://${HOST}${PATH}?${query}`, {
-      headers: {
-        cookie: cookieHeader(jar),
-        referer: `https://${HOST}/mybank/`,
-        accept: 'application/json',
-        'user-agent':
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36'
-      },
-      signal: controller.signal
-    })
-    if (!r.ok) {
-      return { status: 'error', accounts: [], totals: {}, error: `Кабинет ответил HTTP ${r.status}`, fetchedAt: now }
-    }
-    return parseAccounts(await r.json(), now)
+    return parseAccounts(JSON.parse(res.body), now)
   } catch {
-    return { status: 'error', accounts: [], totals: {}, error: 'Кабинет не ответил', fetchedAt: now }
-  } finally {
-    clearTimeout(timer)
+    return { status: 'error', accounts: [], totals: {}, error: 'Ответ кабинета не разобран', fetchedAt: now }
   }
 }

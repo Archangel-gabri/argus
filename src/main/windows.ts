@@ -89,3 +89,45 @@ export function createScreenWindow(handle: string, title: string, size: { width:
     minHeight: 400
   })
 }
+
+/**
+ * Окно входа в банк.
+ *
+ * Принципиально отличается от окон приложения, и разница здесь — вопрос безопасности, а не стиля.
+ *
+ * 1. **Никакого preload.** Внутри загружается ЧУЖАЯ страница — сайт банка. Дать ей мост к
+ *    main-процессу значит отдать приложение целиком. Поэтому preload не подключается вовсе.
+ * 2. **Свой раздел сессии.** `persist:<банк>` — куки живут отдельно и от главного окна, и от
+ *    других банков, и переживают перезапуск: ради этого всё и затевалось.
+ * 3. **Навигация РАЗРЕШЕНА.** Окнам приложения она запрещена (SPA не должна уходить со своей
+ *    страницы), а банку без неё не войти: там переходы, редиректы и СМС-подтверждение.
+ * 4. **CSP приложения сюда не достаёт** — она висит на `session.defaultSession`, а это другая
+ *    сессия. И правильно: наша политика сломала бы сайт банка.
+ */
+export function createBankWindow(partition: string, url: string, title: string): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1100,
+    height: 820,
+    minWidth: 720,
+    minHeight: 560,
+    title,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#ffffff',
+    icon: ICON,
+    webPreferences: {
+      ...HARDENED,
+      partition
+    }
+  })
+
+  win.on('ready-to-show', () => win.show())
+  // Всплывающие окна банка (подтверждения, помощь) открываются в браузере ОС, а не внутри:
+  // новое окно унаследовало бы этот же раздел, и уследить за ним было бы нельзя.
+  win.webContents.setWindowOpenHandler((details) => {
+    if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+  void win.loadURL(url)
+  return win
+}

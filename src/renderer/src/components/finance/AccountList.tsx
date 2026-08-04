@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, Check, KeyRound, Landmark, LineChart, Pencil, Trash2, Wallet, X } from 'lucide-react'
+import { Building2, Check, KeyRound, Landmark, LineChart, LogIn, Pencil, Trash2, Wallet, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
 import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
@@ -25,12 +25,21 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const update = useAccounts((s) => s.update)
   const remove = useAccounts((s) => s.remove)
   const setCreds = useAccounts((s) => s.setCreds)
+  const bankLogin = useAccounts((s) => s.bankLogin)
   const [editing, setEditing] = useState(false)
   const [keys, setKeys] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
 
   const Icon = ICON[account.kind] ?? Landmark
+  // Банк, чей остаток читается из сессии кабинета: у него вместо ключа — вход.
+  const bank = account.kind === 'bank' && account.source === 'api'
+    ? /т-банк|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)
+      ? 'tbank'
+      : /сбер|sber/i.test(`${account.institution} ${account.name}`)
+        ? 'sber'
+        : null
+    : null
   // Возраст показывается и у автоматических: если опрос перестал получаться, цифра стареет
   // молча, и «обновляется само» превращается в неправду.
   const age = balanceAge(account.balanceAt, now)
@@ -136,7 +145,11 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
                   ? `обновлено ${age.days} дн. назад`
                   : `вписано ${age.days} дн. назад`
                 : account.source === 'api'
-                  ? 'обновляется само'
+                  ? // У банка сессия живёт минуты, и обещать «обновляется само» нельзя: цифра
+                    // свежа ровно пока владелец недавно заходил.
+                    bank
+                    ? 'по сессии кабинета'
+                    : 'обновляется само'
                   : ''}
             </div>
           </button>
@@ -144,6 +157,16 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
       </div>
 
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+        {bank && (
+          <button
+            onClick={() => void bankLogin(bank)}
+            className="rounded p-1 text-slate-500 hover:text-accent"
+            aria-label={`Войти в ${account.name}`}
+            title="Войти в кабинет банка — окно откроется внутри Argus"
+          >
+            <LogIn className="h-3.5 w-3.5" />
+          </button>
+        )}
         {(account.kind === 'exchange' || account.kind === 'broker') && (
           <button
             onClick={() => setKeys((v) => !v)}
