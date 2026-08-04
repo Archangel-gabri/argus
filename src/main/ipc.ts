@@ -12,6 +12,7 @@ import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
 import { readLogins, type BrowserLogin } from './browser-passwords'
+import { fetchModels } from './ai-models'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -491,6 +492,35 @@ export function registerIpc(): void {
   ipcMain.handle('ai:models', (_e, accessId: unknown) =>
     vault.isUnlocked() ? vault.listAccessModels(asString(accessId)) : []
   )
+
+  // Спросить у провайдера, какие модели доступны ЭТОМУ ключу. Каталог цен знает стоимость, но
+  // не знает перечня: у роутера свой набор, а новая модель появляется раньше любого каталога.
+  ipcMain.handle('ai:fetchModels', async (_e, accessId: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, added: 0, error: 'Хранилище заперто' }
+    const id = asString(accessId)
+    const access = vault.listAiAccess().find((a) => a.id === id)
+    if (!access) return { ok: false, added: 0, error: 'Доступ не найден' }
+    const r = await fetchModels(access, vault.getAiKey(id))
+    if (!r.ok) return { ok: false, added: 0, error: r.error }
+    const applied = vault.replaceFetchedModels(id, r.models)
+    return { ok: true, total: r.models.length, ...applied }
+  })
+
+  // То же по всем доступам — чтобы список моделей был свежим целиком, а не там, куда заглянули.
+  ipcMain.handle('ai:fetchModelsAll', async () => {
+    if (!vault.isUnlocked()) return { ok: false, updated: 0, total: 0 }
+    let updated = 0
+    let total = 0
+    for (const access of vault.listAiAccess()) {
+      if (access.status === 'planned') continue
+      const r = await fetchModels(access, vault.getAiKey(access.id))
+      if (!r.ok) continue
+      vault.replaceFetchedModels(access.id, r.models)
+      updated++
+      total += r.models.length
+    }
+    return { ok: true, updated, total }
+  })
   ipcMain.handle('ai:setModel', (_e, model: unknown) => {
     vault.setAccessModel(model as AiAccessModel)
     return { ok: true }

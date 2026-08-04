@@ -434,6 +434,12 @@ export interface AiPrice {
 export interface AiAccessModel {
   accessId: string
   model: string
+  /** Откуда взялась: спросили у провайдера или завёл владелец. */
+  source?: 'api' | 'manual'
+  /** Когда провайдер её подтвердил. */
+  fetchedAt?: number | null
+  /** Размер контекста, если провайдер прислал. */
+  contextTokens?: number | null
   /** Владелец отметил, что реально этим пользуется. */
   favorite: boolean
   /** Наценка реселлера/роутера в процентах поверх каталожной цены. */

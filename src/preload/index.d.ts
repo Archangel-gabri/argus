@@ -180,6 +180,8 @@ export interface ArgusApi {
     priceCount: () => Promise<number>
     refreshPrices: (accessId?: string) => Promise<{ ok: boolean; count: number; error?: string }>
     models: (accessId: string) => Promise<AiAccessModel[]>
+    fetchModels: (accessId: string) => Promise<{ ok: boolean; total?: number; added: number; removed?: number; error?: string }>
+    fetchModelsAll: () => Promise<{ ok: boolean; updated: number; total: number }>
     setModel: (model: AiAccessModel) => Promise<{ ok: boolean }>
     deleteModel: (accessId: string, model: string) => Promise<{ ok: boolean }>
     usage: (since?: string) => Promise<AiUsageSummary>

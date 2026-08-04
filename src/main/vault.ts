@@ -308,6 +308,11 @@ function migrate(d: Database.Database): void {
     notes TEXT,
     PRIMARY KEY (access_id, model)
   )`)
+  // Откуда модель в списке: спросили у провайдера или добавил владелец. Без этого нельзя
+  // отличить исчезнувшую у провайдера модель от заведённой вручную и убрать первую.
+  addColumn(exec, `ALTER TABLE ai_access_models ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'`)
+  addColumn(exec, 'ALTER TABLE ai_access_models ADD COLUMN fetched_at INTEGER')
+  addColumn(exec, 'ALTER TABLE ai_access_models ADD COLUMN context_tokens INTEGER')
 
   // Агрегат расхода: дата × источник × модель. Сырые логи не копируем — они и так лежат на диске,
   // а их дублирование в зашифрованной базе только раздувало бы её.
@@ -1753,8 +1758,59 @@ export function listAccessModels(accessId: string): AiAccessModel[] {
     markupPct: (r.markup_pct as number) ?? null,
     priceInput: (r.price_input as number) ?? null,
     priceOutput: (r.price_output as number) ?? null,
-    notes: (r.notes as string) ?? null
+    notes: (r.notes as string) ?? null,
+    source: ((r.source as string) ?? 'manual') as AiAccessModel['source'],
+    fetchedAt: (r.fetched_at as number) ?? null,
+    contextTokens: (r.context_tokens as number) ?? null
   }))
+}
+
+/**
+ * Заменить список моделей, полученных от провайдера.
+ *
+ * Ручные записи и отметки «пользуюсь» переживают обновление: провайдер знает про свой перечень,
+ * но не про то, что владелец с ним делает. Модели, исчезнувшие из ответа, удаляются — иначе
+ * список копил бы отключённые версии годами.
+ */
+export function replaceFetchedModels(
+  accessId: string,
+  models: Array<{ id: string; contextTokens?: number | null }>
+): { added: number; removed: number } {
+  const d = requireDb()
+  const before = listAccessModels(accessId)
+  const favorites = new Map(before.map((m) => [m.model, m]))
+  const incoming = new Set(models.map((m) => m.id))
+
+  const run = d.transaction(() => {
+    const stale = before.filter((m) => m.source === 'api' && !incoming.has(m.model) && !m.favorite)
+    const drop = d.prepare('DELETE FROM ai_access_models WHERE access_id = ? AND model = ?')
+    for (const m of stale) drop.run(accessId, m.model)
+
+    const upsert = d.prepare(
+      `INSERT INTO ai_access_models (access_id, model, favorite, markup_pct, price_input, price_output,
+         notes, source, fetched_at, context_tokens)
+       VALUES (@accessId, @model, @favorite, @markupPct, @priceInput, @priceOutput, @notes, 'api', @fetchedAt, @contextTokens)
+       ON CONFLICT(access_id, model) DO UPDATE SET source='api', fetched_at=excluded.fetched_at,
+         context_tokens=COALESCE(excluded.context_tokens, context_tokens)`
+    )
+    const now = Date.now()
+    for (const m of models) {
+      const prev = favorites.get(m.id)
+      upsert.run({
+        accessId,
+        model: m.id,
+        favorite: prev?.favorite ? 1 : 0,
+        markupPct: prev?.markupPct ?? null,
+        priceInput: prev?.priceInput ?? null,
+        priceOutput: prev?.priceOutput ?? null,
+        notes: prev?.notes ?? null,
+        fetchedAt: now,
+        contextTokens: m.contextTokens ?? null
+      })
+    }
+    return { added: models.filter((m) => !favorites.has(m.id)).length, removed: stale.length }
+  })
+  return run()
 }
 
 export function setAccessModel(m: AiAccessModel): void {

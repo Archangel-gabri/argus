@@ -33,6 +33,7 @@ interface AiStore {
   loadPrices: () => Promise<void>
   refreshPrices: (accessId?: string) => Promise<boolean>
   loadModels: (accessId: string) => Promise<void>
+  fetchModels: (accessId: string) => Promise<{ total: number; added: number; removed: number } | null>
   setModel: (model: AiAccessModel) => Promise<void>
   deleteModel: (accessId: string, model: string) => Promise<void>
   loadUsage: () => Promise<void>
@@ -230,6 +231,23 @@ export const useAi = create<AiStore>((set, get) => ({
       set((state) => ({ models: { ...state.models, [accessId]: models } }))
     } catch (error) {
       set({ error: messageOf(error) })
+    }
+  },
+
+  fetchModels: async (accessId) => {
+    if (!api) return null
+    set({ error: null })
+    try {
+      const r = await api.ai.fetchModels(accessId)
+      if (!r.ok) {
+        set({ error: r.error ?? 'Список моделей не обновлён' })
+        return null
+      }
+      await get().loadModels(accessId)
+      return { total: r.total ?? 0, added: r.added, removed: r.removed ?? 0 }
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return null
     }
   },
 

@@ -108,6 +108,8 @@ const api = {
     // Ключ для запроса берётся в main по идентификатору доступа — через мост он не проходит.
     refreshPrices: (accessId?: string) => ipcRenderer.invoke('ai:refreshPrices', accessId),
     models: (accessId: string) => ipcRenderer.invoke('ai:models', accessId),
+    fetchModels: (accessId: string) => ipcRenderer.invoke('ai:fetchModels', accessId),
+    fetchModelsAll: () => ipcRenderer.invoke('ai:fetchModelsAll'),
     setModel: (model: unknown) => ipcRenderer.invoke('ai:setModel', model),
     deleteModel: (accessId: string, model: string) => ipcRenderer.invoke('ai:deleteModel', accessId, model),
     usage: (since?: string) => ipcRenderer.invoke('ai:usage', since),
