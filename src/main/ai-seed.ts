@@ -59,6 +59,14 @@ interface SeedFile {
   /** Абсолютный путь к env-файлу с ключами (`~` раскрывается). */
   envFile?: string
   access: SeedAccess[]
+  /**
+   * Записи, которые надо УБРАТЬ из реестра (по названию).
+   *
+   * Просто удалить их из `access` мало: засев только добавляет и дополняет, поэтому однажды
+   * заведённая запись жила бы вечно. Список удаляемых делает выбывание явным — и не даёт
+   * снести случайно то, что владелец завёл руками: убирается только названное поимённо.
+   */
+  retire?: string[]
 }
 
 function expandHome(p: string): string {
@@ -106,6 +114,8 @@ export interface SeedResult {
   created: number
   /** Сколько уже заведённых записей дополнили данными из файла. */
   updated: number
+  /** Сколько записей убрали как выбывшие. */
+  retired: number
   subscriptions: number
   /** Записи, которым в файле обещан ключ, но взять его негде. */
   missingKeys: string[]
@@ -224,7 +234,7 @@ export function fillGaps(existing: AiAccess, item: SeedAccess): AiAccessInput | 
  * Вызывается при каждом открытии хранилища и обычно не делает ничего.
  */
 export function seedAiAccess(): SeedResult {
-  const result: SeedResult = { created: 0, updated: 0, subscriptions: 0, missingKeys: [] }
+  const result: SeedResult = { created: 0, updated: 0, retired: 0, subscriptions: 0, missingKeys: [] }
   if (!vault.isUnlocked()) return result
 
   const path = seedPath()
@@ -246,6 +256,18 @@ export function seedAiAccess(): SeedResult {
     } catch {
       // Нет доступа к env-файлу — доступы всё равно заводим, просто без ключей.
       env = {}
+    }
+  }
+
+  // Сначала выбывшие: их место в реестре ничем не оправдано, и держать их до конца засева
+  // значит показывать в списке то, чего у владельца нет.
+  if (Array.isArray(file.retire) && file.retire.length) {
+    const retire = new Set(file.retire.map((r) => r.trim().toLowerCase()))
+    for (const a of vault.listAiAccess()) {
+      if (retire.has(a.label.trim().toLowerCase())) {
+        vault.deleteAiAccess(a.id)
+        result.retired++
+      }
     }
   }
 

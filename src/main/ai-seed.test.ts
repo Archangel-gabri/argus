@@ -137,3 +137,16 @@ describe('проверенные факты из файла', () => {
     expect(fillGaps(saved({ plan: 'мой тариф' }), { provider: 'openai', plan: 'из файла' })).toBeNull()
   })
 })
+
+describe('выбывшие записи', () => {
+  it('убираются по имени, а прочие не трогаются', () => {
+    // Засев только добавляет и дополняет, поэтому однажды заведённая запись жила бы вечно.
+    // Удаление должно быть явным и поимённым — иначе можно снести заведённое руками.
+    const retire = new Set(['groq', 'cerebras'])
+    const registry = ['Claude Max 5x', 'Groq', 'Cerebras', 'Мой личный доступ']
+    const removed = registry.filter((label) => retire.has(label.trim().toLowerCase()))
+    const kept = registry.filter((label) => !retire.has(label.trim().toLowerCase()))
+    expect(removed).toEqual(['Groq', 'Cerebras'])
+    expect(kept).toEqual(['Claude Max 5x', 'Мой личный доступ'])
+  })
+})
