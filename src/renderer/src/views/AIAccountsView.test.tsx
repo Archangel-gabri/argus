@@ -212,19 +212,31 @@ describe('экран AI', () => {
     expect(within(panel).getByText(/сбросится через 2 ч/i)).toBeInTheDocument()
   })
 
-  it('без заданного потолка процент не выдумывается', async () => {
-    // Anthropic порогов не публикует. Вместо доли показываем абсолютный расход и предлагаем
-    // взять потолок из собственных наблюдений.
+  it('без заданного потолка доля считается от наблюдаемого максимума и помечается оценкой', async () => {
+    // Провайдеры порогов не публикуют, но история владельца показывает, сколько лимит точно
+    // позволял. Считать от неё можно — выдавать за настоящий лимит нельзя, поэтому «≈».
+    const now = Date.now()
+    const H = 3600_000
+    await mount({
+      access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
+      blocks: [
+        { source: 'claude-code', startTs: now - 30 * H, endTs: now - 25 * H, tokens: 1_000_000, costUsd: 20, requests: 90 },
+        { source: 'claude-code', startTs: now - H, endTs: now + 4 * H, tokens: 500_000, costUsd: 10, requests: 40 }
+      ]
+    })
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getByText('≈50%')).toBeInTheDocument()
+    expect(within(panel).getAllByText(/наблюдаемый максимум/).length).toBeGreaterThan(0)
+  })
+
+  it('без истории мерить не от чего — процента нет вовсе', async () => {
     const now = Date.now()
     await mount({
       access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
-      blocks: [{ source: 'claude-code', startTs: now - 3600_000, endTs: now + 4 * 3600_000, tokens: 570_000, costUsd: 12, requests: 40 }]
+      blocks: [{ source: 'claude-code', startTs: now - 3600_000, endTs: now + 4 * 3600_000, tokens: 0, costUsd: 0, requests: 0 }]
     })
     const panel = document.querySelector('aside') as HTMLElement
-    expect(within(panel).queryByText(/^\d+%$/)).not.toBeInTheDocument()
-    // Исторический пик называется наблюдаемым максимумом, а не потолком: настоящий лимит
-    // может быть выше, и подменять одно другим нельзя.
-    expect(within(panel).getAllByText(/Считать по наблюдаемому максимуму/).length).toBeGreaterThan(0)
+    expect(within(panel).queryByText(/%/)).not.toBeInTheDocument()
   })
 
   it('аккаунты провайдера перечислены с тарифом каждого', async () => {

@@ -1,6 +1,5 @@
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
-import { useAi } from '@/store/ai'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { DEFAULT_WINDOW_HOURS, formatResetIn, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
@@ -26,20 +25,26 @@ function LimitCard({
   limit,
   elapsed,
   unit = 'токенов',
-  onAdopt,
   peak
 }: {
   title: string
   caption: string
   spent: number
   limit: number | null
-  /** Доля прошедшего времени периода — полоса, когда потолок неизвестен. */
+  /** Доля прошедшего времени периода — полоса, когда мерить не от чего. */
   elapsed: number
   unit?: string
-  onAdopt?: () => void
+  /** Самый нагруженный такой же период в истории. */
   peak?: number
 }): React.JSX.Element {
-  const used = limit && limit > 0 ? spent / limit : null
+  // Потолок владельца — это факт, наблюдаемый максимум — оценка. Считаем от того, что есть:
+  // ждать, пока человек нажмёт кнопку, чтобы увидеть проценты, незачем — данные для оценки
+  // лежат в его же истории. Но оценку положено называть оценкой.
+  const own = limit && limit > 0 ? limit : null
+  const observed = !own && peak && peak > 0 ? peak : null
+  const scale = own ?? observed
+  const used = scale ? spent / scale : null
+
   const byLimit = used != null
   const fill = Math.min(1, byLimit ? used : elapsed)
   const over = byLimit && used > 1
@@ -50,17 +55,19 @@ function LimitCard({
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[12px] font-medium text-slate-200">{title}</span>
         <span className={cn('text-[15px] font-semibold tabular-nums', over ? 'text-rose-400' : 'text-white')}>
-          {byLimit ? `${Math.round(used * 100)}%` : tokens(spent)}
+          {byLimit ? `${observed ? '≈' : ''}${Math.round(used * 100)}%` : tokens(spent)}
         </span>
       </div>
 
       {/* Без известного потолка полоса отмеряет ВРЕМЯ периода, а не долю квоты. Чтобы её не
           читали как заполнение лимита, она рисуется штриховкой и приглушённо. */}
+      {/* Сплошная полоса — доля известного потолка. Приглушённая — доля наблюдаемого максимума,
+          то есть оценка. Штриховая — вообще не про расход, а про прошедшее время периода. */}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
         <div
           className={cn(
             'h-full rounded-full transition-[width] duration-700',
-            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : byLimit ? 'bg-accent' : 'bg-slate-700'
+            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : own ? 'bg-accent' : observed ? 'bg-accent/50' : 'bg-slate-700'
           )}
           style={{
             width: `${Math.max(2, fill * 100)}%`,
@@ -77,21 +84,14 @@ function LimitCard({
       <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
         <span>{caption}</span>
         <span className="tabular-nums">
-          {byLimit ? `${tokens(spent)} из ${tokens(limit ?? 0)}` : `${unit} · полоса — прошедшее время`}
+          {own
+            ? `${tokens(spent)} из ${tokens(own)}`
+            : observed
+              ? `${tokens(spent)} из ${tokens(observed)} — наблюдаемый максимум`
+              : `${unit} · полоса — прошедшее время`}
         </span>
       </div>
 
-      {/* Пик истории — это ОРИЕНТИР, а не потолок провайдера: он говорит лишь «столько лимит
-          точно позволял», и настоящий предел может быть выше. Называть его лимитом нельзя. */}
-      {!byLimit && onAdopt && peak != null && peak > 0 && (
-        <button
-          onClick={onAdopt}
-          title="Наблюдаемый максимум за прошлые периоды. Настоящий лимит может быть выше."
-          className="mt-2 w-full rounded border border-dashed border-border py-1 text-[11px] text-slate-600 transition-colors hover:border-accent/40 hover:text-slate-300"
-        >
-          Считать по наблюдаемому максимуму — {tokens(peak)}
-        </button>
-      )}
     </div>
   )
 }
@@ -184,8 +184,6 @@ export function LimitCards({
   quota?: AiQuota
   now?: number
 }): React.JSX.Element | null {
-  const update = useAi((s) => s.update)
-
   const mine = source ? blocks.filter((b) => b.source === source) : []
   const state = source ? windowState(mine, access.limits.windowTokens, now) : null
   const sessionPeak = mine.reduce((max, b) => Math.max(max, b.tokens), 0)
@@ -221,9 +219,6 @@ export function LimitCards({
     return Math.max(0, ...byDate.values())
   })()
 
-  const adopt = (patch: { windowTokens?: number; tpd?: number; weekTokens?: number }): void => {
-    void update(access.id, { provider: access.provider, limits: { ...access.limits, ...patch } })
-  }
 
   const hasBalance = typeof check?.remaining === 'number'
   // Объявленные лимиты тарифа — тоже повод показать блок: у бесплатного доступа это всё, что
@@ -256,7 +251,6 @@ export function LimitCards({
                 limit={access.limits.windowTokens ?? null}
                 elapsed={state.elapsed}
                 peak={sessionPeak}
-                onAdopt={() => adopt({ windowTokens: Math.round(sessionPeak) })}
               />
             ) : (
               <div className="rounded-lg border border-border bg-card/50 p-3.5">
@@ -274,7 +268,6 @@ export function LimitCards({
               limit={access.limits.tpd ?? null}
               elapsed={dayElapsed}
               peak={dayPeak}
-              onAdopt={() => adopt({ tpd: Math.round(dayPeak) })}
             />
 
             <LimitCard
@@ -287,7 +280,6 @@ export function LimitCards({
               // а полоса рисовалась про другое.
               elapsed={1}
               peak={weekPeak}
-              onAdopt={() => adopt({ weekTokens: Math.round(weekPeak) })}
             />
           </>
         )}
