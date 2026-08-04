@@ -3,7 +3,7 @@ import { Calculator, Loader2, RefreshCw, Star } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { CostCalculator } from '@/components/ai/CostCalculator'
 import { priceLabel } from '@/lib/ai-account'
-import { providerFamily } from '../../../../../shared/ai-providers'
+import { providerFamily } from '../../../../shared/ai-providers'
 import { useAi } from '@/store/ai'
 import type { AiAccess, AiAccessModel, AiPrice } from '@/types'
 
@@ -40,7 +40,7 @@ function priceOf(model: string, prices: AiPrice[], provider: string): AiPrice | 
 
 const NO_MODELS: AiAccessModel[] = []
 
-export function AccessModels({ access }: { access: AiAccess }): React.JSX.Element {
+export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Element {
   const prices = useAi((s) => s.prices)
   const models = useAi((s) => s.models[access.id]) ?? NO_MODELS
   const loadModels = useAi((s) => s.loadModels)
@@ -109,7 +109,8 @@ export function AccessModels({ access }: { access: AiAccess }): React.JSX.Elemen
   }
 
   return (
-    <div className="flex h-full flex-col p-5">
+    <section>
+      <h3 className="mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Модели</h3>
       <div className="flex items-center gap-2">
         <input className={inputCls} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Поиск модели" />
         <button
@@ -173,7 +174,7 @@ export function AccessModels({ access }: { access: AiAccess }): React.JSX.Elemen
           )}
         </div>
       ) : (
-        <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+        <div className="mt-3 max-h-[22rem] overflow-y-auto rounded-lg border border-border bg-card/40 px-3">
           <table className="w-full text-left text-[11px]">
             <thead className="sticky top-0 bg-surface text-slate-600">
               <tr>
@@ -228,6 +229,6 @@ export function AccessModels({ access }: { access: AiAccess }): React.JSX.Elemen
         {pricesLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
         Обновить каталог цен
       </button>
-    </div>
+    </section>
   )
 }

@@ -58,12 +58,20 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
 /** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
 
+/** Список моделей у провайдеров меняется небыстро — чаще раза в сутки спрашивать незачем. */
+const MODELS_TTL_MS = 24 * 60 * 60 * 1000
+
 /**
  * Что делается сразу после открытия хранилища.
  *
- * Каталог цен и реестр доступов нужны экрану AI с первой секунды, а собрать их можно только на
- * открытой базе. Обе операции срабатывают ровно один раз (при пустых таблицах) и молчат дальше.
- * Ошибка здесь не должна мешать войти в приложение: без цен показываются токены без денег.
+ * Раньше половина этого висела на кнопках «Пересчитать» и «Взять пароли»: приложение
+ * открывалось пустым и ждало, пока его попросят. Кнопка, которую надо нажимать каждый раз при
+ * входе, — это не функция, а недоделанная автоматика, поэтому всё, что можно собрать самому,
+ * собирается само.
+ *
+ * Быстрое (каталог цен, засев реестра) делается сразу и молча. Долгое (чтение логов, пароли
+ * браузера, опрос провайдеров) уходит в фон, чтобы не задерживать открытие окна, и по
+ * завершении присылает событие — интерфейс перечитывает данные сам.
  */
 function afterUnlock(): void {
   try {
@@ -71,6 +79,67 @@ function afterUnlock(): void {
     seedAiAccess()
   } catch {
     /* каталог или файл засева испорчены — приложение работает и без них */
+  }
+  void refreshEverything()
+}
+
+/**
+ * Разослать окнам, что данные раздела AI обновились.
+ *
+ * Канал пишется здесь литералом, а не приходит параметром: проверка поверхности IPC сверяет
+ * списки каналов по исходникам, и отправка через переменную для неё невидима — а значит,
+ * опечатка в имени события осталась бы незамеченной до самого запуска.
+ */
+function announceAiUpdated(reason: string): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('ai:updated', { reason })
+  }
+}
+
+/**
+ * Фоновый сбор всего, что Argus умеет узнать сам.
+ *
+ * Порядок по убыванию ценности: сначала расход (он уже лежит на диске и считается за секунду),
+ * затем учётные записи из браузера, затем опрос провайдеров по сети — самый долгий и
+ * необязательный шаг.
+ */
+async function refreshEverything(): Promise<void> {
+  if (!vault.isUnlocked()) return
+  try {
+    const usage = await collectUsage()
+    if (usage.records > 0) announceAiUpdated('usage')
+  } catch {
+    /* логов может не быть вовсе — это не ошибка */
+  }
+
+  try {
+    let imported = 0
+    for (const access of vault.listAiAccess()) {
+      const extra = access.baseUrl ? [access.baseUrl.replace(/^https?:\/\//, '').split('/')[0]] : []
+      const logins = readLogins(access.provider, extra)
+      if (logins.length) imported += applyLogins(access, logins).imported
+    }
+    if (imported > 0) announceAiUpdated('accounts')
+  } catch {
+    /* браузер может быть не установлен, кошелёк — заперт */
+  }
+
+  try {
+    const fresh = Date.now() - MODELS_TTL_MS
+    let updated = 0
+    for (const access of vault.listAiAccess()) {
+      if (access.status === 'planned') continue
+      const known = vault.listAccessModels(access.id)
+      const last = known.reduce((max, m) => Math.max(max, m.fetchedAt ?? 0), 0)
+      if (last > fresh) continue
+      const r = await fetchModels(access, vault.getAiKey(access.id))
+      if (!r.ok) continue
+      vault.replaceFetchedModels(access.id, r.models)
+      updated++
+    }
+    if (updated > 0) announceAiUpdated('models')
+  } catch {
+    /* сеть недоступна — списки просто останутся прежними */
   }
 }
 

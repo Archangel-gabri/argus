@@ -299,8 +299,9 @@ export interface AiLimits {
   /** Запросов в минуту / в день. */
   rpm?: number | null
   rpd?: number | null
-  /** Токенов в минуту / в месяц. */
+  /** Токенов в минуту / в сутки / в месяц. */
   tpm?: number | null
+  tpd?: number | null
   tpmo?: number | null
   /** Окно лимита подписки: длительность в часах и наблюдаемый потолок (задаётся владельцем). */
   windowHours?: number | null

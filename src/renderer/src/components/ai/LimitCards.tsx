@@ -1,0 +1,255 @@
+import { cn } from '@/lib/cn'
+import { money } from '@/lib/format'
+import { useAi } from '@/store/ai'
+import { daysAgoDate, totalsFor } from '@/lib/ai-account'
+import { DEFAULT_WINDOW_HOURS, formatResetIn, windowState } from '../../../../shared/ai-blocks'
+import { totalTokens } from '../../../../shared/ai-pricing'
+import type { AiAccess, AiCheck, AiUsageBlock, AiUsageDay } from '@/types'
+
+function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1000) return `${Math.round(n / 1000)}k`
+  return String(n)
+}
+
+/**
+ * Одна плашка лимита.
+ *
+ * Устроена так же, как её показывают сами провайдеры: слева что это и когда обновится, справа
+ * доля, между ними полоса. Доля берётся только от известного потолка — провайдеры своих порогов
+ * не публикуют, и процент без знаменателя был бы выдумкой.
+ */
+function LimitCard({
+  title,
+  caption,
+  spent,
+  limit,
+  elapsed,
+  unit = 'токенов',
+  onAdopt,
+  peak
+}: {
+  title: string
+  caption: string
+  spent: number
+  limit: number | null
+  /** Доля прошедшего времени периода — полоса, когда потолок неизвестен. */
+  elapsed: number
+  unit?: string
+  onAdopt?: () => void
+  peak?: number
+}): React.JSX.Element {
+  const used = limit && limit > 0 ? spent / limit : null
+  const byLimit = used != null
+  const fill = Math.min(1, byLimit ? used : elapsed)
+  const over = byLimit && used > 1
+  const nearing = byLimit && used >= 0.8
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-slate-200">{title}</span>
+        <span className={cn('text-[15px] font-semibold tabular-nums', over ? 'text-rose-400' : 'text-white')}>
+          {byLimit ? `${Math.round(used * 100)}%` : tokens(spent)}
+        </span>
+      </div>
+
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+        <div
+          className={cn(
+            'h-full rounded-full transition-[width] duration-700',
+            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : byLimit ? 'bg-accent' : 'bg-slate-600'
+          )}
+          style={{ width: `${Math.max(2, fill * 100)}%` }}
+        />
+      </div>
+
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+        <span>{caption}</span>
+        <span className="tabular-nums">
+          {byLimit ? `${tokens(spent)} из ${tokens(limit ?? 0)}` : `${unit} за период`}
+        </span>
+      </div>
+
+      {/* Потолок провайдер не публикует, но нижняя его граница видна по своей же истории:
+          самый нагруженный период — это как минимум столько, сколько лимит позволил. */}
+      {!byLimit && onAdopt && peak != null && peak > 0 && (
+        <button
+          onClick={onAdopt}
+          className="mt-2 w-full rounded border border-dashed border-border py-1 text-[11px] text-slate-600 transition-colors hover:border-accent/40 hover:text-slate-300"
+        >
+          Взять потолок из наблюдений — {tokens(peak)}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Плашка денег для доступов, где провайдер отдаёт баланс (сейчас это OpenRouter). */
+function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
+  const remaining = check.remaining ?? 0
+  const spent = check.usage ?? 0
+  const total = remaining + spent
+  const left = total > 0 ? remaining / total : 0
+  const low = remaining <= 5
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-slate-200">Баланс</span>
+        <span className={cn('text-[15px] font-semibold tabular-nums', low ? 'text-amber-400' : 'text-white')}>
+          {money(remaining)}
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+        <div
+          className={cn('h-full rounded-full', low ? 'bg-amber-400' : 'bg-accent')}
+          style={{ width: `${Math.max(2, left * 100)}%` }}
+        />
+      </div>
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+        <span>{low ? 'почти исчерпан' : 'осталось'}</span>
+        <span className="tabular-nums">потрачено {money(Math.round(spent * 100) / 100)}</span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Лимиты доступа: окно сессии, сутки и неделя — ровно те периоды, которыми считают провайдеры.
+ *
+ * Для доступов без своих логов расхода показывается то, что известно: баланс, если провайдер его
+ * отдаёт, и объявленные лимиты запросов.
+ */
+export function LimitCards({
+  access,
+  blocks,
+  days,
+  source,
+  check,
+  now = Date.now()
+}: {
+  access: AiAccess
+  blocks: AiUsageBlock[]
+  days: AiUsageDay[]
+  /** Источник логов расхода или null, если своих логов у доступа нет. */
+  source: string | null
+  check?: AiCheck
+  now?: number
+}): React.JSX.Element | null {
+  const update = useAi((s) => s.update)
+
+  const mine = source ? blocks.filter((b) => b.source === source) : []
+  const state = source ? windowState(mine, access.limits.windowTokens, now) : null
+  const sessionPeak = mine.reduce((max, b) => Math.max(max, b.tokens), 0)
+
+  const today = source ? totalsFor(days, { since: daysAgoDate(0), source }) : null
+  const week = source ? totalsFor(days, { since: daysAgoDate(6), source }) : null
+  const todayTokens = today ? totalTokens(today.usage) : 0
+  const weekTokens = week ? totalTokens(week.usage) : 0
+
+  // Пик недели — по скользящим неделям истории: разовый всплеск важнее среднего, потому что
+  // лимит бьёт именно по нему.
+  const weekPeak = (() => {
+    if (!source) return 0
+    let max = 0
+    for (let offset = 0; offset < 8; offset++) {
+      const since = daysAgoDate(6 + offset * 7)
+      const until = daysAgoDate(offset * 7)
+      const sum = days
+        .filter((d) => d.source === source && d.date >= since && d.date <= until)
+        .reduce((n, d) => n + d.input + d.output + d.cacheWrite + d.cacheWrite1h + d.cacheRead, 0)
+      max = Math.max(max, sum)
+    }
+    return max
+  })()
+
+  const dayPeak = (() => {
+    if (!source) return 0
+    const byDate = new Map<string, number>()
+    for (const d of days) {
+      if (d.source !== source) continue
+      byDate.set(d.date, (byDate.get(d.date) ?? 0) + d.input + d.output + d.cacheWrite + d.cacheWrite1h + d.cacheRead)
+    }
+    return Math.max(0, ...byDate.values())
+  })()
+
+  const adopt = (patch: { windowTokens?: number; tpd?: number; weekTokens?: number }): void => {
+    void update(access.id, { provider: access.provider, limits: { ...access.limits, ...patch } })
+  }
+
+  const hasBalance = typeof check?.remaining === 'number'
+  if (!source && !hasBalance) return null
+
+  const hours = access.limits.windowHours ?? DEFAULT_WINDOW_HOURS
+  const nowDate = new Date(now)
+  const dayElapsed = (nowDate.getHours() * 60 + nowDate.getMinutes()) / (24 * 60)
+
+  return (
+    <section>
+      <h3 className="mb-2 flex items-baseline gap-2">
+        <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Лимиты</span>
+        {access.plan && <span className="truncate text-[11px] text-slate-600">{access.plan}</span>}
+      </h3>
+
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {hasBalance && check && <BalanceCard check={check} />}
+
+        {source && (
+          <>
+            {state ? (
+              <LimitCard
+                title="Текущая сессия"
+                caption={`сбросится ${formatResetIn(state.resetsInMs)}`}
+                spent={state.block.tokens}
+                limit={access.limits.windowTokens ?? null}
+                elapsed={state.elapsed}
+                peak={sessionPeak}
+                onAdopt={() => adopt({ windowTokens: Math.round(sessionPeak) })}
+              />
+            ) : (
+              <div className="rounded-lg border border-border bg-card/50 p-3.5">
+                <div className="text-[12px] font-medium text-slate-200">Текущая сессия</div>
+                <p className="mt-2 text-[11px] text-slate-600">
+                  не начата — окно {hours} ч открывается с первого запроса
+                </p>
+              </div>
+            )}
+
+            <LimitCard
+              title="Сегодня"
+              caption="с начала суток"
+              spent={todayTokens}
+              limit={access.limits.tpd ?? null}
+              elapsed={dayElapsed}
+              peak={dayPeak}
+              onAdopt={() => adopt({ tpd: Math.round(dayPeak) })}
+            />
+
+            <LimitCard
+              title="Эта неделя"
+              caption="последние 7 дней"
+              spent={weekTokens}
+              limit={access.limits.weekTokens ?? null}
+              elapsed={(nowDate.getDay() || 7) / 7}
+              peak={weekPeak}
+              onAdopt={() => adopt({ weekTokens: Math.round(weekPeak) })}
+            />
+          </>
+        )}
+      </div>
+
+      {(access.limits.rpm != null || access.limits.rpd != null) && (
+        <p className="mt-2 text-[11px] text-slate-600">
+          Объявленные провайдером ограничения:{' '}
+          {[
+            access.limits.rpm != null ? `${access.limits.rpm} запросов в минуту` : null,
+            access.limits.rpd != null ? `${access.limits.rpd} в сутки` : null
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </p>
+      )}
+    </section>
+  )
+}

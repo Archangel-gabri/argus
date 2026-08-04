@@ -122,7 +122,13 @@ const api = {
     checkAccountKey: (accessId: string, email: string) =>
       ipcRenderer.invoke('ai:checkAccountKey', accessId, email),
     importPasswords: (accessId: string) => ipcRenderer.invoke('ai:importPasswords', accessId),
-    importPasswordsAll: () => ipcRenderer.invoke('ai:importPasswordsAll')
+    importPasswordsAll: () => ipcRenderer.invoke('ai:importPasswordsAll'),
+    // Фоновый сбор (расход, пароли, модели) сообщает о себе сам — кнопок для этого больше нет.
+    onUpdated: (cb: (p: { reason: string }) => void) => {
+      const h = (_e: IpcRendererEvent, p: { reason: string }): void => cb(p)
+      ipcRenderer.on('ai:updated', h)
+      return () => ipcRenderer.removeListener('ai:updated', h)
+    }
   },
   forward: {
     open: (deviceId: string, localPort: number, remoteHost: string, remotePort: number) =>

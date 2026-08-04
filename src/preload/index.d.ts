@@ -195,6 +195,7 @@ export interface ArgusApi {
     checkAccountKey: (accessId: string, email: string) => Promise<AiCheck>
     importPasswords: (accessId: string) => Promise<{ ok: boolean; imported: number; added?: number; error?: string }>
     importPasswordsAll: () => Promise<{ ok: boolean; imported: number; added: number; error?: string }>
+    onUpdated: (cb: (p: { reason: string }) => void) => () => void
   }
   forward: {
     open: (

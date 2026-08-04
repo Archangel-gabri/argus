@@ -164,14 +164,21 @@ describe('экран AI', () => {
     expect(within(header()).getByText(/требует внимания/)).toBeInTheDocument()
   })
 
-  it('панель справа показывает выбранный доступ, без модального окна', async () => {
+  it('страница доступа открыта рядом со списком, без модального окна', async () => {
     await mount({ access: [access('Claude Max 5x', { kind: 'subscription', provider: 'anthropic', account: 'me@example.com' })] })
     const panel = document.querySelector('aside') as HTMLElement
     expect(within(panel).getByRole('heading', { name: 'Claude Max 5x' })).toBeInTheDocument()
     // Тип записи в единственном числе: «anthropic · подписки» читается как ошибка.
     expect(within(panel).getByText(/anthropic · подписка/)).toBeInTheDocument()
-    expect(within(panel).getByText('me@example.com')).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('данные собираются сами — кнопок «пересчитать» и «взять пароли» нет', async () => {
+    // Кнопка, которую надо нажимать при каждом входе, — это не функция, а недоделанная
+    // автоматика: логи, пароли и списки моделей обновляются в фоне при открытии хранилища.
+    await mount({ access: [access('Claude', { provider: 'anthropic' })] })
+    expect(screen.queryByRole('button', { name: /Пересчитать/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Пароли/ })).not.toBeInTheDocument()
   })
 
   it('окно лимита показывает процент только когда потолок задан', async () => {
@@ -182,9 +189,9 @@ describe('экран AI', () => {
       access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5, windowTokens: 1_000_000 } })],
       blocks: [block]
     })
-    const panel = () => document.querySelector('aside:last-of-type') as HTMLElement
-    expect(within(panel()).getByText('57%')).toBeInTheDocument()
-    expect(within(panel()).getByText(/Сбросится через 2 ч/)).toBeInTheDocument()
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getByText('57%')).toBeInTheDocument()
+    expect(within(panel).getByText(/сбросится через 2 ч/i)).toBeInTheDocument()
   })
 
   it('без заданного потолка процент не выдумывается', async () => {
@@ -195,9 +202,9 @@ describe('экран AI', () => {
       access: [access('Claude', { provider: 'anthropic', limits: { windowHours: 5 } })],
       blocks: [{ source: 'claude-code', startTs: now - 3600_000, endTs: now + 4 * 3600_000, tokens: 570_000, costUsd: 12, requests: 40 }]
     })
-    const panel = document.querySelector('aside:last-of-type') as HTMLElement
-    expect(within(panel).queryByText(/%$/)).not.toBeInTheDocument()
-    expect(within(panel).getByText(/Взять потолок из наблюдений/)).toBeInTheDocument()
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).queryByText(/^\d+%$/)).not.toBeInTheDocument()
+    expect(within(panel).getAllByText(/Взять потолок из наблюдений/).length).toBeGreaterThan(0)
   })
 
   it('аккаунты провайдера перечислены с тарифом каждого', async () => {
@@ -213,13 +220,11 @@ describe('экран AI', () => {
         })
       ]
     })
-    const panel = document.querySelector('aside:last-of-type') as HTMLElement
-    expect(within(panel).getByRole('heading', { name: /Аккаунты · 2/ })).toBeInTheDocument()
+    const panel = document.querySelector('aside') as HTMLElement
+    expect(within(panel).getByText(/Аккаунты · 2/)).toBeInTheDocument()
     expect(within(panel).getByText('main@example.com')).toBeInTheDocument()
     expect(within(panel).getByText('Plus')).toBeInTheDocument()
-    // Основной аккаунт отмечен точкой, а не словом: список короткий, и подпись на каждой
-    // строке была бы шумом.
-    expect(within(panel).getByTitle('основной')).toBeInTheDocument()
+    expect(within(panel).getByText('основной')).toBeInTheDocument()
   })
 
   it('состояние «не оформлен» видно прямо в строке', async () => {

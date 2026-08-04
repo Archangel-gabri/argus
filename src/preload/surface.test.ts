@@ -9,7 +9,7 @@
 // обработчика, у каждого вызова есть обработчик и наоборот, и окно трансляции не видит ничего
 // из того, что ему видеть нельзя.
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const read = (p: string): string => readFileSync(join(__dirname, '..', p), 'utf8')
@@ -19,6 +19,7 @@ const PRELOAD = read('preload/index.ts')
 const SCREEN_PRELOAD = read('preload/screen.ts')
 
 const all = (src: string, re: RegExp): string[] => [...src.matchAll(re)].map((m) => m[1]).sort()
+const unique = (xs: string[]): string[] => [...new Set(xs)].sort()
 
 /** Каналы main: `handle` отвечает на invoke, `on` принимает send. */
 const handled = all(IPC, /ipcMain\.handle\('([^']+)'/g)
@@ -29,10 +30,20 @@ const invoked = (src: string): string[] => all(src, /ipcRenderer\.invoke\('([^']
 const sent = (src: string): string[] => all(src, /ipcRenderer\.send\('([^']+)'/g)
 const listened = (src: string): string[] => all(src, /ipcRenderer\.on\('([^']+)'/g)
 
-/** События main → renderer: их не «обрабатывают», их шлют через webContents. */
-const EVENTS = ['ssh:data', 'ssh:exit', 'devices:geo']
-
-const unique = (xs: string[]): string[] => [...new Set(xs)].sort()
+/**
+ * События main → renderer: их не «обрабатывают», их шлют через webContents.
+ *
+ * Список собирается из исходников main, а не пишется руками: захардкоженный перечень устаревает
+ * ровно в тот день, когда добавляют новое событие, и тест начинает падать на верном коде.
+ */
+const MAIN_DIR = join(__dirname, '..', 'main')
+const EVENTS = unique(
+  readdirSync(MAIN_DIR)
+    .filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
+    // Отправитель у main разный: где-то `win.webContents.send`, где-то сохранённый `wc.send`.
+    // Ищем по самому вызову, а не по имени переменной перед ним.
+    .flatMap((f) => all(readFileSync(join(MAIN_DIR, f), 'utf8'), /(?:wc|webContents)\.send\('([^']+)'/g))
+)
 
 describe('поверхность IPC — направление вызова', () => {
   it('всё, что renderer вызывает через invoke, обработано через handle', () => {
