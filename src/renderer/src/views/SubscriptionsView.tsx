@@ -270,9 +270,20 @@ export function SubscriptionsView(): React.JSX.Element {
                   {stored?.manualRenewal && (
                     <span className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline">вручную</span>
                   )}
+                  {/* Ноль в денежной колонке читается как «бесплатно», а у подписки, купленной на
+                      стороне, цена бывает просто не внесена. Это разные вещи, и путать их нельзя:
+                      из-за нуля подписка молча выпадает из месячного итога, выглядя оплаченной. */}
                   <span className="w-24 text-right tabular-nums text-slate-300">
-                    {money(x.amount, x.currency)}
-                    <span className="text-slate-500">/{x.period}</span>
+                    {x.amount > 0 ? (
+                      <>
+                        {money(x.amount, x.currency)}
+                        <span className="text-slate-500">/{x.period}</span>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-amber-400/70" title="Подписка есть, но её цена не внесена — в месячный итог она не попадает">
+                        цены нет
+                      </span>
+                    )}
                   </span>
                   {x.userId ? (
                     <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
