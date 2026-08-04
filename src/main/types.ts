@@ -3,7 +3,7 @@ export type Status = 'online' | 'degraded' | 'offline' | 'reboot' | 'unknown' | 
 // ЕДИНЫЙ источник списка валют для всего приложения (дропдауны устройств/подписок, парсер ИИ).
 export const CURRENCY_CODES = [
   'USD', 'EUR', 'RUB', 'GBP', 'CNY', 'JPY', 'CHF', 'CAD', 'AUD', 'INR',
-  'BRL', 'KRW', 'TRY', 'PLN', 'UAH', 'KZT', 'AED', 'SEK', 'NOK', 'SGD'
+  'BRL', 'KRW', 'TRY', 'PLN', 'UAH', 'KZT', 'AED', 'SEK', 'NOK', 'SGD', 'PKR'
 ] as const
 export type Currency = (typeof CURRENCY_CODES)[number]
 export type AuthType = 'password' | 'key' | 'none'
