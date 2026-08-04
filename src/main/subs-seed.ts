@@ -10,9 +10,8 @@
 // Обновляются только те поля, которые в файле названы. Поле, которого в файле нет, остаётся как
 // есть: иначе засев затирал бы правки, сделанные руками в самом приложении.
 
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { app } from 'electron'
+import { readFileSync } from 'node:fs'
+import { findSeedFile } from './seed-file'
 import type { Currency, Subscription, SubscriptionInput } from './types'
 import * as vault from './vault'
 
@@ -96,14 +95,7 @@ export function planSubsSeed(file: SubsSeedFile, existing: Subscription[]): Subs
 }
 
 function seedPath(): string | null {
-  const candidates: string[] = []
-  try {
-    candidates.push(join(app.getAppPath(), 'subs.local.json'))
-  } catch {
-    /* путь приложения недоступен — остаётся рабочий каталог */
-  }
-  candidates.push(join(process.cwd(), 'subs.local.json'))
-  return candidates.find((p) => existsSync(p)) ?? null
+  return findSeedFile('subs.local.json')
 }
 
 export interface SubsSeedResult {

@@ -8,10 +8,10 @@
 // значение оттуда при засеве. Так единственная копия ключа остаётся там, где владелец её и
 // хранит, а в зашифрованный вольт попадает уже готовое значение.
 
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { app } from 'electron'
+import { findSeedFile } from './seed-file'
 import type { AiAccess, AiAccessInput, AiAccountEntry, AiChannel, AiKind, AiLimits, AiPayment, AiStatus } from './types'
 import * as vault from './vault'
 
@@ -100,14 +100,7 @@ export function parseEnvFile(text: string): Record<string, string> {
 }
 
 function seedPath(): string | null {
-  const candidates: string[] = []
-  try {
-    candidates.push(join(app.getAppPath(), 'ai.local.json'))
-  } catch {
-    /* app path unavailable */
-  }
-  candidates.push(join(process.cwd(), 'ai.local.json'))
-  return candidates.find((p) => existsSync(p)) ?? null
+  return findSeedFile('ai.local.json')
 }
 
 export interface SeedResult {
