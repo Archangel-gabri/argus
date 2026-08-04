@@ -2,19 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus } from 'lucide-react'
 import { money } from '@/lib/format'
 import {
-  KIND_LABEL,
+  MONEY_GROUP_LABEL,
+  attentionList,
   aiSummary,
   dailySeries,
   daysAgoDate,
-  groupByKind,
+  groupByMoney,
   monthlyCost,
-  needsAttention,
   totalsFor,
   usageOwners
 } from '@/lib/ai-account'
 import { AccessForm } from '@/components/ai/AccessForm'
 import { AccessRow } from '@/components/ai/AccessRow'
 import { AccessDetail } from '@/components/ai/AccessDetail'
+import { cn } from '@/lib/cn'
+import { formatResetIn, windowState } from '../../../shared/ai-blocks'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess, Subscription } from '@/types'
@@ -43,6 +45,7 @@ export function AIAccountsView(): React.JSX.Element {
   const access = useAi((s) => s.access)
   const checks = useAi((s) => s.checks)
   const usage = useAi((s) => s.usage)
+  const blocks = useAi((s) => s.blocks)
   const loaded = useAi((s) => s.loaded)
   const loading = useAi((s) => s.loading)
   const error = useAi((s) => s.error)
@@ -82,8 +85,25 @@ export function AIAccountsView(): React.JSX.Element {
     return null
   }
 
-  const attention = needsAttention(access, checks)
-  const groups = groupByKind(access)
+  const attention = attentionList(access, checks)
+  const groups = groupByMoney(access, subs)
+  // Неоформленные не считаются доступами: «14 доступов», из которых четырёх не существует, —
+  // это ложь инвентаря.
+  const owned = access.filter((a) => a.status !== 'planned')
+  const available = access.length - owned.length
+
+  // Окно лимита самой дорогой подписки — единственное число на экране, которое меняется в
+  // течение дня. Ради него сюда и заходят посреди работы.
+  const mainWindow = (() => {
+    const paid = owned
+      .filter((a) => a.subscriptionId && sourceOf(a))
+      .sort((x, y) => (monthlyCost(subs.find((s) => s.id === y.subscriptionId)) ?? 0) - (monthlyCost(subs.find((s) => s.id === x.subscriptionId)) ?? 0))[0]
+    if (!paid) return null
+    const src = sourceOf(paid)
+    if (!src) return null
+    const state = windowState(blocks.filter((b) => b.source === src), paid.limits.windowTokens)
+    return state ? { label: paid.label, state } : null
+  })()
   const summary = aiSummary(access, checks)
 
   // Выбор держится за идентификатором: запись могла обновиться или исчезнуть.
@@ -117,14 +137,28 @@ export function AIAccountsView(): React.JSX.Element {
             <span className="text-slate-600"> в месяц</span>
           </span>
 
+          {mainWindow && (
+            <span className="text-slate-500">
+              Окно{' '}
+              <span className="text-slate-300">{mainWindow.label}</span>
+              {mainWindow.state.used != null && (
+                <span className="ml-1 tabular-nums text-slate-200">{Math.round(mainWindow.state.used * 100)}%</span>
+              )}
+              <span className="text-slate-600"> · сброс {formatResetIn(mainWindow.state.resetsInMs)}</span>
+            </span>
+          )}
+
           <span className="text-slate-500">
-            Сожжено{' '}
+            {/* Сослагательное наклонение не случайно: «сожжено» читается как списанные деньги,
+                а по подписке это лишь оценка того, во что обошёлся бы тот же объём. */}
+            За 30 дней сжёг бы{' '}
             <span className="tabular-nums text-slate-200">{burned > 0 ? `≈${money(Math.round(burned))}` : '—'}</span>
-            <span className="text-slate-600"> за 30 дней, по ценам API</span>
+            <span className="text-slate-600"> по ценам API</span>
           </span>
 
           <span className="text-slate-500">
-            <span className="tabular-nums text-slate-200">{loaded ? access.length : '—'}</span> доступов
+            <span className="tabular-nums text-slate-200">{loaded ? owned.length : '—'}</span> доступов
+            {available > 0 && <span className="text-slate-600"> · {available} можно взять</span>}
             {summary.workingKeys && (
               <span className="text-slate-600" title="Среди тех ключей, которые уже успели проверить">
                 {' '}
@@ -133,12 +167,6 @@ export function AIAccountsView(): React.JSX.Element {
             )}
           </span>
 
-          {attention.length > 0 && (
-            <span className="text-amber-400">
-              {attention.length}{' '}
-              {attention.length === 1 ? 'требует внимания' : 'требуют внимания'}
-            </span>
-          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
@@ -153,6 +181,26 @@ export function AIAccountsView(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      {attention.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-amber-500/15 bg-amber-500/[0.05] px-6 py-2">
+          {attention.slice(0, 4).map((a) => (
+            <button
+              key={a.text}
+              onClick={() => setSelectedId(a.accessId)}
+              className={cn(
+                'text-[12px] transition-colors hover:underline',
+                a.severity === 'critical' ? 'text-rose-300' : 'text-amber-300/90'
+              )}
+            >
+              {a.text}
+            </button>
+          ))}
+          {attention.length > 4 && (
+            <span className="text-[11px] text-slate-600">и ещё {attention.length - 4}</span>
+          )}
+        </div>
+      )}
 
       {!api && (
         <p className="border-b border-border bg-surface/60 px-6 py-2 text-[11px] text-slate-600">
@@ -199,9 +247,14 @@ export function AIAccountsView(): React.JSX.Element {
             </button>
           ) : (
             groups.map((group) => (
-              <section key={group.kind} className="mb-1">
-                <h2 className="px-6 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
-                  {KIND_LABEL[group.kind]}
+              <section key={group.group} className="mb-1">
+                <h2 className="flex items-baseline justify-between gap-2 px-6 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
+                  <span>{MONEY_GROUP_LABEL[group.group]}</span>
+                  {group.group === 'paid' && monthly.length > 0 && (
+                    <span className="normal-case tracking-normal text-slate-500">
+                      {monthly.map(([cur, sum]) => money(Math.round(sum * 100) / 100, cur)).join(' + ')}/мес
+                    </span>
+                  )}
                 </h2>
                 {group.items.map((a) => {
                   const src = sourceOf(a)

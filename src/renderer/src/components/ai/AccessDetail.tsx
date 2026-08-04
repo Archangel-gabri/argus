@@ -150,8 +150,13 @@ export function AccessDetail({
                   <span className="text-slate-600"> · {PAYMENT_LABEL[access.payment]}</span>
                   {sub.nextRenewal && <span className="text-slate-600"> · продление {sub.nextRenewal}</span>}
                   {roi != null && (
-                    <span className="ml-1 text-emerald-400" title="Оценка: цены каталожные, курс валют справочный">
-                      ≈×{roi.toFixed(roi >= 10 ? 0 : 1)} по ценам API
+                    // Ниже единицы подписка не окупается, и красить это победным зелёным —
+                    // значит поздравлять с переплатой.
+                    <span
+                      className={cn('ml-1', roi >= 1 ? 'text-emerald-400' : 'text-slate-500')}
+                      title="Оценка: цены каталожные, курс валют справочный"
+                    >
+                      {roi >= 1 ? `≈×${roi.toFixed(roi >= 10 ? 0 : 1)} по ценам API` : 'не окупается'}
                     </span>
                   )}
                 </>

@@ -118,3 +118,22 @@ describe('дополнение уже заведённой записи', () => 
     expect(fillGaps(saved(), { provider: 'openai' })).toBeNull()
   })
 })
+
+describe('проверенные факты из файла', () => {
+  it('перезаписывают прежнюю догадку', () => {
+    // Иначе однажды записанное «тариф не подтверждён» остаётся навсегда: поле не пустое, а
+    // значит дополнению не подлежит, и результату живой проверки некуда деться.
+    const patch = fillGaps(saved({ plan: 'тариф не подтверждён' }), {
+      provider: 'openai',
+      plan: 'Free',
+      verified: true,
+      notes: 'вошёл 04.08.2026'
+    })
+    expect(patch?.plan).toBe('Free')
+    expect(patch?.notes).toBe('вошёл 04.08.2026')
+  })
+
+  it('непроверенные данные чужого поля не трогают', () => {
+    expect(fillGaps(saved({ plan: 'мой тариф' }), { provider: 'openai', plan: 'из файла' })).toBeNull()
+  })
+})

@@ -106,19 +106,33 @@ describe('экран AI', () => {
   beforeEach(() => vi.resetModules())
   afterEach(() => vi.restoreAllMocks())
 
-  it('раскладывает доступы по типам и не выдумывает пустые группы', async () => {
+  it('группирует по деньгам, а не по типу записи', async () => {
+    // Владелец думает «за что плачу / где кончается / что бесплатно / что ещё не взял», а не
+    // «роутер это или ключ». Прежняя разбивка рассыпала один провайдер по трём полкам.
     await mount({
       access: [
-        access('Claude Max 5x', { kind: 'subscription', provider: 'anthropic' }),
+        access('Claude Max 5x', { kind: 'subscription', provider: 'anthropic', subscriptionId: 's1' }),
         access('OpenRouter', { kind: 'router' }),
+        access('Ollama', { kind: 'local', payment: 'free' }),
+        access('NVIDIA NIM', { kind: 'free-tier', status: 'planned', hasKey: false })
+      ],
+      subs: [sub()]
+    })
+    expect(screen.getByRole('heading', { name: /Плачу/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Балансы/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Бесплатные/ })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Можно взять/ })).toBeInTheDocument()
+  })
+
+  it('неоформленные не считаются доступами', async () => {
+    // «14 доступов», из которых четырёх не существует, — это ложь инвентаря.
+    await mount({
+      access: [
+        access('Живой', { kind: 'api' }),
         access('NVIDIA NIM', { kind: 'free-tier', status: 'planned', hasKey: false })
       ]
     })
-    expect(screen.getByRole('heading', { name: /Подписки/ })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /Роутеры и реселлеры/ })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /Бесплатные тарифы/ })).toBeInTheDocument()
-    // Типа «Локальные» среди записей нет — и заголовка быть не должно.
-    expect(screen.queryByRole('heading', { name: /Локальные/ })).not.toBeInTheDocument()
+    expect(within(header()).getByText(/1 можно взять/)).toBeInTheDocument()
   })
 
   it('платёж показывается в валюте подписки, а не переводится в доллары', async () => {
@@ -163,7 +177,8 @@ describe('экран AI', () => {
       access: [access('OpenRouter', { kind: 'router' })],
       checks: [{ accessId: 'OpenRouter', status: 'valid', remaining: 0.21, usage: 19.79, detail: null, checkedAt: Date.now(), lastOkAt: Date.now() }]
     })
-    expect(within(header()).getByText(/требует внимания/)).toBeInTheDocument()
+    // Не счётчик, а готовая фраза, по которой можно кликнуть и попасть в запись.
+    expect(screen.getByText(/OpenRouter: остался .* — пополнить/)).toBeInTheDocument()
   })
 
   it('страница доступа открыта рядом со списком, без модального окна', async () => {

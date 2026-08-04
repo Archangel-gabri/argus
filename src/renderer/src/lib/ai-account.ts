@@ -1,3 +1,4 @@
+import { money } from '@/lib/format'
 import type { AiAccess, AiAccountEntry, AiCheck, AiKind, AiPrice, AiUsageDay, Subscription } from '@/types'
 import { costOf, perMillion, type Rates, type TokenUsage } from '../../../shared/ai-pricing'
 import { providerFamily } from '../../../shared/ai-providers'
@@ -83,6 +84,44 @@ export function groupByKind(access: AiAccess[]): Array<{ kind: AiKind; items: Ai
   return KIND_ORDER.map((kind) => ({ kind, items: access.filter((a) => a.kind === kind) })).filter(
     (g) => g.items.length > 0
   )
+}
+
+/**
+ * Группы по экономике, а не по технике.
+ *
+ * Владелец думает не «роутер это или ключ», а «за что плачу, где кончается баланс, что бесплатно
+ * и что ещё не взял». Прежняя разбивка по типу записи рассыпала один провайдер по трём полкам:
+ * подписка ChatGPT в «Подписках», Codex в «Роутерах», ключ в «API-ключах».
+ */
+export type MoneyGroup = 'paid' | 'balance' | 'free' | 'available'
+
+export const MONEY_GROUP_LABEL: Record<MoneyGroup, string> = {
+  paid: 'Плачу',
+  balance: 'Балансы',
+  free: 'Бесплатные',
+  available: 'Можно взять'
+}
+
+export function moneyGroupOf(access: AiAccess, subs: Subscription[]): MoneyGroup {
+  // «Ещё не взял» важнее всего остального: у такой записи нет ни денег, ни ключа, и мешать её
+  // с рабочими доступами — значит выдавать список дел за инвентарь.
+  if (access.status === 'planned') return 'available'
+  const sub = subs.find((s) => s.id === access.subscriptionId)
+  if (sub) return 'paid'
+  if (access.payment === 'free' || access.kind === 'local' || access.kind === 'free-tier') return 'free'
+  return 'balance'
+}
+
+const MONEY_ORDER: MoneyGroup[] = ['paid', 'balance', 'free', 'available']
+
+export function groupByMoney(
+  access: AiAccess[],
+  subs: Subscription[]
+): Array<{ group: MoneyGroup; items: AiAccess[] }> {
+  return MONEY_ORDER.map((group) => ({
+    group,
+    items: access.filter((a) => moneyGroupOf(a, subs) === group)
+  })).filter((g) => g.items.length > 0)
 }
 
 /** Аккаунт вместе с записью, в которой лежат его учётные данные. */
@@ -291,6 +330,58 @@ export function daysUntilExpiry(iso: string | null, now = Date.now()): number | 
   const target = new Date(t)
   target.setHours(0, 0, 0, 0)
   return Math.round((target.getTime() - startOfToday.getTime()) / day)
+}
+
+export interface Attention {
+  accessId: string
+  /** Готовая фраза: объект, факт и что делать. Её и показываем — считать заново не нужно. */
+  text: string
+  severity: 'warning' | 'critical'
+}
+
+/**
+ * Что требует внимания — списком фраз, а не счётчиком.
+ *
+ * Число «3 требуют внимания» — тупик: причина уже посчитана, но человек вынужден глазами искать
+ * её в списке. Здесь возвращается то, что можно показать и по чему можно кликнуть.
+ */
+export function attentionList(
+  access: AiAccess[],
+  checks: Record<string, AiCheck>,
+  now = Date.now()
+): Attention[] {
+  const out: Attention[] = []
+  for (const a of access) {
+    const check = checks[a.id]
+    const days = daysUntilExpiry(a.keyExpiresAt, now)
+
+    if (a.status === 'expired')
+      out.push({ accessId: a.id, severity: 'critical', text: `${a.label}: доступ истёк` })
+    else if (check?.status === 'invalid')
+      out.push({ accessId: a.id, severity: 'critical', text: `${a.label}: ключ не принимается — перевыпустить` })
+
+    if (days !== null && days <= 14)
+      out.push({
+        accessId: a.id,
+        severity: days <= 3 ? 'critical' : 'warning',
+        text: days < 0 ? `${a.label}: ключ истёк` : `${a.label}: ключу осталось ${days} дн.`
+      })
+
+    if (typeof check?.remaining === 'number' && check.remaining <= LOW_CREDIT_USD)
+      out.push({
+        accessId: a.id,
+        severity: check.remaining <= 1 ? 'critical' : 'warning',
+        text: `${a.label}: остался ${money(check.remaining)} — пополнить`
+      })
+
+    if (a.status === 'planned' && a.createdAt > 0) {
+      const age = Math.floor((now - a.createdAt) / 86_400_000)
+      if (age >= 30)
+        out.push({ accessId: a.id, severity: 'warning', text: `${a.label}: так и не оформлен, висит ${age} дн.` })
+    }
+  }
+  // Срочное впереди: полоса короткая, и первым должно стоять то, что уже сломалось.
+  return out.sort((x, y) => (x.severity === y.severity ? 0 : x.severity === 'critical' ? -1 : 1))
 }
 
 /** Записи, требующие внимания: ключ умер, скоро истечёт или бесплатный доступ так и не взят. */

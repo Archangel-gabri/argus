@@ -150,6 +150,24 @@ export function fillGaps(existing: AiAccess, item: SeedAccess): AiAccessInput | 
   const patch: AiAccessInput = { provider: existing.provider }
   let changed = false
 
+  // Проверенный факт из файла ПЕРЕЗАПИСЫВАЕТ прежнюю догадку. Иначе однажды записанное
+  // «тариф не подтверждён» остаётся навсегда: поле не пустое, а значит дополнению не подлежит —
+  // и результат живой проверки некуда положить.
+  if (item.verified) {
+    if (item.plan && item.plan !== existing.plan) {
+      patch.plan = item.plan
+      changed = true
+    }
+    if (item.notes && item.notes !== existing.notes) {
+      patch.notes = item.notes
+      changed = true
+    }
+    if (item.status && item.status !== existing.status) {
+      patch.status = item.status
+      changed = true
+    }
+  }
+
   if (existing.accounts.length === 0 && item.accounts?.length) {
     patch.accounts = item.accounts
     changed = true
