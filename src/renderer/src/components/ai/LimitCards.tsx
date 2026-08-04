@@ -1,7 +1,7 @@
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
-import { DEFAULT_WINDOW_HOURS, formatResetIn, windowState } from '../../../../shared/ai-blocks'
+import { DEFAULT_WINDOW_HOURS, formatResetIn, mergeBlocks, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
 import type { AiAccess, AiCheck, AiQuotaSlice, AiUsageBlock, AiUsageDay } from '@/types'
 
@@ -65,10 +65,13 @@ function ProviderCard({ slice, now }: { slice: AiQuotaSlice; now: number }): Rea
             : (slice.plan ?? '')}
         </span>
         <span className="shrink-0 tabular-nums">
-          {slice.used != null && slice.limit != null
-            ? `${amount(slice.used, slice.unit)} из ${amount(slice.limit, slice.unit)}`
-            : slice.limit === 0
-              ? 'включённого расхода нет'
+          {/* Нулевой потолок проверяется ПЕРВЫМ: у бесплатного тарифа Cursor и расход, и лимит
+              равны нулю, и пара «0 из 0» читается как исправная шкала, хотя означает, что
+              включённого расхода нет вовсе. */}
+          {slice.limit === 0
+            ? 'включённого расхода нет'
+            : slice.used != null && slice.limit != null
+              ? `${amount(slice.used, slice.unit)} из ${amount(slice.limit, slice.unit)}`
               : ''}
         </span>
       </div>
@@ -232,7 +235,11 @@ export function LimitCards({
   now?: number
 }): React.JSX.Element | null {
   const covered = coveredScopes(quotas)
-  const mine = source ? blocks.filter((b) => b.source === source) : []
+  // Осколки склеиваются перед счётом: в базе одно пятичасовое окно может лежать несколькими
+  // перекрывающимися блоками (разные разговоры, разные проходы сборщика). Без склейки пик
+  // считался по осколку и выходил заниженным — а именно от него берётся доля, когда своего
+  // потолка нет.
+  const mine = source ? mergeBlocks(blocks.filter((b) => b.source === source)) : []
   const state = source ? windowState(mine, access.limits.windowTokens, now) : null
 
   // Пик считается по ЗАВЕРШЁННЫМ периодам. Текущий период — сам себе максимум, и если включить

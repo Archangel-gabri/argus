@@ -10,6 +10,13 @@
 // невозможно поймать вручную, зато легко закрыть проверками.
 
 import { daysUntilCalendar } from '../shared/billing'
+import {
+  CREDIT_CRITICAL_USD,
+  CREDIT_WARNING_USD,
+  IDLE_ACCESS_DAYS,
+  KEY_EXPIRY_CRITICAL_DAYS,
+  KEY_EXPIRY_WARNING_DAYS
+} from '../shared/ai-thresholds'
 
 /** Что сторож умеет замечать. */
 export type AlertKind =
@@ -74,11 +81,16 @@ export interface AlertInput {
 export const DISK_WARNING = 85 // % — «скоро кончится»
 export const DISK_CRITICAL = 93 // % — «уже мешает»
 export const RENEWAL_WARNING_DAYS = 5 // за сколько дней напоминать о ручном продлении
-export const KEY_EXPIRY_WARNING_DAYS = 14 // за сколько дней предупреждать об истечении ключа
-export const KEY_EXPIRY_CRITICAL_DAYS = 3 // когда это уже «бросай и перевыпускай»
-export const CREDIT_WARNING_USD = 5 // остаток, ниже которого пора пополняться
-export const CREDIT_CRITICAL_USD = 1 // остаток, при котором работа встанет со дня на день
-export const IDLE_ACCESS_DAYS = 30 // сколько «возьму потом» считается решением, а не забывчивостью
+// Пороги по ИИ-доступам живут в общем модуле: их читает и сторож, и экран. Пока они были
+// объявлены в двух местах, равенство держалось на комментарии — а разъехавшиеся пороги коварны
+// тем, что обе цифры выглядят осмысленно: уведомление уже горит, а экран ещё говорит «всё цело».
+export {
+  KEY_EXPIRY_WARNING_DAYS,
+  KEY_EXPIRY_CRITICAL_DAYS,
+  CREDIT_WARNING_USD,
+  CREDIT_CRITICAL_USD,
+  IDLE_ACCESS_DAYS
+} from '../shared/ai-thresholds'
 
 /**
  * Оценить состояние и вернуть тревоги.

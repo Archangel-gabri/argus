@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_WINDOW_HOURS,
   buildBlocks,
   currentBlock,
   formatResetIn,
@@ -52,6 +53,30 @@ describe('окна лимита', () => {
     const [b] = buildBlocks([rec(10)], 3)
     expect(b.endTs).toBe(at(13))
   })
+
+  it('запись продолжает уже сохранённое окно, а не открывает своё поверх', () => {
+    // Хранилище прибавляет к блоку по совпадению начала — поэтому продолжение окна обязано
+    // выйти с НАЧАЛОМ сохранённого окна и только новыми токенами. Без этого каждый проход
+    // открывал бы окно заново, и в базе копились бы перекрывающиеся осколки.
+    const saved: UsageBlock[] = [
+      { startTs: at(10), endTs: at(15), tokens: 5_000_000, costUsd: 5, requests: 10 }
+    ]
+    const fresh = buildBlocks([rec(12.5, 2_000_000)], DEFAULT_WINDOW_HOURS, saved)
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0].startTs).toBe(at(10))
+    expect(fresh[0].endTs).toBe(at(15))
+    // Только дельта: сохранённые 5M уже лежат в базе, их сюда включать — задвоить.
+    expect(fresh[0].tokens).toBe(2_000_000)
+    expect(fresh[0].requests).toBe(1)
+  })
+
+  it('запись после конца сохранённого окна открывает новое', () => {
+    const saved: UsageBlock[] = [{ startTs: at(10), endTs: at(15), tokens: 1000, costUsd: 1, requests: 1 }]
+    const fresh = buildBlocks([rec(15.5)], DEFAULT_WINDOW_HOURS, saved)
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0].startTs).toBe(at(15.5))
+    expect(fresh[0].endTs).toBe(at(20.5))
+  })
 })
 
 describe('слияние проходов', () => {
@@ -73,6 +98,26 @@ describe('слияние проходов', () => {
   it('новое окно добавляется и список остаётся упорядоченным', () => {
     const merged = mergeBlocks([block(16, 10)], [block(10, 20)])
     expect(merged.map((b) => b.startTs)).toEqual([at(10), at(16)])
+  })
+
+  it('перекрывающиеся окна сливаются: осколок — то же окно, увиденное с середины', () => {
+    // Разговор А с 10:00 (5M) и Б с 12:30 (2M) записаны разными проходами как два окна.
+    // Окно ОДНО — с 10:00: в 13:00 карточка обязана видеть 7M, а не 2M последнего осколка.
+    const merged = mergeBlocks([block(10, 5_000_000)], [block(12.5, 2_000_000)])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].startTs).toBe(at(10))
+    // Конец не уезжает за осколком: его «конец» отмерен от середины настоящего окна и лжёт.
+    expect(merged[0].endTs).toBe(at(15))
+    expect(merged[0].tokens).toBe(7_000_000)
+    expect(merged[0].requests).toBe(2)
+  })
+
+  it('конец осколка не склеивает цепочку настоящих окон', () => {
+    // Если бы конец слитого окна расширялся до 17:30, настоящее окно 16:00 влилось бы в
+    // цепочку — и при непрерывной работе окно не закрывалось бы никогда.
+    const merged = mergeBlocks([block(10, 100), block(12.5, 50)], [block(16, 10)])
+    expect(merged.map((b) => b.startTs)).toEqual([at(10), at(16)])
+    expect(merged[0].endTs).toBe(at(15))
   })
 })
 
@@ -104,6 +149,19 @@ describe('текущее окно', () => {
 
   it('окна нет — состояния нет', () => {
     expect(windowState(blocks, 100, at(20))).toBeNull()
+  })
+
+  it('окно из осколков хранилища читается целиком, а не последним куском', () => {
+    // В хранилище могли остаться перекрывающиеся блоки прежних проходов. Без слияния бралось
+    // последнее по началу: карточка показывала 2M вместо 7M и «сброс через 4½ ч» вместо 2 ч.
+    const fragments: UsageBlock[] = [
+      { startTs: at(10), endTs: at(15), tokens: 5_000_000, costUsd: 5, requests: 10 },
+      { startTs: at(12.5), endTs: at(17.5), tokens: 2_000_000, costUsd: 2, requests: 4 }
+    ]
+    const s = windowState(fragments, null, at(13))
+    expect(s?.block.startTs).toBe(at(10))
+    expect(s?.block.tokens).toBe(7_000_000)
+    expect(s?.resetsInMs).toBe(2 * HOUR)
   })
 })
 

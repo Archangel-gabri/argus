@@ -74,3 +74,31 @@ describe('разбор ответов', () => {
     expect(parseOllamaShape({ models: 'нет' })).toEqual([])
   })
 })
+
+describe('адрес списка моделей', () => {
+  const access = (over: Record<string, unknown>): Parameters<typeof modelsEndpoint>[0] =>
+    ({ provider: 'openai', kind: 'subscription', baseUrl: null, channels: [], ...over }) as never
+
+  it('берётся у канала, если на записи его нет', () => {
+    // Ключ Codex выписан сторонним роутером и живёт в канале вместе со своим адресом. Без этого
+    // список спрашивался у api.openai.com роутерным ключом — 401 и молчаливое «не обновилось».
+    const r = modelsEndpoint(
+      access({ channels: [{ kind: 'cli', label: 'Codex CLI', hasKey: true, baseUrl: 'https://cli.neutrino.su/v1' }] })
+    )
+    expect(r?.url).toBe('https://cli.neutrino.su/v1/models')
+  })
+
+  it('адрес записи важнее канального', () => {
+    const r = modelsEndpoint(
+      access({ baseUrl: 'https://a/v1', channels: [{ kind: 'api', label: 'k', hasKey: true, baseUrl: 'https://b/v1' }] })
+    )
+    expect(r?.url).toBe('https://a/v1/models')
+  })
+
+  it('хвостовой слэш срезается у любого источника адреса', () => {
+    expect(modelsEndpoint(access({ baseUrl: 'https://a/v1/' }))?.url).toBe('https://a/v1/models')
+    expect(
+      modelsEndpoint(access({ channels: [{ kind: 'api', label: 'k', hasKey: true, baseUrl: 'https://b/v1/' }] }))?.url
+    ).toBe('https://b/v1/models')
+  })
+})

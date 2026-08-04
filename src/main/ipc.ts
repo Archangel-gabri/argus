@@ -238,7 +238,13 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
         sessionId: async () => (await bankCookies('tbank')).psid ?? null,
         request: (url, referer) => bankRequest('tbank', url, referer)
       })
-      const value = cabinet.totals[account.currency]
+      // Сумма по валюте — это ВСЕ счета кабинета вместе. Если записей Т-Банка заведено две, обе
+      // получили бы полный итог, и он удвоился бы на экране. Пока запись одна на банк, это
+      // допустимо; вторая такая же запись — повод не гадать, а промолчать.
+      const twins = vault
+        .listFinanceAccounts()
+        .filter((a) => a.currency === account.currency && a.source === 'api' && bankOf(a) === 'tbank')
+      const value = twins.length > 1 ? undefined : cabinet.totals[account.currency]
       if (cabinet.status !== 'ok' || value === undefined) {
         failed++
         continue
@@ -254,7 +260,9 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
     const exchange = exchangeOf(account)
     if (exchange) {
       const balance = await fetchExchangeBalance(exchange, creds)
-      if (balance.status === 'error' || balance.totalUsd == null) {
+      // Биржа считает итог в долларах. Записать его в счёт, заведённый в рублях, значит показать
+      // «85 320 ₽» там, где на деле $85 320: цифра правдоподобная и неверная в восемьдесят раз.
+      if (balance.status === 'error' || balance.totalUsd == null || account.currency !== 'USD') {
         failed++
         continue
       }
@@ -267,7 +275,9 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
     // один ключ, и он лежит там же, где ключи бирж.
     if (isTinvest(account)) {
       const portfolio = await fetchTinvestPortfolio(creds.apiKey)
-      if (portfolio.status === 'error' || portfolio.total == null) {
+      // Валюта портфеля сверяется со счётом по той же причине: у брокера счёт может быть и
+      // долларовым, а подпись валюты берётся из записи, а не из ответа.
+      if (portfolio.status === 'error' || portfolio.total == null || portfolio.currency !== account.currency) {
         failed++
         continue
       }

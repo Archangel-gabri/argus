@@ -273,8 +273,13 @@ export function seedAiAccess(): SeedResult {
   }
 
   const existing = vault.listAiAccess()
+  // Считаем присутствующими и метки, ушедшие в КАНАЛЫ. После слияния «ChatGPT» и «Codex CLI»
+  // перестают быть отдельными записями и становятся каналами одного аккаунта; если смотреть
+  // только на label, засев решит, что «Codex CLI» пропал, заведёт его заново, а слияние тут же
+  // сольёт обратно и удалит. Цикл повторялся бы каждый запуск, а идентификаторы и даты
+  // создания — дрожать.
   const missing = pickMissing(
-    existing.map((a) => a.label),
+    existing.flatMap((a) => [a.label, ...a.channels.map((c) => c.label)]),
     file.access
   )
 

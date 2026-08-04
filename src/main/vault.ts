@@ -59,13 +59,12 @@ type Meta = VaultMeta
 
 let db: Database.Database | null = null
 
-// Rough static FX just to normalise mixed-currency totals (honest approximation, 2026).
-const FX: Record<string, number> = {
-  USD: 1, EUR: 1.08, RUB: 0.0126, GBP: 1.27, CNY: 0.14, JPY: 0.0067, CHF: 1.11,
-  CAD: 0.73, AUD: 0.66, INR: 0.012, BRL: 0.2, KRW: 0.00075, TRY: 0.03, PLN: 0.25,
-  UAH: 0.025, KZT: 0.0021, AED: 0.27, SEK: 0.095, NOK: 0.093, SGD: 0.74,
-  PKR: 0.0036
-}
+// Курсы (приблизительные, вшитые) — общие на всё приложение: src/shared/fx.ts. Местных копий
+// было три, и они разошлись — историю см. там. `?? 1` в toUsd ниже — прежнее поведение этого
+// файла: на путях IPC чужую валюту отсекает parseDeviceCost, а курс каждой валюты из
+// CURRENCY_CODES гарантирован (satisfies + fx-tables.test.ts); честная семантика неизвестной
+// валюты — null, и она живёт в shared/fx.toUsd. Импорт посреди файла законен: ESM его поднимает.
+import { FX_TO_USD as FX } from '../shared/fx'
 const toUsd = (amount: number, currency: string): number =>
   Math.round(amount * (FX[currency] ?? 1) * 100) / 100
 

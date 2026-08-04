@@ -8,6 +8,7 @@
 // Ответ провайдера — это ПЕРЕЧЕНЬ, а не прайс-лист: цены среди них отдаёт только OpenRouter.
 // Остальные модели сопоставляются с каталогом по имени, и если цены нет, так и показывается.
 
+import { keyEndpointBase } from './ai'
 import type { AiAccess } from './types'
 
 const TIMEOUT_MS = 15_000
@@ -72,9 +73,16 @@ export function parseOllamaShape(data: unknown): FetchedModel[] {
     .map((id) => ({ id }))
 }
 
-/** Куда идти за списком: адрес записи важнее умолчания — у роутера он свой. */
+/**
+ * Куда идти за списком моделей.
+ *
+ * Адрес берётся у записи, а если его там нет — у канала, где лежит ключ. Это тот же урок, что с
+ * проверкой ключа: у аккаунта OpenAI ключ выписан сторонним роутером и живёт в канале вместе со
+ * своим адресом. Спрашивать список у api.openai.com роутерным ключом значит получать 401 и молча
+ * не обновлять модели никогда.
+ */
 export function modelsEndpoint(access: AiAccess): { url: string; headers: Record<string, string>; shape: 'openai' | 'gemini' | 'ollama' } | null {
-  const base = access.baseUrl?.replace(/\/+$/, '')
+  const base = (access.baseUrl ?? keyEndpointBase(access))?.replace(/\/+$/, '')
   const p = access.provider.toLowerCase()
 
   if (p === 'ollama' || access.kind === 'local')

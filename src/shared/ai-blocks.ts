@@ -33,42 +33,85 @@ const HOUR = 60 * 60 * 1000
  * Записи сортируются: файлы читаются в произвольном порядке, а границы окон зависят от
  * последовательности. Ответ, попавший в уже открытое окно, продлевает его наполнение, но не
  * его конец.
+ *
+ * `existing` — окна, уже лежащие в хранилище. Запись, попавшая в такое окно, зачисляется в
+ * НЕГО, а не открывает новое поверх: хранилище прибавляет к блоку по точному совпадению
+ * начала, поэтому без якоря каждый файл каждого прохода заводил бы собственное окно, и
+ * «текущая сессия» видела бы последний осколок вместо целого. В выдаче — только окна,
+ * получившие новые записи, и только с НОВЫМИ токенами: сохранённое уже посчитано, включать
+ * его сюда — задвоить при дозаписи.
  */
-export function buildBlocks(records: BlockInput[], windowHours = DEFAULT_WINDOW_HOURS): UsageBlock[] {
+export function buildBlocks(
+  records: BlockInput[],
+  windowHours = DEFAULT_WINDOW_HOURS,
+  existing: UsageBlock[] = []
+): UsageBlock[] {
   const span = windowHours * HOUR
   const sorted = [...records].filter((r) => r.ts > 0).sort((a, b) => a.ts - b.ts)
-  const out: UsageBlock[] = []
+  // Хронология известных окон: сохранённые (сведённые к каноническим — в хранилище могли
+  // остаться перекрывающиеся осколки прежних проходов) плюс открытые этим проходом.
+  const known: Array<{ startTs: number; endTs: number }> = mergeBlocks(existing).map((b) => ({
+    startTs: b.startTs,
+    endTs: b.endTs
+  }))
+  const deltas = new Map<number, UsageBlock>()
   for (const r of sorted) {
+    // Самое РАННЕЕ окно, накрывающее запись: длина окна отмеряется от первого обращения,
+    // поэтому при наложениях настоящим является то, что началось раньше.
+    let win = known.find((w) => r.ts >= w.startTs && r.ts < w.endTs)
+    if (!win) {
+      win = { startTs: r.ts, endTs: r.ts + span }
+      // Вставка по порядку начал: записи отсортированы, но сохранённое окно может лежать и
+      // позже нового — файл со старыми временами мог впервые попасть в проход.
+      const i = known.findIndex((w) => w.startTs > r.ts)
+      if (i < 0) known.push(win)
+      else known.splice(i, 0, win)
+    }
+    const d = deltas.get(win.startTs) ?? {
+      startTs: win.startTs,
+      endTs: win.endTs,
+      tokens: 0,
+      costUsd: 0,
+      requests: 0
+    }
+    d.tokens += r.tokens
+    d.costUsd += r.costUsd
+    d.requests++
+    deltas.set(win.startTs, d)
+  }
+  return [...deltas.values()].sort((a, b) => a.startTs - b.startTs)
+}
+
+/**
+ * Слить перекрывающиеся окна в канонические.
+ *
+ * В хранилище остаются осколки прежних проходов: окно, «открытое» серединой настоящего,
+ * потому что его первые записи в тот проход не попали. Осколок — то же самое окно, увиденное
+ * с середины, поэтому он вливается в самое раннее накрывающее его окно: начало окна — время
+ * ПЕРВОГО обращения.
+ *
+ * Конец при слиянии НЕ расширяется. Конец осколка отмерен от середины настоящего окна и
+ * потому лжёт, а расширение склеивало бы и следующие настоящие окна: при непрерывной работе
+ * цепочка не рвалась бы никогда, и «сброс» не наступал бы (см. предупреждение у endTs).
+ */
+export function mergeBlocks(existing: UsageBlock[], fresh: UsageBlock[] = []): UsageBlock[] {
+  const sorted = [...existing, ...fresh].sort((a, b) => a.startTs - b.startTs)
+  const out: UsageBlock[] = []
+  for (const b of sorted) {
     const last = out[out.length - 1]
-    if (last && r.ts < last.endTs) {
-      last.tokens += r.tokens
-      last.costUsd += r.costUsd
-      last.requests++
+    if (last && b.startTs < last.endTs) {
+      last.tokens += b.tokens
+      last.costUsd += b.costUsd
+      last.requests += b.requests
       continue
     }
-    out.push({ startTs: r.ts, endTs: r.ts + span, tokens: r.tokens, costUsd: r.costUsd, requests: 1 })
+    out.push({ ...b })
   }
   return out
 }
 
-/** Слить два перекрывающихся набора блоков (новый проход логов + уже сохранённое). */
-export function mergeBlocks(existing: UsageBlock[], fresh: UsageBlock[]): UsageBlock[] {
-  const byStart = new Map<number, UsageBlock>()
-  for (const b of existing) byStart.set(b.startTs, { ...b })
-  for (const b of fresh) {
-    const prev = byStart.get(b.startTs)
-    if (!prev) {
-      byStart.set(b.startTs, { ...b })
-      continue
-    }
-    prev.tokens += b.tokens
-    prev.costUsd += b.costUsd
-    prev.requests += b.requests
-  }
-  return [...byStart.values()].sort((a, b) => a.startTs - b.startTs)
-}
-
-/** Окно, которое идёт прямо сейчас. null — последнее давно закрылось. */
+/** Окно, которое идёт прямо сейчас. null — последнее давно закрылось.
+ *  Список должен быть без перекрытий: сырые блоки из хранилища сначала через mergeBlocks. */
 export function currentBlock(blocks: UsageBlock[], now = Date.now()): UsageBlock | null {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i]
@@ -99,7 +142,9 @@ export function windowState(
   limitTokens: number | null | undefined,
   now = Date.now()
 ): WindowState | null {
-  const block = currentBlock(blocks, now)
+  // Сначала осколки сводятся к каноническим окнам: иначе при перекрытиях в хранилище карточка
+  // показывала бы токены последнего осколка и его выдуманный срок сброса вместо целого окна.
+  const block = currentBlock(mergeBlocks(blocks), now)
   if (!block) return null
   const span = block.endTs - block.startTs
   return {

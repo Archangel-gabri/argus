@@ -147,11 +147,19 @@ export function migrateToAccounts(): { accounts: number; merged: number } {
   const plans = planMerge(list)
   let merged = 0
   for (const plan of plans) {
+    // Ключ поглощаемой записи надо забрать ДО удаления. Иначе выходит так: у подписки ChatGPT
+    // ключа нет, у записи «ключ API» он есть, после слияния остаётся первая — и ключ уходит
+    // вместе со второй. При этом канал продолжает утверждать «ключ сохранён», проверка отвечает
+    // «ключа нет», а список моделей молча перестаёт обновляться.
+    const keeperKey = vault.getAiKey(plan.keepId)
+    const rescued = keeperKey ? null : plan.dropIds.map((id) => vault.getAiKey(id)).find(Boolean) ?? null
+
     vault.updateAiAccess(plan.keepId, {
       provider: plan.provider,
       label: plan.label,
       channels: plan.channels,
-      verified: plan.verified
+      verified: plan.verified,
+      ...(rescued ? { apiKey: rescued } : {})
     })
     for (const id of plan.dropIds) {
       vault.deleteAiAccess(id)

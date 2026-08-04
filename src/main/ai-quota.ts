@@ -167,9 +167,13 @@ export function parseFirecrawl(credits: unknown, tokens: unknown): QuotaSlice[] 
     const limit = d.planCredits ?? d.planTokens
     const remaining = d.remainingCredits ?? d.remainingTokens
     if (typeof limit !== 'number') continue
+    // Без остатка срез не строим вовсе. Подстановка нуля дала бы «израсходовано всё» — полосу
+    // в край и красный цвет там, где сервис просто не назвал цифру. Это та же ошибка, что ноль
+    // вместо неизвестного, только вывернутая наизнанку.
+    if (typeof remaining !== 'number') continue
     // Сервис отдаёт ОСТАТОК, а показываем мы израсходованное: так одинаково читаются и деньги,
     // и кредиты, и токены — «сколько ушло из скольких».
-    const used = Math.max(0, limit - (typeof remaining === 'number' ? remaining : 0))
+    const used = Math.max(0, limit - remaining)
     out.push({
       scope,
       label,

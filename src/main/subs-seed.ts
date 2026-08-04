@@ -41,6 +41,21 @@ export interface SubsSeedPlan {
 
 const key = (name: string): string => name.trim().toLowerCase()
 
+/**
+ * Какая дата продления победит.
+ *
+ * `undefined` в файле означает «не сказано» — остаётся то, что в базе. Явный `null` стирает.
+ * Во всех остальных случаях берётся ПОЗДНЕЙШАЯ: файл писался однажды и не знает про продления,
+ * случившиеся после.
+ */
+export function laterRenewal(fromFile: string | null | undefined, current: string | null): string | null {
+  if (fromFile === undefined) return current
+  if (fromFile === null) return null
+  if (!current) return fromFile
+  return current > fromFile ? current : fromFile
+}
+
+
 /** Собрать запись для хранилища: поля файла поверх того, что уже лежит. */
 function merge(item: SeedSubscription, current?: Subscription): SubscriptionInput {
   return {
@@ -50,7 +65,11 @@ function merge(item: SeedSubscription, current?: Subscription): SubscriptionInpu
     amount: item.amount ?? current?.amount ?? 0,
     currency: (item.currency ?? current?.currency ?? 'USD') as Currency,
     period: item.period ?? current?.period ?? 'mo',
-    nextRenewal: item.nextRenewal !== undefined ? item.nextRenewal : (current?.nextRenewal ?? null),
+    // Дата продления — единственное поле, где файл НЕ главный. Кнопка «Продлено» двигает её
+    // вперёд на оплаченный период, и если файл вернёт свою — сторож снова скажет «срок прошёл»,
+    // а нажатие окажется бесполезным. Поэтому файл задаёт дату как «не раньше чем»: более
+    // поздняя дата в базе выигрывает.
+    nextRenewal: laterRenewal(item.nextRenewal, current?.nextRenewal ?? null),
     notes: item.notes !== undefined ? item.notes : (current?.notes ?? null),
     manualRenewal: item.manualRenewal ?? current?.manualRenewal ?? false
   }

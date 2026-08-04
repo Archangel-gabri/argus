@@ -1,7 +1,9 @@
 // Засев подписок трогает деньги: ошибка здесь либо заводит дубль (и месячный итог врёт вдвое),
 // либо затирает правку, сделанную руками, либо молча оставляет устаревшую сумму.
 import { describe, expect, it } from 'vitest'
-import { planSubsSeed, type SubsSeedFile } from './subs-seed'
+import { planSubsSeed, type SubsSeedFile,
+  laterRenewal
+} from './subs-seed'
 import type { Subscription } from './types'
 
 const sub = (over: Partial<Subscription> = {}): Subscription => ({
@@ -92,5 +94,30 @@ describe('план засева подписок', () => {
 
   it('пустой файл ничего не ломает', () => {
     expect(planSubsSeed({}, [sub()])).toEqual({ create: [], update: [], retire: [] })
+  })
+})
+
+describe('дата продления против файла', () => {
+  it('продление, отмеченное владельцем, не откатывается назад', () => {
+    // Кнопка «Продлено» двигает дату на оплаченный период. Если файл вернёт свою, сторож снова
+    // скажет «срок прошёл», и нажатие окажется бесполезным — каждый запуск подряд.
+    const plan = planSubsSeed({ subscriptions: [{ name: 'Boosty — erafox', nextRenewal: '2026-08-10' }] }, [
+      sub({ nextRenewal: '2026-09-10' })
+    ])
+    expect(plan.update).toEqual([])
+  })
+
+  it('дата из файла применяется, если она позже', () => {
+    const plan = planSubsSeed({ subscriptions: [{ name: 'Boosty — erafox', nextRenewal: '2026-10-10' }] }, [
+      sub({ nextRenewal: '2026-08-10' })
+    ])
+    expect(plan.update[0].input.nextRenewal).toBe('2026-10-10')
+  })
+
+  it('какая дата побеждает', () => {
+    expect(laterRenewal(undefined, '2026-09-10')).toBe('2026-09-10')
+    expect(laterRenewal(null, '2026-09-10')).toBeNull()
+    expect(laterRenewal('2026-08-10', null)).toBe('2026-08-10')
+    expect(laterRenewal('2026-08-10', '2026-09-10')).toBe('2026-09-10')
   })
 })

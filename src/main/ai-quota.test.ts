@@ -42,6 +42,12 @@ describe('квота Firecrawl', () => {
     expect(parseFirecrawl({ data: { remainingCredits: 1000, planCredits: 1000 } }, null)[0].used).toBe(0)
   })
 
+  it('без остатка срез не строится — иначе «израсходовано всё»', () => {
+    // Подстановка нуля вместо неназванного остатка даёт полосу в край и красный цвет там, где
+    // сервис просто промолчал.
+    expect(parseFirecrawl({ data: { planCredits: 1000 } }, null)).toEqual([])
+  })
+
   it('мусор вместо ответа не превращается в нули', () => {
     expect(parseFirecrawl(null, null)).toEqual([])
     expect(parseFirecrawl({ data: {} }, null)).toEqual([])

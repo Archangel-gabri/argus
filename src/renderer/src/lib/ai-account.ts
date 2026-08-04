@@ -2,6 +2,13 @@ import { money } from '@/lib/format'
 import type { AiAccess, AiAccountEntry, AiCheck, AiKind, AiPrice, AiUsageDay, Subscription } from '@/types'
 import { costOf, perMillion, type Rates, type TokenUsage } from '../../../shared/ai-pricing'
 import { providerFamily } from '../../../shared/ai-providers'
+import {
+  CREDIT_CRITICAL_USD,
+  CREDIT_WARNING_USD,
+  IDLE_ACCESS_DAYS,
+  KEY_EXPIRY_CRITICAL_DAYS,
+  KEY_EXPIRY_WARNING_DAYS
+} from '../../../shared/ai-thresholds'
 
 export interface AiSummary {
   /** null = ещё нет достаточных данных, строка = подтверждённые / проверенные ключи. */
@@ -278,32 +285,16 @@ export function monthlyCost(sub: Subscription | undefined): number | null {
 }
 
 /**
- * Приблизительные курсы к доллару — те же, что в хранилище.
+ * Перевод в доллары и пометка приблизительности — из общей таблицы курсов (src/shared/fx.ts).
  *
- * Нужны в одном месте: расход по логам считается в долларах (цены провайдеров долларовые), а
- * подписка может быть в евро. Делить одно на другое без перевода — получить красивое число,
- * которое ничего не значит.
+ * Нужны здесь потому, что расход по логам считается в долларах (цены провайдеров долларовые),
+ * а подписка может быть в евро: делить одно на другое без перевода — получить красивое число,
+ * которое ничего не значит. Своя таблица тут была короче общей на половину валют, и окупаемость
+ * подписки, скажем, в JPY показывалась как «не знаю» при посчитанном итоге на экране подписок.
+ * Семантика «неизвестная валюта → null» описана у самой функции: соврать курсом хуже, чем
+ * не показать.
  */
-const FX_TO_USD: Record<string, number> = {
-  USD: 1,
-  EUR: 1.08,
-  RUB: 0.0126,
-  GBP: 1.27,
-  CNY: 0.14,
-  CHF: 1.11,
-  PLN: 0.25,
-  KZT: 0.0021,
-  TRY: 0.029
-}
-
-/** Курс здесь справочный: он вшит в приложение и не обновляется. Цифры на нём — приблизительные. */
-export const FX_IS_APPROXIMATE = true
-
-/** Сумма в долларах. Неизвестная валюта — null: соврать курсом хуже, чем не показать. */
-export function toUsd(amount: number, currency: string): number | null {
-  const rate = FX_TO_USD[currency]
-  return rate == null ? null : amount * rate
-}
+export { FX_IS_APPROXIMATE, toUsd } from '../../../shared/fx'
 
 /**
  * Окупаемость подписки: во сколько раз эквивалент по API-ценам больше абонентской платы.
@@ -344,6 +335,9 @@ export interface Attention {
  *
  * Число «3 требуют внимания» — тупик: причина уже посчитана, но человек вынужден глазами искать
  * её в списке. Здесь возвращается то, что можно показать и по чему можно кликнуть.
+ *
+ * Пороги — общие со сторожем (src/shared/ai-thresholds.ts): экран и уведомление обязаны
+ * срабатывать на одних и тех же числах, иначе уведомление горит при спокойном экране.
  */
 export function attentionList(
   access: AiAccess[],
@@ -360,23 +354,23 @@ export function attentionList(
     else if (check?.status === 'invalid')
       out.push({ accessId: a.id, severity: 'critical', text: `${a.label}: ключ не принимается — перевыпустить` })
 
-    if (days !== null && days <= 14)
+    if (days !== null && days <= KEY_EXPIRY_WARNING_DAYS)
       out.push({
         accessId: a.id,
-        severity: days <= 3 ? 'critical' : 'warning',
+        severity: days <= KEY_EXPIRY_CRITICAL_DAYS ? 'critical' : 'warning',
         text: days < 0 ? `${a.label}: ключ истёк` : `${a.label}: ключу осталось ${days} дн.`
       })
 
     if (typeof check?.remaining === 'number' && check.remaining <= LOW_CREDIT_USD)
       out.push({
         accessId: a.id,
-        severity: check.remaining <= 1 ? 'critical' : 'warning',
+        severity: check.remaining <= CREDIT_CRITICAL_USD ? 'critical' : 'warning',
         text: `${a.label}: остался ${money(check.remaining)} — пополнить`
       })
 
     if (a.status === 'planned' && a.createdAt > 0) {
       const age = Math.floor((now - a.createdAt) / 86_400_000)
-      if (age >= 30)
+      if (age >= IDLE_ACCESS_DAYS)
         out.push({ accessId: a.id, severity: 'warning', text: `${a.label}: так и не оформлен, висит ${age} дн.` })
     }
   }
@@ -384,10 +378,12 @@ export function attentionList(
   return out.sort((x, y) => (x.severity === y.severity ? 0 : x.severity === 'critical' ? -1 : 1))
 }
 
-/** Записи, требующие внимания: ключ умер, скоро истечёт или бесплатный доступ так и не взят. */
-/** Ниже этого остатка доступ считается почти исчерпанным — тот же порог, что у сторожа. */
-export const LOW_CREDIT_USD = 5
+/** Ниже этого остатка доступ считается почти исчерпанным — тот же порог, что у сторожа:
+ *  теперь буквально та же константа (src/shared/ai-thresholds.ts), а не два числа,
+ *  совпадающие на честном слове. */
+export const LOW_CREDIT_USD = CREDIT_WARNING_USD
 
+/** Записи, требующие внимания: ключ умер, скоро истечёт или бесплатный доступ так и не взят. */
 export function needsAttention(
   access: AiAccess[],
   checks: Record<string, AiCheck>,
@@ -396,7 +392,7 @@ export function needsAttention(
   return access.filter((a) => {
     if (a.status === 'expired') return true
     const days = daysUntilExpiry(a.keyExpiresAt, now)
-    if (days !== null && days <= 14) return true
+    if (days !== null && days <= KEY_EXPIRY_WARNING_DAYS) return true
     const check = checks[a.id]
     // Кончающийся баланс — то же «требует внимания»: без него экран показывал ноль проблем,
     // пока строка рядом честно горела предупреждением об остатке в двадцать центов.

@@ -1,7 +1,68 @@
-import { describe, expect, it } from 'vitest'
-import { localDate, parseClaudeLine, parseCodexLine, type CodexState,
+import { describe, expect, it, vi } from 'vitest'
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { collectUsage, localDate, parseClaudeLine, parseCodexLine, type CodexState,
   takeFresh
 } from './ai-usage'
+import * as vault from './vault'
+
+// Хранилище подменяется памятью, но с ТЕМИ ЖЕ договорённостями, что у настоящего vault:
+// filterUnseenUsage запоминает показанные идентификаторы, addUsageBlocks прибавляет к блоку
+// по совпадению (source, startTs). Иначе тест проверял бы выдуманное хранилище, а не сбор.
+vi.mock('./vault', () => {
+  interface Cursor {
+    path: string
+    size: number
+    mtime: number
+    offset: number
+  }
+  interface Block {
+    source: string
+    startTs: number
+    endTs: number
+    tokens: number
+    costUsd: number
+    requests: number
+  }
+  const cursors = new Map<string, Cursor>()
+  const seen = new Set<string>()
+  const blocks = new Map<string, Block>()
+  return {
+    isUnlocked: (): boolean => true,
+    getUsageCursor: (path: string): Cursor | null => cursors.get(path) ?? null,
+    setUsageCursor: (c: Cursor): void => {
+      cursors.set(c.path, c)
+    },
+    filterUnseenUsage: (ids: string[]): Set<string> => {
+      const fresh = new Set<string>()
+      for (const id of ids) {
+        if (seen.has(id)) continue
+        seen.add(id)
+        fresh.add(id)
+      }
+      return fresh
+    },
+    findAiPrice: (): null => null,
+    addUsage: (): void => {},
+    listUsageBlocks: (source?: string): Block[] =>
+      [...blocks.values()].filter((b) => !source || b.source === source).sort((a, b) => a.startTs - b.startTs),
+    addUsageBlocks: (list: Block[]): void => {
+      for (const b of list) {
+        const key = `${b.source}|${b.startTs}`
+        const prev = blocks.get(key)
+        if (!prev) {
+          blocks.set(key, { ...b })
+          continue
+        }
+        prev.tokens += b.tokens
+        prev.costUsd += b.costUsd
+        prev.requests += b.requests
+        prev.endTs = Math.max(prev.endTs, b.endTs)
+      }
+    }
+  }
+})
 
 // Образцы — сокращённые, но структурно точные копии реальных строк из логов на машине
 // владельца. Именно на них ловятся ошибки разбора: выдуманный формат проверяет только
@@ -112,7 +173,7 @@ describe('разбор логов Claude Code', () => {
   })
 })
 
-const state = (): CodexState => ({ session: 'file', model: '', index: 0 })
+const state = (): CodexState => ({ session: 'file', model: '', offset: 0 })
 
 describe('разбор сессий Codex', () => {
   const meta = JSON.stringify({
@@ -178,13 +239,41 @@ describe('разбор сессий Codex', () => {
     parseCodexLine(meta, first)
     const a = parseCodexLine(tokenCount, first)
     const b = parseCodexLine(tokenCount, first)
-    // Внутри одного прохода номера разные — это разные события.
+    // Внутри одного прохода позиции разные — это разные события.
     expect(a?.id).not.toBe(b?.id)
 
-    // А повторный проход по тому же файлу даёт те же идентификаторы, и дедуп их отсеет.
+    // А повторное чтение того же файла с нуля даёт те же идентификаторы, и дедуп их отсеет.
     const second = state()
     parseCodexLine(meta, second)
     expect(parseCodexLine(tokenCount, second)?.id).toBe(a?.id)
+  })
+
+  it('идентификатор не зависит от того, с какого места читали файл', () => {
+    const bytes = (l: string): number => Buffer.byteLength(l, 'utf8') + 1
+    // Проход №1 — файл с нуля: meta и turn_context в зоне видимости.
+    const full = state()
+    parseCodexLine(meta, full)
+    parseCodexLine(turn, full)
+    const a = parseCodexLine(tokenCount, full)
+
+    // Проход №2 — дописанный хвост: meta и turn_context остались ЗА пределами чтения,
+    // поэтому вызывающий передаёт байтовое смещение начала хвоста.
+    const tail = { session: 'file', model: '', offset: bytes(meta) + bytes(turn) + bytes(tokenCount) }
+    const b = parseCodexLine(tokenCount, tail)
+
+    // Проход №3 — ещё один хвост. Порядковый номер здесь начинался бы с нуля и совпал бы с
+    // номером прохода №2 — дедуп выбросил бы НАСТОЯЩУЮ новую запись как дубль.
+    const c = parseCodexLine(tokenCount, { session: 'file', model: '', offset: tail.offset })
+    expect(b?.id).not.toBe(a?.id)
+    expect(c?.id).not.toBe(b?.id)
+    expect(c?.id).not.toBe(a?.id)
+  })
+
+  it('хвост без turn_context честно даёт unknown, а не выдуманную модель', () => {
+    // Модель объявлена в начале файла, а хвостовое чтение начинается после неё. Выдумать
+    // модель — выдумать цену; unknown попадёт в unpriced и будет виден, а не оценён наугад.
+    const s = { session: 'file', model: '', offset: 5000 }
+    expect(parseCodexLine(tokenCount, s)?.model).toBe('unknown')
   })
 
   it('пустой расход не создаёт запись', () => {
@@ -229,5 +318,97 @@ describe('отбор записей к учёту', () => {
 
   it('пустой вход не ломает', () => {
     expect(takeFresh([], new Set(['a']))).toEqual([])
+  })
+})
+
+// Сбор на настоящих файлах во временном каталоге: разборщики проверены выше по одиночке, а
+// оба дефекта учёта жили именно в связке «курсор + хвостовое чтение + хранилище».
+describe('инкрементальный сбор', () => {
+  const makeHome = (): string => mkdtempSync(join(tmpdir(), 'argus-usage-unit-'))
+  const lines = (...ls: string[]): string => ls.map((l) => l + '\n').join('')
+
+  const metaLine = JSON.stringify({
+    type: 'session_meta',
+    payload: { session_id: '019f5c38-0000-7771-b7f0-89cfe2d52ee2' }
+  })
+  const turnLine = JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } })
+  const codexEvent = (iso: string, input: number, output: number): string =>
+    JSON.stringify({
+      timestamp: iso,
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          last_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: 0,
+            cache_write_input_tokens: 0,
+            output_tokens: output
+          }
+        }
+      }
+    })
+
+  it('живая сессия Codex переживает три и более проходов без потерь', async () => {
+    const home = makeHome()
+    const dir = join(home, '.codex', 'sessions', '2026', '08', '03')
+    mkdirSync(dir, { recursive: true })
+    const file = join(dir, 'rollout-2026-08-03T10-00-00-aaaa.jsonl')
+
+    // Проход №1 — файл читается с начала, session_meta и модель в зоне видимости.
+    writeFileSync(
+      file,
+      lines(metaLine, turnLine, codexEvent('2026-08-03T10:00:01Z', 100, 10), codexEvent('2026-08-03T10:00:02Z', 100, 10))
+    )
+    expect((await collectUsage(home)).records).toBe(2)
+
+    // Проход №2 — дописанный хвост: session_meta за пределами чтения.
+    appendFileSync(
+      file,
+      lines(
+        codexEvent('2026-08-03T10:10:00Z', 100, 10),
+        codexEvent('2026-08-03T10:10:01Z', 100, 10),
+        codexEvent('2026-08-03T10:10:02Z', 100, 10)
+      )
+    )
+    expect((await collectUsage(home)).records).toBe(3)
+
+    // Проход №3 — ещё хвост. Порядковые номера начинались бы с нуля и совпали бы с номерами
+    // прохода №2 — обе НАСТОЯЩИЕ новые записи ушли бы в дубли, и сессия недосчиталась бы.
+    appendFileSync(file, lines(codexEvent('2026-08-03T10:20:00Z', 100, 10), codexEvent('2026-08-03T10:20:01Z', 100, 10)))
+    const third = await collectUsage(home)
+    expect(third.records).toBe(2)
+    expect(third.duplicates).toBe(0)
+  })
+
+  it('окно одного источника не дробится ни по файлам, ни по проходам', async () => {
+    const home = makeHome()
+    const proj = join(home, '.claude', 'projects', 'p')
+    mkdirSync(proj, { recursive: true })
+    const answer = (iso: string, id: string, tokens: number): string =>
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: iso,
+        message: { id, model: 'claude-opus-4-7', usage: { input_tokens: tokens, output_tokens: 0 } }
+      }) + '\n'
+
+    // Два разговора в одном пятичасовом окне, каждый в своём файле — окно при этом ОДНО.
+    writeFileSync(join(proj, 'a.jsonl'), answer('2026-08-03T10:00:00Z', 'msg_win_a', 5_000_000))
+    writeFileSync(join(proj, 'b.jsonl'), answer('2026-08-03T12:30:00Z', 'msg_win_b', 2_000_000))
+    await collectUsage(home)
+    const afterFirst = vault.listUsageBlocks('claude-code')
+    expect(afterFirst).toHaveLength(1)
+    expect(afterFirst[0].startTs).toBe(Date.parse('2026-08-03T10:00:00Z'))
+    expect(afterFirst[0].tokens).toBe(7_000_000)
+
+    // Следующий проход дописанного файла продолжает то же окно, а не открывает своё поверх —
+    // иначе карточка «Текущая сессия» видела бы только последний осколок.
+    appendFileSync(join(proj, 'b.jsonl'), answer('2026-08-03T13:40:00Z', 'msg_win_c', 1_000_000))
+    await collectUsage(home)
+    const afterSecond = vault.listUsageBlocks('claude-code')
+    expect(afterSecond).toHaveLength(1)
+    expect(afterSecond[0].startTs).toBe(Date.parse('2026-08-03T10:00:00Z'))
+    expect(afterSecond[0].endTs).toBe(Date.parse('2026-08-03T15:00:00Z'))
+    expect(afterSecond[0].tokens).toBe(8_000_000)
   })
 })

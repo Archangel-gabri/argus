@@ -1,4 +1,5 @@
 import type { Subscription } from '@/types'
+import { FX_TO_USD } from '../../../shared/fx'
 
 export const CAT_COLOR: Record<string, string> = {
   Infra: '#f59e0b',
@@ -26,17 +27,18 @@ export const CAT_LABEL: Record<string, string> = {
 }
 export const catLabel = (c: string): string => CAT_LABEL[c] ?? c
 
-// Rough display-only FX (USD base), 2026 approximations.
-// ВАЖНО: должно 1-в-1 совпадать с картой FX в src/main/vault.ts — иначе стоимость
-// сервера (конвертируется в main) и подписки (конвертируется здесь) разойдутся.
-const RATES: Record<string, number> = {
-  USD: 1, EUR: 1.08, RUB: 0.0126, GBP: 1.27, CNY: 0.14, JPY: 0.0067, CHF: 1.11,
-  CAD: 0.73, AUD: 0.66, INR: 0.012, BRL: 0.2, KRW: 0.00075, TRY: 0.03, PLN: 0.25,
-  UAH: 0.025, KZT: 0.0021, AED: 0.27, SEK: 0.095, NOK: 0.093, SGD: 0.74,
-  PKR: 0.0036
-}
+// Display-only перевод в доллары; курсы — общие на всё приложение (src/shared/fx.ts),
+// приблизительные и вшитые. Своя таблица здесь уже разошлась с таблицей vault.ts, хотя
+// комментарий в обеих требовал держать их одинаковыми: комментарий ничего не проверяет.
+//
+// Контракт числовой: вызывающие складывают результат в итоги и графики, null им не отдать,
+// не тронув все экраны денег. Неизвестной валюты здесь и не бывает — хранилище пускает только
+// CURRENCY_CODES, а курс каждой из них гарантирован (satisfies + fx-tables.test.ts). Но если
+// она всё же придёт (запись из базы более новой версии) — это NaN, а не «доллар за единицу»:
+// NaN отравляет итог и виден сразу, тогда как курс 1 уже превращал «100 BTC» в «$100» —
+// правдоподобно и неверно (см. src/main/device-cost.test.ts).
 export const toUsd = (amount: number, currency: string): number =>
-  Math.round(amount * (RATES[currency] ?? 1) * 100) / 100
+  Math.round(amount * (FX_TO_USD[currency] ?? NaN) * 100) / 100
 
 // Browser-preview fallback (no Electron API): app subscriptions in the vault shape.
 export const MOCK_SUBSCRIPTIONS: Subscription[] = [

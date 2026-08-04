@@ -18,14 +18,16 @@
 // 4. ЧЕТЫРЕ СТАВКИ, НЕ ОДНА. Чтение кэша дешевле входа в 10 раз, запись — дороже. См. ai-pricing.
 //
 // Проход инкрементальный: на каждый файл хранится курсор (размер + mtime + смещение), и второй
-// запуск не перечитывает 300 файлов заново.
+// запуск не перечитывает 300 файлов заново. Всё, что зависит от места старта чтения, обязано
+// это переживать: идентификаторы событий Codex строятся от байтового смещения в файле, а окна
+// лимита раскладываются с учётом уже сохранённых блоков.
 
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { ZERO_USAGE, addUsage, costOf, totalTokens, type TokenUsage } from '../shared/ai-pricing'
-import { buildBlocks, type BlockInput } from '../shared/ai-blocks'
+import { DEFAULT_WINDOW_HOURS, buildBlocks, type BlockInput } from '../shared/ai-blocks'
 import type { AiUsageDay } from './types'
 import * as vault from './vault'
 
@@ -43,7 +45,10 @@ export interface UsageRecord {
 export interface CodexState {
   session: string
   model: string
-  index: number
+  /** Байтовое смещение ТЕКУЩЕЙ строки от начала файла (не хвоста); двигает сам разборщик.
+   *  Из него собирается идентификатор события: порядковый номер при чтении хвоста начинался
+   *  бы с нуля каждый проход и повторял бы номера прошлого прохода. */
+  offset: number
 }
 
 // --- Разбор строк (чистые функции, зовутся из проверок напрямую) ---------------------------
@@ -135,6 +140,10 @@ interface CodexLine {
  * Мутирует `state`: модель и идентификатор сессии объявляются раньше событий расхода.
  */
 export function parseCodexLine(line: string, state: CodexState): UsageRecord | null {
+  // Позиция строки запоминается ДО любых выходов: смещение обязана продвинуть КАЖДАЯ строка,
+  // включая пустые и нечитаемые, иначе позиции всех последующих строк съедут.
+  const at = state.offset
+  state.offset += Buffer.byteLength(line, 'utf8') + 1
   if (!line.trim()) return null
   let d: CodexLine
   try {
@@ -160,12 +169,18 @@ export function parseCodexLine(line: string, state: CodexState): UsageRecord | n
   const out = n(last.output_tokens)
   if (inputTotal + out === 0) return null
 
-  const index = state.index++
   return {
-    // Порядковый номер внутри сессии: своего идентификатора у события нет, а пара
-    // «сессия + номер» одинакова при повторном чтении того же файла.
-    id: `codex:${state.session}:${index}`,
+    // Байтовое смещение события в файле: своего идентификатора у события нет, а смещение —
+    // единственный признак, не зависящий от места старта чтения. Порядковый номер при чтении
+    // хвоста начинался бы с нуля каждый проход, повторял бы номера прошлого прохода — и
+    // filterUnseenUsage выбрасывал бы настоящие новые записи как дубли. При повторном чтении
+    // с нуля смещения совпадут, и дедуп по-прежнему отсеет уже учтённое.
+    id: `codex:${state.session}:${at}`,
     ts: Date.parse(d.timestamp || '') || 0,
+    // Хвостовое чтение может начаться ПОСЛЕ turn_context — тогда модель честно неизвестна:
+    // токены посчитаются под именем «unknown» и попадут в unpriced, а не оценятся по
+    // выдуманной цене. Тянуть модель из прошлого прохода некуда: курсор vault хранит только
+    // позицию файла (расширение его схемы — отдельное решение, не отсюда).
     model: state.model || 'unknown',
     usage: {
       // Кэш уже сидит внутри input_tokens — вычитаем, иначе он оплачивается дважды.
@@ -303,6 +318,9 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
   for (const src of sources(home)) {
     if (!existsSync(src.root)) continue
     const files = await walk(src.root, src.match)
+    // Ответы для окон лимита копятся по ИСТОЧНИКУ, а не по файлу: окно у инструмента общее,
+    // и два разговора из разных файлов обязаны попасть в одно окно, а не в два перекрывающихся.
+    const srcRecords: BlockInput[] = []
     for (const path of files) {
       let stat: ReturnType<typeof statSync>
       try {
@@ -323,7 +341,10 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
         continue
       }
 
-      const state: CodexState = { session: path, model: '', index: 0 }
+      // session_meta лежит в начале файла и при чтении хвоста не встретится — тогда роль
+      // сессии играет путь. Для дедупа это безвредно: смещения хвоста не пересекаются с уже
+      // прочитанными, а при повторном чтении с нуля meta снова попадёт в проход.
+      const state: CodexState = { session: path, model: '', offset: from }
       const records: UsageRecord[] = []
       for (const line of lines) {
         const rec = src.parse(line, state)
@@ -335,9 +356,6 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
         result.duplicates += records.length - usable.length
         // Сначала складываем по (день, модель), потом считаем деньги: цена одна на группу.
         const buckets = new Map<string, { date: string; model: string; usage: TokenUsage; requests: number }>()
-        // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
-        // обращения, и по дневным итогам их не восстановить.
-        const forBlocks: BlockInput[] = []
         for (const rec of usable) {
           const date = localDate(rec.ts || stat.mtimeMs)
           const key = `${date}|${rec.model}`
@@ -347,7 +365,9 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
           buckets.set(key, b)
           if (!rateCache.has(rec.model)) rateCache.set(rec.model, vault.findAiPrice(rec.model))
           const p = rateCache.get(rec.model) ?? null
-          forBlocks.push({
+          // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
+          // обращения, и по дневным итогам их не восстановить.
+          srcRecords.push({
             ts: rec.ts || stat.mtimeMs,
             tokens: totalTokens(rec.usage),
             costUsd: p
@@ -363,19 +383,6 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
           result.records++
         }
 
-        if (forBlocks.length) {
-          const blocks = buildBlocks(forBlocks)
-          vault.addUsageBlocks(
-            blocks.map((b) => ({
-              source: src.name,
-              startTs: b.startTs,
-              endTs: b.endTs,
-              tokens: b.tokens,
-              costUsd: b.costUsd,
-              requests: b.requests
-            }))
-          )
-        }
         const days: AiUsageDay[] = []
         for (const b of buckets.values()) {
           if (!rateCache.has(b.model)) rateCache.set(b.model, vault.findAiPrice(b.model))
@@ -407,6 +414,26 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
       }
 
       vault.setUsageCursor({ path, size: stat.size, mtime, offset: from + consumed })
+    }
+
+    if (srcRecords.length) {
+      // Раскладка по окнам идёт с оглядкой на уже сохранённые блоки: запись, попавшая в окно
+      // прошлого прохода, продолжает его — buildBlocks выдаст дельту с ЕГО началом, и
+      // хранилище прибавит к своему блоку по совпадению начала. Без этого каждый проход
+      // открывал бы окно заново, и «текущая сессия» видела бы последний осколок.
+      const blocks = buildBlocks(srcRecords, DEFAULT_WINDOW_HOURS, vault.listUsageBlocks(src.name))
+      if (blocks.length) {
+        vault.addUsageBlocks(
+          blocks.map((b) => ({
+            source: src.name,
+            startTs: b.startTs,
+            endTs: b.endTs,
+            tokens: b.tokens,
+            costUsd: b.costUsd,
+            requests: b.requests
+          }))
+        )
+      }
     }
   }
 

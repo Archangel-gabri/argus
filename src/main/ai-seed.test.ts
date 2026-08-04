@@ -150,3 +150,18 @@ describe('выбывшие записи', () => {
     expect(kept).toEqual(['Claude Max 5x', 'Мой личный доступ'])
   })
 })
+
+describe('метка, ставшая каналом', () => {
+  it('не заводится заново', () => {
+    // После слияния «Codex CLI» — не запись, а канал аккаунта OpenAI. Если засев смотрит только
+    // на label, он заведёт запись снова, слияние сольёт её обратно и удалит — и так каждый
+    // запуск, с дрожащими идентификаторами и датами создания.
+    const existing = [{ label: 'ChatGPT (основной аккаунт)', channels: [{ label: 'Codex CLI' }] }]
+    const labels = existing.flatMap((a) => [a.label, ...a.channels.map((c) => c.label)])
+    const missing = pickMissing(labels, [
+      { label: 'Codex CLI', provider: 'openai' },
+      { label: 'Новый сервис', provider: 'other' }
+    ])
+    expect(missing.map((m) => m.label)).toEqual(['Новый сервис'])
+  })
+})
