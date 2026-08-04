@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Bitcoin, Landmark, Wallet as WalletIcon, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
+import { Bitcoin, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
 import { money } from '@/lib/format'
 import { toUsd } from '@/data/subscriptions'
 import { cn } from '@/lib/cn'
-import { MOCK_HOLDINGS, KIND_COLOR } from '@/data/finance'
+import { KIND_COLOR } from '@/data/finance'
 import { AccountList } from '@/components/finance/AccountList'
 import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
@@ -106,13 +106,9 @@ export function BanksView(): React.JSX.Element {
     if (!accountsLoaded) void loadAccounts()
   }, [accountsLoaded, loadAccounts])
 
-  // Демо остаётся только у browser-preview без Electron bridge. В desktop ни одна
-  // зашитая сумма не участвует ни в итогах, ни в строках холдингов.
   const accountSums = accountTotals(accounts, Date.now())
-  const preview = typeof window !== 'undefined' && window.api ? [] : MOCK_HOLDINGS
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
-  const previewUsd = preview.reduce((s, h) => s + h.usd, 0)
-  const net = liveUsd + previewUsd + accountSums.usd
+  const net = liveUsd + accountSums.usd
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   const byKind = [
@@ -121,12 +117,6 @@ export function BanksView(): React.JSX.Element {
       accounts.reduce<Record<string, number>>((a, x) => {
         if (x.balance == null) return a
         a[KIND_LABEL[x.kind]] = (a[KIND_LABEL[x.kind]] ?? 0) + toUsd(x.balance, x.currency)
-        return a
-      }, {})
-    ).map(([label, value]) => ({ label, value })),
-    ...Object.entries(
-      preview.reduce<Record<string, number>>((a, h) => {
-        a[h.kind] = (a[h.kind] ?? 0) + h.usd
         return a
       }, {})
     ).map(([label, value]) => ({ label, value }))
@@ -275,30 +265,6 @@ export function BanksView(): React.JSX.Element {
                 </div>
               )
             })}
-
-            {preview.map((h) => (
-              <div key={h.id} className="flex items-center gap-3 py-3 text-sm">
-                <span
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                  style={{ backgroundColor: `${KIND_COLOR[h.kind]}1a`, color: KIND_COLOR[h.kind] }}
-                >
-                  {h.kind === 'brokerage' ? <Landmark className="h-4 w-4" /> : <WalletIcon className="h-4 w-4" />}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-slate-200">{h.name}</span>
-                    <SourceBadge kind={h.source} />
-                  </div>
-                  <div className="truncate text-xs text-slate-500">{h.detail}</div>
-                </div>
-                <div className="text-right">
-                  <div className="tabular-nums text-slate-200">{money(h.usd)}</div>
-                  <div className="text-xs tabular-nums text-slate-500">
-                    {h.amount} {h.unit}
-                  </div>
-                </div>
-              </div>
-            ))}
 
             {wallets.length === 0 && (
               <p className="py-4 text-center text-xs text-slate-500">

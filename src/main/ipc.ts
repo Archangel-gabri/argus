@@ -21,6 +21,7 @@ import { fetchQuota } from './ai-quota'
 import { exchangeOf, fetchExchangeBalance } from './exchanges'
 import { fetchTinvestPortfolio } from './tinvest'
 import { fetchTbankBalance } from './tbank'
+import { bankOf, isTinvest } from '../shared/banks'
 import {
   BANKS,
   bankCookies,
@@ -231,7 +232,7 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
     // Кабинет Т-Банка ключа не выдаёт — там читается сессия браузера владельца. Опрашиваются
     // ТОЛЬКО счета, у которых это прямо разрешено (`source: 'api'`): доступ к сессии банка не
     // должен включаться сам собой оттого, что счёт назван «Т-Банк».
-    if (account.kind === 'bank' && account.source === 'api' && /т-банк|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)) {
+    if (account.source === 'api' && bankOf(account) === 'tbank') {
       const cabinet = await fetchTbankBalance({
         hasSession: () => hasBankSession('tbank'),
         sessionId: async () => (await bankCookies('tbank')).psid ?? null,
@@ -264,7 +265,7 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
 
     // Т-Инвестиции: единственный российский счёт с настоящим API. Токену «только чтение» нужен
     // один ключ, и он лежит там же, где ключи бирж.
-    if (account.kind === 'broker' && /т-инвест|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)) {
+    if (isTinvest(account)) {
       const portfolio = await fetchTinvestPortfolio(creds.apiKey)
       if (portfolio.status === 'error' || portfolio.total == null) {
         failed++

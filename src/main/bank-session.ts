@@ -19,8 +19,9 @@
 
 import { net, session, type BrowserWindow } from 'electron'
 import { createBankWindow } from './windows'
+import type { BankId } from '../shared/banks'
 
-export type BankId = 'tbank' | 'sber'
+export type { BankId }
 
 export interface BankSite {
   /** Домен, чьи куки означают «вход выполнен». */
@@ -96,12 +97,6 @@ export function openBankLogin(bank: BankId): void {
   win.webContents.on('did-navigate', check)
   win.webContents.on('did-navigate-in-page', check)
   win.webContents.on('did-finish-load', check)
-}
-
-/** Закрыть окно входа, если оно открыто. */
-export function closeBankLogin(bank: BankId): void {
-  const win = windows.get(bank)
-  if (win && !win.isDestroyed()) win.close()
 }
 
 /** Куки банка из СВОЕГО раздела. Наружу не отдаются — только в запрос того же банка. */

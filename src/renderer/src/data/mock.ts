@@ -129,9 +129,6 @@ export const servers: Server[] = [
   }
 ]
 
-export const totalMonthlyUsd = servers.reduce((s, x) => s + x.cost.usd, 0)
-export const totalYearlyUsd = totalMonthlyUsd * 12
-
 /** Monthly spend grouped by hoster, for the Infrastructure Spend pie. */
 export const spendByProvider = Object.values(
   servers.reduce<Record<string, { provider: string; usd: number }>>((acc, s) => {

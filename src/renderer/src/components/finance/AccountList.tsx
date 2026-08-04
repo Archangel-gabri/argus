@@ -5,6 +5,7 @@ import { money } from '@/lib/format'
 import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import type { FinanceAccount, FinanceKind } from '@/types'
+import { bankOf } from '../../../../shared/banks'
 
 const ICON: Record<FinanceKind, typeof Landmark> = {
   bank: Landmark,
@@ -33,13 +34,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
 
   const Icon = ICON[account.kind] ?? Landmark
   // Банк, чей остаток читается из сессии кабинета: у него вместо ключа — вход.
-  const bank = account.kind === 'bank' && account.source === 'api'
-    ? /т-банк|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)
-      ? 'tbank'
-      : /сбер|sber/i.test(`${account.institution} ${account.name}`)
-        ? 'sber'
-        : null
-    : null
+  const bank = account.source === 'api' ? bankOf(account) : null
   // Возраст показывается и у автоматических: если опрос перестал получаться, цифра стареет
   // молча, и «обновляется само» превращается в неправду.
   const age = balanceAge(account.balanceAt, now)
