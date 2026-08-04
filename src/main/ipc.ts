@@ -20,6 +20,7 @@ import { fetchModels } from './ai-models'
 import { fetchQuota } from './ai-quota'
 import { exchangeOf, fetchExchangeBalance } from './exchanges'
 import { fetchTinvestPortfolio } from './tinvest'
+import { fetchTbankBalance } from './tbank'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -206,6 +207,21 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
   let updated = 0
   let failed = 0
   for (const account of vault.listFinanceAccounts()) {
+    // Кабинет Т-Банка ключа не выдаёт — там читается сессия браузера владельца. Опрашиваются
+    // ТОЛЬКО счета, у которых это прямо разрешено (`source: 'api'`): доступ к сессии банка не
+    // должен включаться сам собой оттого, что счёт назван «Т-Банк».
+    if (account.kind === 'bank' && account.source === 'api' && /т-банк|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)) {
+      const cabinet = await fetchTbankBalance()
+      const value = cabinet.totals[account.currency]
+      if (cabinet.status !== 'ok' || value === undefined) {
+        failed++
+        continue
+      }
+      vault.recordAccountBalance(account.id, value, cabinet.fetchedAt)
+      updated++
+      continue
+    }
+
     const creds = vault.getAccountCreds(account.id)
     if (!creds) continue
 

@@ -57,7 +57,10 @@ export function totals(accounts: FinanceAccount[], now: number): Totals {
     }
     known++
     usd += toUsd(a.balance, a.currency)
-    if (a.source === 'manual' && balanceAge(a.balanceAt, now)?.level === 'stale') stale++
+    // Возраст считается одинаково для всех: месячная цифра остаётся месячной независимо от того,
+    // вписали её руками или получили опросом. У опрашиваемых счетов она стареет ровно тогда,
+    // когда опрос перестал получаться, — и именно это и надо показать.
+    if (balanceAge(a.balanceAt, now)?.level === 'stale') stale++
   }
   return { usd: Math.round(usd * 100) / 100, known, unknown, stale }
 }

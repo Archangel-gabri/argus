@@ -31,7 +31,9 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const [busy, setBusy] = useState(false)
 
   const Icon = ICON[account.kind] ?? Landmark
-  const age = account.source === 'manual' ? balanceAge(account.balanceAt, now) : null
+  // Возраст показывается и у автоматических: если опрос перестал получаться, цифра стареет
+  // молча, и «обновляется само» превращается в неправду.
+  const age = balanceAge(account.balanceAt, now)
 
   const save = async (): Promise<void> => {
     const raw = draft.trim().replace(/\s/g, '').replace(',', '.')
@@ -130,7 +132,9 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             >
               {/* Возраст показывается только когда он что-то значит: свежая цифра молчит. */}
               {age && age.level !== 'fresh'
-                ? `вписано ${age.days} дн. назад`
+                ? account.source === 'api'
+                  ? `обновлено ${age.days} дн. назад`
+                  : `вписано ${age.days} дн. назад`
                 : account.source === 'api'
                   ? 'обновляется само'
                   : ''}
