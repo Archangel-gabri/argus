@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AiAccess, AiAccessInput, AiAccessModel, AiCheck, AiPrice, AiUsageBlock, AiUsageDay } from '@/types'
+import type { AiAccess, AiAccessInput, AiAccessModel, AiCheck, AiPrice, AiQuota, AiUsageBlock, AiUsageDay } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -11,6 +11,8 @@ interface AiStore {
   checks: Record<string, AiCheck>
   /** Когда ключ последний раз подтверждённо работал (мс). Пишется в базе, живёт между запусками. */
   lastOk: Record<string, number | null>
+  /** Квоты бесплатных тарифов по идентификатору доступа. */
+  quotas: Record<string, AiQuota>
   prices: AiPrice[]
   models: Record<string, AiAccessModel[]>
   usage: AiUsageDay[]
@@ -52,6 +54,7 @@ export const useAi = create<AiStore>((set, get) => ({
   access: [],
   checks: {},
   lastOk: {},
+  quotas: {},
   prices: [],
   models: {},
   usage: [],
@@ -94,6 +97,13 @@ export const useAi = create<AiStore>((set, get) => ({
         set({ checks, lastOk })
       } catch {
         /* сохранённых вердиктов может не быть — это нормально для первого запуска */
+      }
+
+      try {
+        const quotas = await api.ai.quotas()
+        set({ quotas: Object.fromEntries(quotas.map((q) => [q.accessId, q])) })
+      } catch {
+        /* квот может не быть — это нормально */
       }
 
       // Проверяем в фоне, но UI до ответа оставляет «не проверено»/«—», а не выдумывает нули.

@@ -4,7 +4,7 @@ import { useAi } from '@/store/ai'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { DEFAULT_WINDOW_HOURS, formatResetIn, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
-import type { AiAccess, AiCheck, AiUsageBlock, AiUsageDay } from '@/types'
+import type { AiAccess, AiCheck, AiQuota, AiUsageBlock, AiUsageDay } from '@/types'
 
 function tokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -126,6 +126,40 @@ function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
   )
 }
 
+/** Квота бесплатного тарифа: предел есть, просто считается не деньгами, а кредитами. */
+function QuotaCard({ quota }: { quota: AiQuota }): React.JSX.Element {
+  const used = quota.limit && quota.limit > 0 ? quota.used / quota.limit : null
+  const low = used != null && used >= 0.8
+
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-medium text-slate-200">Квота{quota.plan ? ` · ${quota.plan}` : ''}</span>
+        <span className={cn('text-[15px] font-semibold tabular-nums', low ? 'text-amber-400' : 'text-white')}>
+          {used != null ? `${Math.round(used * 100)}%` : quota.used.toLocaleString('ru-RU')}
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+        <div
+          className={cn('h-full rounded-full', low ? 'bg-amber-400' : 'bg-accent')}
+          style={{ width: `${Math.max(2, Math.min(1, used ?? 0) * 100)}%` }}
+        />
+      </div>
+      <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
+        <span>
+          {quota.periodEnd
+            ? `обновится ${new Date(quota.periodEnd).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`
+            : 'за расчётный период'}
+        </span>
+        <span className="tabular-nums">
+          {quota.used.toLocaleString('ru-RU')}
+          {quota.limit ? ` из ${quota.limit.toLocaleString('ru-RU')}` : ''} {quota.unit}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Лимиты доступа: окно сессии, сутки и неделя — ровно те периоды, которыми считают провайдеры.
  *
@@ -138,6 +172,7 @@ export function LimitCards({
   days,
   source,
   check,
+  quota,
   now = Date.now()
 }: {
   access: AiAccess
@@ -146,6 +181,7 @@ export function LimitCards({
   /** Источник логов расхода или null, если своих логов у доступа нет. */
   source: string | null
   check?: AiCheck
+  quota?: AiQuota
   now?: number
 }): React.JSX.Element | null {
   const update = useAi((s) => s.update)
@@ -190,7 +226,10 @@ export function LimitCards({
   }
 
   const hasBalance = typeof check?.remaining === 'number'
-  if (!source && !hasBalance) return null
+  // Объявленные лимиты тарифа — тоже повод показать блок: у бесплатного доступа это всё, что
+  // о нём известно, и прятать их значит оставлять такие записи вовсе без лимитов.
+  const declared = access.limits.rpd != null || access.limits.rpm != null || access.limits.tpmo != null
+  if (!source && !hasBalance && !quota && !declared) return null
 
   const hours = access.limits.windowHours ?? DEFAULT_WINDOW_HOURS
   const nowDate = new Date(now)
@@ -205,6 +244,7 @@ export function LimitCards({
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {hasBalance && check && <BalanceCard check={check} />}
+        {quota && <QuotaCard quota={quota} />}
 
         {source && (
           <>
@@ -253,12 +293,16 @@ export function LimitCards({
         )}
       </div>
 
-      {(access.limits.rpm != null || access.limits.rpd != null) && (
+      {(access.limits.rpm != null || access.limits.rpd != null || access.limits.rpmo != null || access.limits.tpmo != null) && (
         <p className="mt-2 text-[11px] text-slate-600">
-          Объявленные провайдером ограничения:{' '}
+          {/* Это условия тарифа, а не измерение: провайдер их объявил, но сколько израсходовано,
+              по ним не узнать. Подписываем отдельно, чтобы не путались с посчитанным расходом. */}
+          По условиям тарифа:{' '}
           {[
             access.limits.rpm != null ? `${access.limits.rpm} запросов в минуту` : null,
-            access.limits.rpd != null ? `${access.limits.rpd} в сутки` : null
+            access.limits.rpd != null ? `${access.limits.rpd.toLocaleString('ru-RU')} запросов в сутки` : null,
+            access.limits.rpmo != null ? `${access.limits.rpmo.toLocaleString('ru-RU')} запросов в месяц` : null,
+            access.limits.tpmo != null ? `${(access.limits.tpmo / 1_000_000).toFixed(0)}M токенов в месяц` : null
           ]
             .filter(Boolean)
             .join(' · ')}

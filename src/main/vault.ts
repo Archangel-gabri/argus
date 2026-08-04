@@ -46,6 +46,7 @@ import type {
   AiLimits,
   AiPayment,
   AiPrice,
+  AiQuota,
   AiStatus,
   AiUsageBlock,
   AiUsageDay
@@ -376,6 +377,17 @@ function migrate(d: Database.Database): void {
     cost_usd REAL NOT NULL DEFAULT 0,
     requests INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source, start_ts)
+  )`)
+
+  // Квоты бесплатных тарифов: кредиты и запросы, которые сервис сам о себе сообщает.
+  d.exec(`CREATE TABLE IF NOT EXISTS ai_quota (
+    access_id TEXT PRIMARY KEY,
+    used REAL NOT NULL DEFAULT 0,
+    limit_value REAL,
+    unit TEXT NOT NULL DEFAULT 'единиц',
+    plan TEXT,
+    period_end INTEGER,
+    checked_at INTEGER NOT NULL
   )`)
 
   // Последний вердикт проверки ключа. Нужен двум потребителям: экрану — чтобы показать, когда
@@ -2051,6 +2063,29 @@ export function addUsageBlocks(blocks: AiUsageBlock[]): void {
     for (const b of list) stmt.run(b)
   })
   write(blocks)
+}
+
+// --- Квоты ---
+
+export function listQuotas(): AiQuota[] {
+  return requireDb()
+    .prepare(
+      `SELECT access_id as accessId, used, limit_value as "limit", unit, plan,
+              period_end as periodEnd, checked_at as checkedAt FROM ai_quota`
+    )
+    .all() as AiQuota[]
+}
+
+export function setQuota(q: AiQuota): void {
+  requireDb()
+    .prepare(
+      `INSERT INTO ai_quota (access_id, used, limit_value, unit, plan, period_end, checked_at)
+       VALUES (@accessId, @used, @limit, @unit, @plan, @periodEnd, @checkedAt)
+       ON CONFLICT(access_id) DO UPDATE SET used=excluded.used, limit_value=excluded.limit_value,
+         unit=excluded.unit, plan=excluded.plan, period_end=excluded.period_end,
+         checked_at=excluded.checked_at`
+    )
+    .run({ ...q, plan: q.plan ?? null, periodEnd: q.periodEnd ?? null })
 }
 
 // --- Вердикты проверки ключей ----------------------------------------------------------------

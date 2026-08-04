@@ -15,6 +15,7 @@ import { migrateToAccounts } from './ai-accounts-migrate'
 import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
 import { fetchModels } from './ai-models'
+import { fetchQuota } from './ai-quota'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -130,6 +131,20 @@ async function refreshEverything(): Promise<void> {
     if (imported > 0) announceAiUpdated('accounts')
   } catch {
     /* браузер может быть не установлен, кошелёк — заперт */
+  }
+
+  try {
+    // Квоты бесплатных тарифов: у них тоже есть предел, просто считается кредитами.
+    let quotas = 0
+    for (const access of vault.listAiAccess()) {
+      const q = await fetchQuota(access, vault.getAiKey(access.id))
+      if (!q) continue
+      vault.setQuota({ accessId: access.id, checkedAt: Date.now(), ...q })
+      quotas++
+    }
+    if (quotas > 0) announceAiUpdated('quota')
+  } catch {
+    /* сервис мог не ответить — квота просто останется прежней */
   }
 
   try {
@@ -504,6 +519,7 @@ export function registerIpc(): void {
     return verdict
   })
   ipcMain.handle('ai:checks', () => (vault.isUnlocked() ? vault.listAiChecks() : []))
+  ipcMain.handle('ai:quotas', () => (vault.isUnlocked() ? vault.listQuotas() : []))
 
   // --- Учётные записи внутри доступа -------------------------------------------------------
 

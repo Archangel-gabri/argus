@@ -299,6 +299,8 @@ export interface AiLimits {
   /** Запросов в минуту / в день. */
   rpm?: number | null
   rpd?: number | null
+  /** Запросов в месяц — так считают лимит подписки на автодополнения. */
+  rpmo?: number | null
   /** Токенов в минуту / в сутки / в месяц. */
   tpm?: number | null
   tpd?: number | null
@@ -439,6 +441,17 @@ export interface AiAccessInput {
   notes?: string | null
   channels?: AiChannel[]
   verified?: boolean
+}
+
+/** Квота бесплатного тарифа: у него тоже есть предел, просто считается не деньгами. */
+export interface AiQuota {
+  accessId: string
+  used: number
+  limit: number | null
+  unit: string
+  plan?: string | null
+  periodEnd?: number | null
+  checkedAt: number
 }
 
 export interface AiCheck {

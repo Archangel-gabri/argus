@@ -65,6 +65,7 @@ export default function App(): React.JSX.Element {
         access: [],
         checks: {},
         lastOk: {},
+        quotas: {},
         prices: [],
         models: {},
         usage: [],

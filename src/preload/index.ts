@@ -103,6 +103,7 @@ const api = {
     remove: (id: string) => ipcRenderer.invoke('ai:delete', id),
     check: (id: string) => ipcRenderer.invoke('ai:check', id),
     checks: () => ipcRenderer.invoke('ai:checks'),
+    quotas: () => ipcRenderer.invoke('ai:quotas'),
     prices: (provider?: string) => ipcRenderer.invoke('ai:prices', provider),
     priceCount: () => ipcRenderer.invoke('ai:priceCount'),
     // Ключ для запроса берётся в main по идентификатору доступа — через мост он не проходит.
