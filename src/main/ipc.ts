@@ -21,7 +21,15 @@ import { fetchQuota } from './ai-quota'
 import { exchangeOf, fetchExchangeBalance } from './exchanges'
 import { fetchTinvestPortfolio } from './tinvest'
 import { fetchTbankBalance } from './tbank'
-import { BANKS, bankCookies, bankRequest, hasBankSession, openBankLogin, type BankId } from './bank-session'
+import {
+  BANKS,
+  bankCookies,
+  bankRequest,
+  hasBankSession,
+  openBankLogin,
+  setLoginListener,
+  type BankId
+} from './bank-session'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -91,6 +99,18 @@ const MODELS_TTL_MS = 24 * 60 * 60 * 1000
  * браузера, опрос провайдеров) уходит в фон, чтобы не задерживать открытие окна, и по
  * завершении присылает событие — интерфейс перечитывает данные сам.
  */
+/**
+ * Вход в банк состоялся — сразу спросить остаток.
+ *
+ * Иначе владелец, только что вошедший в кабинет, видит в приложении прежнюю цифру и не понимает,
+ * сработало ли: сессия живёт минуты, и потратить их на поиск кнопки «обновить» — обидно.
+ */
+setLoginListener(() => {
+  void refreshExchangeBalances().then((r) => {
+    if (r.updated > 0) announceAiUpdated('accounts-balance')
+  })
+})
+
 function afterUnlock(): void {
   try {
     seedPricesIfEmpty()

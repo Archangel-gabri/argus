@@ -54,6 +54,13 @@ export function partitionFor(bank: BankId): string {
 
 const windows = new Map<BankId, BrowserWindow>()
 
+/** Кого позвать, когда вход состоялся. Ставится один раз при запуске (`ipc.ts`). */
+let onLoggedIn: ((bank: BankId) => void) | null = null
+
+export function setLoginListener(fn: (bank: BankId) => void): void {
+  onLoggedIn = fn
+}
+
 /**
  * Открыть окно входа.
  *
@@ -70,6 +77,25 @@ export function openBankLogin(bank: BankId): void {
   const win = createBankWindow(partitionFor(bank), site.loginUrl, site.title)
   windows.set(bank, win)
   win.on('closed', () => windows.delete(bank))
+
+  // Вход считается состоявшимся, когда в разделе появилась кука сессии. Ждать этого от человека
+  // («войдите, потом нажмите обновить») — значит переложить на него работу, которую видно из
+  // кода: страница уже сменилась, кука уже есть.
+  //
+  // Слушаем смену адреса, а не одно событие загрузки: вход у банка — это цепочка переходов
+  // (логин → СМС → кабинет), и кука появляется не на первом из них.
+  let announced = false
+  const check = (): void => {
+    if (announced || win.isDestroyed()) return
+    void hasBankSession(bank).then((logged) => {
+      if (!logged || announced) return
+      announced = true
+      onLoggedIn?.(bank)
+    })
+  }
+  win.webContents.on('did-navigate', check)
+  win.webContents.on('did-navigate-in-page', check)
+  win.webContents.on('did-finish-load', check)
 }
 
 /** Закрыть окно входа, если оно открыто. */
