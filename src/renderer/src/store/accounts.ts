@@ -12,6 +12,8 @@ interface AccountsStore {
   add: (input: FinanceAccountInput) => Promise<boolean>
   update: (id: string, input: FinanceAccountInput) => Promise<boolean>
   remove: (id: string) => Promise<boolean>
+  setCreds: (id: string, creds: { apiKey: string; secret: string; passphrase?: string }) => Promise<boolean>
+  refresh: () => Promise<void>
 }
 
 const messageOf = (error: unknown): string =>
@@ -62,6 +64,34 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
     } catch (error) {
       set({ error: messageOf(error) })
       return false
+    }
+  },
+
+  setCreds: async (id, creds) => {
+    if (!api) return false
+    try {
+      const r = await api.accounts.setCreds(id, creds)
+      if (!r.ok) {
+        set({ error: r.error ?? 'Ключи не сохранены' })
+        return false
+      }
+      // Ключи ушли в main и обратно не вернутся: перечитываем список ради признака «ключи есть».
+      await get().load()
+      await get().refresh()
+      return true
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return false
+    }
+  },
+
+  refresh: async () => {
+    if (!api) return
+    try {
+      await api.accounts.refresh()
+      set({ accounts: await api.accounts.list() })
+    } catch (error) {
+      set({ error: messageOf(error) })
     }
   },
 

@@ -24,7 +24,9 @@ const ICON: Record<FinanceKind, typeof Landmark> = {
 function AccountRow({ account, now }: { account: FinanceAccount; now: number }): React.JSX.Element {
   const update = useAccounts((s) => s.update)
   const remove = useAccounts((s) => s.remove)
+  const setCreds = useAccounts((s) => s.setCreds)
   const [editing, setEditing] = useState(false)
+  const [keys, setKeys] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -45,6 +47,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   }
 
   return (
+    <>
     <div className="group flex items-center gap-3 py-2.5 text-sm">
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400">
         <Icon className="h-4 w-4" />
@@ -137,6 +140,16 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
       </div>
 
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+        {account.kind === 'exchange' && (
+          <button
+            onClick={() => setKeys((v) => !v)}
+            className={cn('rounded p-1 hover:text-accent', account.hasCreds ? 'text-emerald-400/80' : 'text-slate-500')}
+            aria-label={`Ключи ${account.name}`}
+            title={account.hasCreds ? 'Ключи заведены — остаток обновляется сам' : 'Завести ключ только на чтение'}
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+          </button>
+        )}
         <button
           onClick={() => {
             setDraft(account.balance == null ? '' : String(account.balance))
@@ -155,6 +168,72 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </span>
+    </div>
+    {keys && <CredsForm account={account} onSave={setCreds} onClose={() => setKeys(false)} />}
+    </>
+  )
+}
+
+/**
+ * Ввод ключа биржи.
+ *
+ * Ключ уходит в main и обратно не возвращается никогда — поэтому поля всегда пустые, даже когда
+ * ключ уже сохранён: показать «••••» значило бы намекнуть, что значение доступно интерфейсу.
+ */
+function CredsForm({
+  account,
+  onSave,
+  onClose
+}: {
+  account: FinanceAccount
+  onSave: (id: string, creds: { apiKey: string; secret: string; passphrase?: string }) => Promise<boolean>
+  onClose: () => void
+}): React.JSX.Element {
+  const [apiKey, setApiKey] = useState('')
+  const [secret, setSecret] = useState('')
+  const [passphrase, setPassphrase] = useState('')
+  const [busy, setBusy] = useState(false)
+  const needsPassphrase = /okx/i.test(`${account.institution} ${account.name}`)
+  const field =
+    'w-full rounded border border-border bg-bg/60 px-2 py-1 text-xs text-slate-200 outline-none focus:border-accent/40'
+
+  return (
+    <div className="mb-2 rounded-lg border border-border bg-card/40 p-3">
+      <p className="mb-2 text-[11px] text-slate-500">
+        Ключ только на чтение, без права на вывод средств. Значение уходит в зашифрованное
+        хранилище и наружу больше не возвращается.
+      </p>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <input className={field} placeholder="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} aria-label="API key" />
+        <input className={field} type="password" placeholder="Secret" value={secret} onChange={(e) => setSecret(e.target.value)} aria-label="Secret" />
+        {needsPassphrase && (
+          <input className={field} type="password" placeholder="Passphrase" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} aria-label="Passphrase" />
+        )}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          disabled={busy || !apiKey.trim() || !secret.trim() || (needsPassphrase && !passphrase.trim())}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              const ok = await onSave(account.id, {
+                apiKey: apiKey.trim(),
+                secret: secret.trim(),
+                passphrase: needsPassphrase ? passphrase.trim() : undefined
+              })
+              if (ok) onClose()
+            } finally {
+              setBusy(false)
+            }
+          }}
+          className="rounded bg-accent px-2.5 py-1 text-xs font-medium text-bg disabled:opacity-40"
+        >
+          {busy ? 'Проверяю…' : 'Сохранить и спросить остаток'}
+        </button>
+        <button onClick={onClose} className="rounded px-2 py-1 text-xs text-slate-500 hover:text-slate-300">
+          Отмена
+        </button>
+      </div>
     </div>
   )
 }

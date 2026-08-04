@@ -230,6 +230,15 @@ function migrate(d: Database.Database): void {
   // Счета, на которых лежат деньги: банк, брокер, биржа, наличные. Отдельно от `wallets`:
   // у блокчейн-адреса баланс спрашивается у сети и ключа не требует, а здесь остаток либо
   // вписан руками, либо получен по ключу — и эта разница должна быть видна в самой записи.
+  // Ключи бирж и брокера — только на чтение. Лежат отдельной таблицей, а не полем счёта:
+  // список счетов ездит в renderer, а значения ключей не должны покидать main никогда.
+  d.exec(`CREATE TABLE IF NOT EXISTS finance_secrets (
+    account_id TEXT PRIMARY KEY,
+    api_key TEXT,
+    secret TEXT,
+    passphrase TEXT
+  )`)
+
   d.exec(`CREATE TABLE IF NOT EXISTS finance_accounts (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL DEFAULT 'bank',
@@ -2144,13 +2153,16 @@ export function replaceQuotas(accessId: string, slices: AiQuotaSlice[]): void {
 // --- Счета (банки, брокеры, биржи, наличные) ---------------------------------------------------
 
 export function listFinanceAccounts(): FinanceAccount[] {
-  return requireDb()
+  const rows = requireDb()
     .prepare(
       `SELECT id, kind, name, institution, currency, source, balance,
               balance_at as balanceAt, key_ref as keyRef, notes, created_at as createdAt
          FROM finance_accounts ORDER BY created_at`
     )
     .all() as FinanceAccount[]
+  // Признак «ключи заведены» — не значения: экрану нужно знать, можно ли обновлять само.
+  const withCreds = accountsWithCreds()
+  return rows.map((r) => ({ ...r, hasCreds: withCreds.has(r.id) }))
 }
 
 function financeRow(input: FinanceAccountInput, current?: FinanceAccount): Omit<FinanceAccount, 'id' | 'createdAt'> {
@@ -2209,6 +2221,51 @@ export function updateFinanceAccount(id: string, input: FinanceAccountInput): Fi
     )
     .run(account)
   return account
+}
+
+/** Есть ли у счёта сохранённые ключи. Наружу едет только этот признак, не значения. */
+export function accountsWithCreds(): Set<string> {
+  const rows = requireDb()
+    .prepare('SELECT account_id as id FROM finance_secrets WHERE api_key IS NOT NULL AND api_key <> \'\'')
+    .all() as Array<{ id: string }>
+  return new Set(rows.map((r) => r.id))
+}
+
+export interface ExchangeCredsRow {
+  apiKey: string
+  secret: string
+  passphrase?: string
+}
+
+/** Значения ключей. Вызывается ТОЛЬКО в main, результат в renderer не уходит. */
+export function getAccountCreds(accountId: string): ExchangeCredsRow | null {
+  const row = requireDb()
+    .prepare('SELECT api_key as apiKey, secret, passphrase FROM finance_secrets WHERE account_id = ?')
+    .get(accountId) as { apiKey: string | null; secret: string | null; passphrase: string | null } | undefined
+  if (!row?.apiKey || !row.secret) return null
+  return { apiKey: row.apiKey, secret: row.secret, passphrase: row.passphrase ?? undefined }
+}
+
+export function setAccountCreds(accountId: string, creds: { apiKey?: string; secret?: string; passphrase?: string }): void {
+  const d = requireDb()
+  const cur = d
+    .prepare('SELECT api_key as apiKey, secret, passphrase FROM finance_secrets WHERE account_id = ?')
+    .get(accountId) as { apiKey: string | null; secret: string | null; passphrase: string | null } | undefined
+  const apiKey = creds.apiKey === undefined ? (cur?.apiKey ?? null) : creds.apiKey || null
+  const secret = creds.secret === undefined ? (cur?.secret ?? null) : creds.secret || null
+  const passphrase = creds.passphrase === undefined ? (cur?.passphrase ?? null) : creds.passphrase || null
+  d.prepare(
+    `INSERT INTO finance_secrets (account_id, api_key, secret, passphrase) VALUES (?, ?, ?, ?)
+     ON CONFLICT(account_id) DO UPDATE SET api_key = excluded.api_key, secret = excluded.secret,
+       passphrase = excluded.passphrase`
+  ).run(accountId, apiKey, secret, passphrase)
+}
+
+/** Записать остаток, полученный опросом. Отдельно от правки счёта: тут время ставится всегда. */
+export function recordAccountBalance(accountId: string, balance: number | null, at: number): void {
+  requireDb()
+    .prepare('UPDATE finance_accounts SET balance = ?, balance_at = ?, source = \'api\' WHERE id = ?')
+    .run(balance, at, accountId)
 }
 
 export function deleteFinanceAccount(id: string): boolean {

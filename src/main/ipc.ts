@@ -18,6 +18,7 @@ import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
 import { fetchModels } from './ai-models'
 import { fetchQuota } from './ai-quota'
+import { exchangeOf, fetchExchangeBalance } from './exchanges'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -169,6 +170,13 @@ async function refreshEverything(): Promise<void> {
   }
 
   try {
+    // Биржи: остаток по ключу «только чтение». Без ключей ничего не делается и в сеть не идёт.
+    await refreshExchangeBalances()
+  } catch {
+    /* биржа могла не ответить — прежний остаток честнее нуля */
+  }
+
+  try {
     const fresh = Date.now() - MODELS_TTL_MS
     let updated = 0
     for (const access of vault.listAiAccess()) {
@@ -185,6 +193,32 @@ async function refreshEverything(): Promise<void> {
   } catch {
     /* сеть недоступна — списки просто останутся прежними */
   }
+}
+
+/**
+ * Спросить у бирж остаток по ключам «только чтение».
+ *
+ * Неудачный опрос НЕ обнуляет остаток и не трогает время замера: прежняя цифра со своей датой
+ * честнее, чем ноль, которого никто не подтверждал. Записывается только успешный ответ.
+ */
+async function refreshExchangeBalances(): Promise<{ updated: number; failed: number }> {
+  let updated = 0
+  let failed = 0
+  for (const account of vault.listFinanceAccounts()) {
+    const exchange = exchangeOf(account)
+    if (!exchange) continue
+    const creds = vault.getAccountCreds(account.id)
+    if (!creds) continue
+    const balance = await fetchExchangeBalance(exchange, creds)
+    if (balance.status === 'error' || balance.totalUsd == null) {
+      failed++
+      continue
+    }
+    vault.recordAccountBalance(account.id, balance.totalUsd, balance.fetchedAt)
+    updated++
+  }
+  if (updated > 0) announceAiUpdated('accounts-balance')
+  return { updated, failed }
 }
 
 /**
@@ -515,6 +549,19 @@ export function registerIpc(): void {
   ipcMain.handle('accounts:update', (_e, id: unknown, input: unknown) =>
     vault.updateFinanceAccount(asString(id), input as FinanceAccountInput)
   )
+  // Ключи биржи. Значения уходят в main и оттуда не возвращаются никогда — наружу едет
+  // только признак «ключи заведены» в списке счетов.
+  ipcMain.handle('accounts:setCreds', (_e, id: unknown, creds: unknown) => {
+    if (!vault.isUnlocked()) return { ok: false, error: 'Хранилище заперто' }
+    const c = (creds ?? {}) as { apiKey?: string; secret?: string; passphrase?: string }
+    vault.setAccountCreds(asString(id), c)
+    return { ok: true }
+  })
+  ipcMain.handle('accounts:refresh', async () => {
+    if (!vault.isUnlocked()) return { updated: 0, failed: 0 }
+    return refreshExchangeBalances()
+  })
+
   ipcMain.handle('accounts:delete', (_e, id: unknown) => {
     vault.deleteFinanceAccount(asString(id))
     return { ok: true }

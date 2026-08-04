@@ -217,6 +217,8 @@ export interface FinanceAccount {
   /** Указатель на ключ: имя переменной в env или место хранения. Значения здесь никогда нет. */
   keyRef: string | null
   notes: string | null
+  /** Заведены ли ключи. Признак, а не значения: значения из main не выходят. */
+  hasCreds?: boolean
   createdAt: number
 }
 
