@@ -192,6 +192,7 @@ export interface ArgusApi {
     copyAccountPassword: (accessId: string, email: string) => Promise<{ ok: boolean; error?: string }>
     checkAccountKey: (accessId: string, email: string) => Promise<AiCheck>
     importPasswords: (accessId: string) => Promise<{ ok: boolean; imported: number; added?: number; error?: string }>
+    importPasswordsAll: () => Promise<{ ok: boolean; imported: number; added: number; error?: string }>
   }
   forward: {
     open: (

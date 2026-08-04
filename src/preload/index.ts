@@ -119,7 +119,8 @@ const api = {
       ipcRenderer.invoke('ai:copyAccountPassword', accessId, email),
     checkAccountKey: (accessId: string, email: string) =>
       ipcRenderer.invoke('ai:checkAccountKey', accessId, email),
-    importPasswords: (accessId: string) => ipcRenderer.invoke('ai:importPasswords', accessId)
+    importPasswords: (accessId: string) => ipcRenderer.invoke('ai:importPasswords', accessId),
+    importPasswordsAll: () => ipcRenderer.invoke('ai:importPasswordsAll')
   },
   forward: {
     open: (deviceId: string, localPort: number, remoteHost: string, remotePort: number) =>

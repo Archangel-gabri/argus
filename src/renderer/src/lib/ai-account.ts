@@ -1,5 +1,6 @@
-import type { AiAccess, AiCheck, AiKind, AiPrice, AiUsageDay, Subscription } from '@/types'
+import type { AiAccess, AiAccountEntry, AiCheck, AiKind, AiPrice, AiUsageDay, Subscription } from '@/types'
 import { costOf, perMillion, type Rates, type TokenUsage } from '../../../shared/ai-pricing'
+import { providerFamily } from '../../../shared/ai-providers'
 
 export interface AiSummary {
   /** null = ещё нет достаточных данных, строка = подтверждённые / проверенные ключи. */
@@ -80,6 +81,37 @@ export function groupByKind(access: AiAccess[]): Array<{ kind: AiKind; items: Ai
   return KIND_ORDER.map((kind) => ({ kind, items: access.filter((a) => a.kind === kind) })).filter(
     (g) => g.items.length > 0
   )
+}
+
+/** Аккаунт вместе с записью, в которой лежат его учётные данные. */
+export interface FamilyAccount {
+  account: AiAccountEntry
+  accessId: string
+  accessLabel: string
+}
+
+/**
+ * Все аккаунты СЕМЬИ провайдера, а не одной записи.
+ *
+ * У владельца доступ к OpenAI идёт тремя путями сразу — подписка ChatGPT, Codex через сторонний
+ * роутер и ключ API, — но почты у них одни и те же. Открыв любую из этих записей, он должен
+ * видеть весь список, а не ту его часть, которая случайно попала именно сюда.
+ */
+export function familyAccounts(access: AiAccess, all: AiAccess[]): FamilyAccount[] {
+  const family = providerFamily(access.provider)
+  const out: FamilyAccount[] = []
+  const seen = new Set<string>()
+  // Своя запись идёт первой: её аккаунты важнее одноимённых из соседних.
+  for (const a of [access, ...all.filter((x) => x.id !== access.id)]) {
+    if (providerFamily(a.provider) !== family) continue
+    for (const account of a.accounts) {
+      const key = account.email.trim().toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      out.push({ account, accessId: a.id, accessLabel: a.label })
+    }
+  }
+  return out
 }
 
 // --- Расход ------------------------------------------------------------------------------------

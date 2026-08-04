@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, RefreshCw } from 'lucide-react'
+import { KeyRound, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { money } from '@/lib/format'
 import {
   KIND_LABEL,
@@ -57,6 +57,7 @@ export function AIAccountsView(): React.JSX.Element {
   const error = useAi((s) => s.error)
   const load = useAi((s) => s.load)
   const collect = useAi((s) => s.collect)
+  const importAll = useAi((s) => s.importPasswordsAll)
   const remove = useAi((s) => s.remove)
   const subs = useSubs((s) => s.subs)
   const loadSubs = useSubs((s) => s.load)
@@ -64,6 +65,8 @@ export function AIAccountsView(): React.JSX.Element {
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<AiAccess | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<string | null>(null)
 
   useEffect(() => {
     void load()
@@ -127,6 +130,8 @@ export function AIAccountsView(): React.JSX.Element {
             {summary.workingKeys && <span className="text-slate-600"> · ключи {summary.workingKeys}</span>}
           </span>
 
+          {importResult && <span className="text-slate-600">{importResult}</span>}
+
           {attention.length > 0 && (
             <span className="text-amber-400">
               {attention.length}{' '}
@@ -136,6 +141,28 @@ export function AIAccountsView(): React.JSX.Element {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Учётные записи провайдеров годами копятся в браузере — обходить доступы по одному
+              значит делать работу, которую можно сделать разом. */}
+          <button
+            onClick={() => {
+              setImporting(true)
+              setImportResult(null)
+              void importAll()
+                .then((r) => {
+                  if (r)
+                    setImportResult(
+                      r.imported === 0 ? 'паролей не нашлось' : `паролей ${r.imported}, новых аккаунтов ${r.added}`
+                    )
+                })
+                .finally(() => setImporting(false))
+            }}
+            disabled={importing}
+            title="Взять пароли аккаунтов из браузера — для всех доступов"
+            className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[12px] text-slate-400 ring-1 ring-border transition-colors hover:bg-card hover:text-slate-200 disabled:opacity-50"
+          >
+            {importing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+            Пароли
+          </button>
           <button
             onClick={() => void collect()}
             disabled={collecting}

@@ -249,3 +249,35 @@ describe('даты периода', () => {
     expect(daysAgoDate(2, now)).toBe('2026-02-28')
   })
 })
+
+import { familyAccounts } from './ai-account'
+
+// У владельца доступ к OpenAI идёт тремя путями сразу — подписка, роутер и ключ, — но почты у
+// них одни и те же. Открыв любую запись, он должен видеть весь список.
+describe('аккаунты семьи провайдера', () => {
+  const withAccounts = (id: string, provider: string, emails: string[]): AiAccess =>
+    access(id, { provider, accounts: emails.map((email) => ({ email })) })
+
+  it('собирает аккаунты всех записей одной семьи', () => {
+    const chatgpt = withAccounts('sub', 'openai', ['a@example.com', 'b@example.com'])
+    const codex = withAccounts('cli', 'codex', ['c@example.com'])
+    const claude = withAccounts('cl', 'anthropic', ['x@example.com'])
+
+    const rows = familyAccounts(codex, [chatgpt, codex, claude])
+    expect(rows.map((r) => r.account.email)).toEqual(['c@example.com', 'a@example.com', 'b@example.com'])
+    // Действия адресуются той записи, где лежат учётные данные.
+    expect(rows.find((r) => r.account.email === 'a@example.com')?.accessId).toBe('sub')
+  })
+
+  it('чужая семья не подмешивается', () => {
+    const codex = withAccounts('cli', 'codex', ['c@example.com'])
+    const claude = withAccounts('cl', 'anthropic', ['x@example.com'])
+    expect(familyAccounts(claude, [codex, claude]).map((r) => r.account.email)).toEqual(['x@example.com'])
+  })
+
+  it('одна почта в двух записях показывается один раз', () => {
+    const a = withAccounts('a', 'openai', ['dup@example.com'])
+    const b = withAccounts('b', 'chatgpt', ['dup@example.com'])
+    expect(familyAccounts(a, [a, b])).toHaveLength(1)
+  })
+})

@@ -41,6 +41,7 @@ interface AiStore {
   copyAccountPassword: (accessId: string, email: string) => Promise<boolean>
   checkAccountKey: (accessId: string, email: string) => Promise<void>
   importPasswords: (accessId: string) => Promise<{ imported: number; added: number } | null>
+  importPasswordsAll: () => Promise<{ imported: number; added: number } | null>
 }
 
 const messageOf = (error: unknown): string =>
@@ -306,6 +307,23 @@ export const useAi = create<AiStore>((set, get) => ({
       if (r.imported === 0) set({ error: r.error ?? 'Подходящих паролей в браузере нет' })
       await get().load(true)
       return { imported: r.imported, added: r.added ?? 0 }
+    } catch (error) {
+      set({ error: messageOf(error) })
+      return null
+    }
+  },
+
+  importPasswordsAll: async () => {
+    if (!api) return null
+    set({ error: null })
+    try {
+      const r = await api.ai.importPasswordsAll()
+      if (!r.ok) {
+        set({ error: r.error ?? 'Импорт не выполнен' })
+        return null
+      }
+      await get().load(true)
+      return { imported: r.imported, added: r.added }
     } catch (error) {
       set({ error: messageOf(error) })
       return null

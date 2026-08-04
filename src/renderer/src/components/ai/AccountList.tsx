@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Check, Copy, ExternalLink, Key, KeyRound, Loader2, RefreshCw, ShieldCheck, XCircle } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { familyAccounts } from '@/lib/ai-account'
 import { useAi } from '@/store/ai'
 import type { AiAccess, AiAccountEntry } from '@/types'
 
@@ -36,7 +37,18 @@ function verdictIcon(status?: string): { Icon: typeof Key; tone: string; title: 
   return null
 }
 
-function AccountRow({ access, account }: { access: AiAccess; account: AiAccountEntry }): React.JSX.Element {
+function AccountRow({
+  access,
+  account,
+  ownerId,
+  ownerLabel
+}: {
+  access: AiAccess
+  account: AiAccountEntry
+  /** Запись, в которой лежат учётные данные этого аккаунта. */
+  ownerId: string
+  ownerLabel: string
+}): React.JSX.Element {
   const copyPassword = useAi((s) => s.copyAccountPassword)
   const checkKey = useAi((s) => s.checkAccountKey)
   const [copied, setCopied] = useState(false)
@@ -46,7 +58,7 @@ function AccountRow({ access, account }: { access: AiAccess; account: AiAccountE
   const verdict = verdictIcon(account.checkStatus)
 
   const onCopy = async (): Promise<void> => {
-    const ok = await copyPassword(access.id, account.email)
+    const ok = await copyPassword(ownerId, account.email)
     if (!ok) return
     // Подтверждение живёт полторы секунды: дольше — и человек не понимает, к какой строке оно.
     setCopied(true)
@@ -56,7 +68,7 @@ function AccountRow({ access, account }: { access: AiAccess; account: AiAccountE
   const onCheck = async (): Promise<void> => {
     setChecking(true)
     try {
-      await checkKey(access.id, account.email)
+      await checkKey(ownerId, account.email)
     } finally {
       setChecking(false)
     }
@@ -70,6 +82,8 @@ function AccountRow({ access, account }: { access: AiAccess; account: AiAccountE
       />
       <span className="min-w-0 flex-1 truncate text-[12px] text-slate-300" title={account.note}>
         {account.email}
+        {account.via && <span className="ml-1.5 text-[10px] text-slate-600">через {account.via}</span>}
+        {ownerId !== access.id && <span className="ml-1.5 text-[10px] text-slate-700">{ownerLabel}</span>}
       </span>
 
       {verdict && (
@@ -130,13 +144,15 @@ function AccountRow({ access, account }: { access: AiAccess; account: AiAccountE
  * просит main положить значение в буфер обмена, а интерфейс знает только, что пароль есть.
  */
 export function AccountList({ access }: { access: AiAccess }): React.JSX.Element | null {
+  const all = useAi((s) => s.access)
   const importPasswords = useAi((s) => s.importPasswords)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<string | null>(null)
 
-  if (access.accounts.length === 0) return null
-
-  const withPassword = access.accounts.filter((a) => a.hasPassword).length
+  // Аккаунты берутся у всей семьи: Codex, ChatGPT и ключ OpenAI — три записи об одних и тех же
+  // почтах, и открыв любую, владелец должен видеть весь список.
+  const rows = familyAccounts(access, all)
+  const withPassword = rows.filter((r) => r.account.hasPassword).length
 
   const onImport = async (): Promise<void> => {
     setBusy(true)
@@ -158,18 +174,28 @@ export function AccountList({ access }: { access: AiAccess }): React.JSX.Element
     <section className="border-t border-border/60 pt-3">
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <h3 className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
-          Аккаунты · {access.accounts.length}
+          Аккаунты · {rows.length}
         </h3>
         <span className="text-[10px] text-slate-600">
           {withPassword > 0 ? `с паролем ${withPassword}` : 'паролей нет'}
         </span>
       </div>
 
-      <ul className="divide-y divide-border/40">
-        {access.accounts.map((a) => (
-          <AccountRow key={a.email} access={access} account={a} />
-        ))}
-      </ul>
+      {rows.length === 0 ? (
+        <p className="py-1 text-[11px] text-slate-600">Аккаунты не заведены.</p>
+      ) : (
+        <ul className="divide-y divide-border/40">
+          {rows.map((r) => (
+            <AccountRow
+              key={r.account.email}
+              access={access}
+              account={r.account}
+              ownerId={r.accessId}
+              ownerLabel={r.accessLabel}
+            />
+          ))}
+        </ul>
+      )}
 
       {/* Учётные записи уже лежат в браузере владельца. Переписывать десяток паролей руками —
           верный способ half занести неверно, поэтому импорт делается одной кнопкой. */}

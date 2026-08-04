@@ -2,7 +2,8 @@
 // вместо пароля, либо цепляет запись не того сайта.
 import { describe, expect, it } from 'vitest'
 import { createCipheriv, pbkdf2Sync } from 'node:crypto'
-import { decryptValue, matchesProvider, PROVIDER_DOMAINS } from './browser-passwords'
+import { decryptValue, matchesProvider } from './browser-passwords'
+import { classifyLogin, FAMILY_DOMAINS, providerFamily } from '../shared/ai-providers'
 
 /** Зашифровать так, как это делает Chromium на Linux: v10 + AES-128-CBC на ключе из «Safe Storage». */
 function encryptLikeChromium(value: string, storageKey: string): Buffer {
@@ -59,9 +60,25 @@ describe('сопоставление записи с провайдером', ()
     expect(matchesProvider('https://cli.neutrino.su/', 'openai', ['cli.neutrino.su'])).toBe(true)
   })
 
-  it('у каждого известного провайдера есть хотя бы один домен', () => {
-    for (const [provider, domains] of Object.entries(PROVIDER_DOMAINS)) {
-      expect(domains.length, provider).toBeGreaterThan(0)
+  it('у каждой известной семьи есть хотя бы один домен', () => {
+    for (const [family, domains] of Object.entries(FAMILY_DOMAINS)) {
+      expect(domains.length, family).toBeGreaterThan(0)
     }
+  })
+
+  it('Codex и ChatGPT — один провайдер, значит и аккаунты общие', () => {
+    // Роутер меняет только маршрут запроса; почты, которыми владелец входит, те же.
+    expect(providerFamily('codex')).toBe('openai')
+    expect(providerFamily('chatgpt')).toBe('openai')
+    expect(matchesProvider('https://chatgpt.com/', 'codex')).toBe(true)
+  })
+
+  it('вход через Google отмечается отдельно от прямого пароля', () => {
+    // Пароль от accounts.google.com — не пароль от OpenAI; смешивать их нельзя, но и терять
+    // тоже: в большинство сервисов владелец входит именно так.
+    expect(classifyLogin('https://chatgpt.com/', 'openai')).toEqual({ kind: 'direct' })
+    expect(classifyLogin('https://accounts.google.com/', 'openai')).toEqual({ kind: 'identity', via: 'Google' })
+    // У DeepSeek входа через Apple нет — запись Apple ID к нему не относится.
+    expect(classifyLogin('https://appleid.apple.com/', 'deepseek')).toBeNull()
   })
 })

@@ -11,7 +11,7 @@ import { checkAccount } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
-import { readLogins } from './browser-passwords'
+import { readLogins, type BrowserLogin } from './browser-passwords'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -23,7 +23,7 @@ import * as agent from './agent'
 import { ipLookup } from './net'
 import { fleetReach } from './liveness'
 import { lockApplication } from './lockdown'
-import type { DeviceInput, VaultState, AiAccessInput, AiAccessModel, PowerResult } from './types'
+import type { DeviceInput, VaultState, AiAccess, AiAccessInput, AiAccessModel, AiAccountEntry, PowerResult } from './types'
 import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
 import { revokePendingAccess } from './access-epoch'
@@ -71,6 +71,40 @@ function afterUnlock(): void {
   } catch {
     /* каталог или файл засева испорчены — приложение работает и без них */
   }
+}
+
+/**
+ * Разложить найденные в браузере логины по аккаунтам доступа.
+ *
+ * Найденные, но не заведённые почты добавляются в список: они существуют, и прятать их только
+ * потому, что их не вписали руками, значит держать реестр неполным. Вход через Google
+ * помечается отдельно — это не пароль сервиса, а способ в него попасть.
+ */
+function applyLogins(access: AiAccess, logins: BrowserLogin[]): { imported: number; added: number } {
+  const known = new Map(access.accounts.map((a) => [a.email.toLowerCase(), a]))
+  const fresh: AiAccountEntry[] = []
+  let imported = 0
+
+  for (const login of logins) {
+    const mail = login.username.trim()
+    if (!mail) continue
+    vault.setAccountSecret(access.id, mail, { password: login.password })
+    imported++
+    const existing = known.get(mail.toLowerCase())
+    if (existing) {
+      // У заведённого аккаунта достраиваем только способ входа — остальное владельца.
+      if (login.via && !existing.via) existing.via = login.via
+      continue
+    }
+    const entry: AiAccountEntry = { email: mail, note: 'найден в браузере' }
+    if (login.via) entry.via = login.via
+    known.set(mail.toLowerCase(), entry)
+    fresh.push(entry)
+  }
+
+  if (imported > 0)
+    vault.updateAiAccess(access.id, { provider: access.provider, accounts: [...known.values()] })
+  return { imported, added: fresh.length }
 }
 
 export function registerIpc(): void {
@@ -419,26 +453,24 @@ export function registerIpc(): void {
     const logins = readLogins(access.provider, extra)
     if (!logins.length) return { ok: true, imported: 0, error: 'Сохранённых паролей для этого провайдера нет' }
 
-    const known = new Map(access.accounts.map((a) => [a.email.toLowerCase(), a]))
-    let imported = 0
-    const added: string[] = []
-    for (const login of logins) {
-      const mail = login.username.trim()
-      if (!mail) continue
-      vault.setAccountSecret(id, mail, { password: login.password })
-      imported++
-      if (!known.has(mail.toLowerCase())) added.push(mail)
-    }
+    return { ok: true, ...applyLogins(access, logins) }
+  })
 
-    // Найденные в браузере, но не заведённые аккаунты добавляются в список: они существуют,
-    // и прятать их только потому, что их не вписали руками, — значит держать реестр неполным.
-    if (added.length) {
-      vault.updateAiAccess(id, {
-        provider: access.provider,
-        accounts: [...access.accounts, ...added.map((email) => ({ email, note: 'найден в браузере' }))]
-      })
+  // То же самое разом по всем доступам: аккаунты у владельца заведены в браузере годами, и
+  // обходить записи по одной — работа ради работы.
+  ipcMain.handle('ai:importPasswordsAll', () => {
+    if (!vault.isUnlocked()) return { ok: false, imported: 0, added: 0, error: 'Хранилище заперто' }
+    let imported = 0
+    let added = 0
+    for (const access of vault.listAiAccess()) {
+      const extra = access.baseUrl ? [access.baseUrl.replace(/^https?:\/\//, '').split('/')[0]] : []
+      const logins = readLogins(access.provider, extra)
+      if (!logins.length) continue
+      const r = applyLogins(access, logins)
+      imported += r.imported
+      added += r.added
     }
-    return { ok: true, imported, added: added.length }
+    return { ok: true, imported, added }
   })
 
   // Каталог цен: список для экрана, засев вшитого снапшота и живое обновление у OpenRouter.

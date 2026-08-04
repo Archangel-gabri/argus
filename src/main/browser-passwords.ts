@@ -19,6 +19,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createDecipheriv, pbkdf2Sync, randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3-multiple-ciphers'
+import { classifyLogin, providerFamily, type LoginKind } from '../shared/ai-providers'
 
 /** Профили, где Chromium-браузеры держат базу паролей. Порядок — по вероятности. */
 const PROFILE_PATHS = [
@@ -38,42 +39,15 @@ export interface BrowserLogin {
   origin: string
   username: string
   password: string
+  /** Прямой пароль сервиса или вход через чужой аккаунт. */
+  kind: LoginKind
+  /** Через кого входим, если вход не прямой: Google, GitHub, Apple. */
+  via?: string
 }
 
-/**
- * Домены, по которым узнаётся провайдер.
- *
- * Сопоставление по домену, а не по названию записи: у одного провайдера сайт входа и сайт
- * консоли — разные адреса, а название владелец мог поменять как угодно.
- */
-export const PROVIDER_DOMAINS: Record<string, string[]> = {
-  openai: ['openai.com', 'chatgpt.com'],
-  anthropic: ['claude.ai', 'anthropic.com'],
-  gemini: ['google.com', 'aistudio.google.com'],
-  deepseek: ['deepseek.com'],
-  openrouter: ['openrouter.ai'],
-  github: ['github.com'],
-  cursor: ['cursor.sh', 'cursor.com'],
-  mistral: ['mistral.ai'],
-  groq: ['groq.com'],
-  cerebras: ['cerebras.ai'],
-  perplexity: ['perplexity.ai'],
-  modelscope: ['modelscope.cn'],
-  nvidia_nim: ['nvidia.com'],
-  tavily: ['tavily.com'],
-  exa: ['exa.ai'],
-  firecrawl: ['firecrawl.dev'],
-  huggingface: ['huggingface.co'],
-  xai: ['x.ai', 'grok.com']
-}
-
-/** Подходит ли сохранённая запись этому провайдеру. */
+/** Подходит ли сохранённая запись провайдеру: прямой пароль сервиса или вход через Google. */
 export function matchesProvider(originUrl: string, provider: string, extraDomains: string[] = []): boolean {
-  const domains = [...(PROVIDER_DOMAINS[provider.toLowerCase()] ?? []), ...extraDomains]
-  if (!domains.length) return false
-  const host = originUrl.replace(/^https?:\/\//, '').split('/')[0].toLowerCase()
-  // Именно суффикс с точкой: иначе «notopenai.com» сойдёт за openai.com.
-  return domains.some((d) => host === d || host.endsWith(`.${d}`))
+  return classifyLogin(originUrl, providerFamily(provider), extraDomains) !== null
 }
 
 function safeStorageKey(): Buffer {
@@ -144,12 +118,20 @@ export function readLogins(provider: string, extraDomains: string[] = [], home =
     db.close()
 
     const key = safeStorageKey()
+    const family = providerFamily(provider)
     const out: BrowserLogin[] = []
+    const seen = new Set<string>()
     for (const r of rows) {
-      if (!r.username_value || !matchesProvider(r.origin_url, provider, extraDomains)) continue
+      if (!r.username_value) continue
+      const match = classifyLogin(r.origin_url, family, extraDomains)
+      if (!match) continue
+      // Один и тот же аккаунт лежит в браузере несколько раз (разные поддомены входа).
+      const dedupe = `${match.kind}:${r.username_value.trim().toLowerCase()}`
+      if (seen.has(dedupe)) continue
       const password = decryptValue(Buffer.from(r.password_value), key)
       if (!password) continue
-      out.push({ origin: r.origin_url, username: r.username_value, password })
+      seen.add(dedupe)
+      out.push({ origin: r.origin_url, username: r.username_value, password, kind: match.kind, via: match.via })
     }
     return out
   } catch {
