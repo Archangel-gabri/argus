@@ -28,6 +28,8 @@ export function aiSummary(access: AiAccess[], checks: Record<string, AiCheck>): 
       : null
 
   return {
+    // Знаменатель — ПРОВЕРЕННЫЕ ключи, а не все существующие: пока проверка не прошла, вердикта
+    // нет, и записывать такой ключ в «рабочие» или «сломанные» одинаково неправильно.
     workingKeys: checked.length > 0 ? `${working}/${checked.length}` : null,
     totalCredit
   }
@@ -112,6 +114,46 @@ export function familyAccounts(access: AiAccess, all: AiAccess[]): FamilyAccount
     }
   }
   return out
+}
+
+/**
+ * Кому принадлежит расход инструмента.
+ *
+ * Логи Claude Code и Codex знают, каким инструментом сожжены токены, но не знают, на какой
+ * доступ он смотрел. Раньше это решалось эвристикой прямо в компоненте — и один и тот же расход
+ * показывался как свой у КАЖДОЙ записи провайдера: у подписки Claude, у ключа Anthropic, у
+ * второго ключа. Цифра выглядела достоверной и была неправдой.
+ *
+ * Теперь источник достаётся ровно одной записи. Побеждает та, что явно названа в `usedBy`, —
+ * это утверждение владельца. Если таких нет, берётся самая старая запись подходящего провайдера:
+ * произвольный, но устойчивый выбор, который не скачет между запусками.
+ */
+export function usageOwners(access: AiAccess[]): Map<string, string> {
+  const owners = new Map<string, string>()
+  const claim = (source: string, id: string): void => {
+    if (!owners.has(source)) owners.set(source, id)
+  }
+
+  const named = (tool: string): AiAccess[] =>
+    access.filter((a) => a.usedBy.some((u) => u.toLowerCase().includes(tool)))
+
+  for (const a of named('claude code')) claim('claude-code', a.id)
+  for (const a of named('codex')) claim('codex', a.id)
+
+  // При равных датах порядок решает идентификатор: сортировка по одному полю оставляет
+  // элементы в порядке прихода, и владелец расхода менялся бы от запуска к запуску.
+  const byAge = [...access].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id))
+  for (const a of byAge) {
+    if (providerFamily(a.provider) === 'anthropic') claim('claude-code', a.id)
+    if (providerFamily(a.provider) === 'openai') claim('codex', a.id)
+  }
+  return owners
+}
+
+/** Источник логов этой записи или null, если расход принадлежит другой. */
+export function sourceFor(access: AiAccess, all: AiAccess[]): string | null {
+  for (const [source, id] of usageOwners(all)) if (id === access.id) return source
+  return null
 }
 
 // --- Расход ------------------------------------------------------------------------------------
@@ -214,6 +256,9 @@ const FX_TO_USD: Record<string, number> = {
   KZT: 0.0021,
   TRY: 0.029
 }
+
+/** Курс здесь справочный: он вшит в приложение и не обновляется. Цифры на нём — приблизительные. */
+export const FX_IS_APPROXIMATE = true
 
 /** Сумма в долларах. Неизвестная валюта — null: соврать курсом хуже, чем не показать. */
 export function toUsd(amount: number, currency: string): number | null {

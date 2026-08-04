@@ -54,31 +54,42 @@ function LimitCard({
         </span>
       </div>
 
+      {/* Без известного потолка полоса отмеряет ВРЕМЯ периода, а не долю квоты. Чтобы её не
+          читали как заполнение лимита, она рисуется штриховкой и приглушённо. */}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
         <div
           className={cn(
             'h-full rounded-full transition-[width] duration-700',
-            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : byLimit ? 'bg-accent' : 'bg-slate-600'
+            over ? 'bg-rose-500' : nearing ? 'bg-amber-400' : byLimit ? 'bg-accent' : 'bg-slate-700'
           )}
-          style={{ width: `${Math.max(2, fill * 100)}%` }}
+          style={{
+            width: `${Math.max(2, fill * 100)}%`,
+            ...(byLimit
+              ? {}
+              : {
+                  backgroundImage:
+                    'repeating-linear-gradient(135deg, rgba(255,255,255,0.10) 0 3px, transparent 3px 6px)'
+                })
+          }}
         />
       </div>
 
       <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-600">
         <span>{caption}</span>
         <span className="tabular-nums">
-          {byLimit ? `${tokens(spent)} из ${tokens(limit ?? 0)}` : `${unit} за период`}
+          {byLimit ? `${tokens(spent)} из ${tokens(limit ?? 0)}` : `${unit} · полоса — прошедшее время`}
         </span>
       </div>
 
-      {/* Потолок провайдер не публикует, но нижняя его граница видна по своей же истории:
-          самый нагруженный период — это как минимум столько, сколько лимит позволил. */}
+      {/* Пик истории — это ОРИЕНТИР, а не потолок провайдера: он говорит лишь «столько лимит
+          точно позволял», и настоящий предел может быть выше. Называть его лимитом нельзя. */}
       {!byLimit && onAdopt && peak != null && peak > 0 && (
         <button
           onClick={onAdopt}
+          title="Наблюдаемый максимум за прошлые периоды. Настоящий лимит может быть выше."
           className="mt-2 w-full rounded border border-dashed border-border py-1 text-[11px] text-slate-600 transition-colors hover:border-accent/40 hover:text-slate-300"
         >
-          Взять потолок из наблюдений — {tokens(peak)}
+          Считать по наблюдаемому максимуму — {tokens(peak)}
         </button>
       )}
     </div>
@@ -227,11 +238,14 @@ export function LimitCards({
             />
 
             <LimitCard
-              title="Эта неделя"
-              caption="последние 7 дней"
+              title="Последние 7 дней"
+              caption="скользящее окно"
               spent={weekTokens}
               limit={access.limits.weekTokens ?? null}
-              elapsed={(nowDate.getDay() || 7) / 7}
+              // Окно скользящее, поэтому «прошедшего времени» у него нет: показываем полную
+              // полосу. Раньше здесь стоял день календарной недели — расход считался за одно,
+              // а полоса рисовалась про другое.
+              elapsed={1}
               peak={weekPeak}
               onAdopt={() => adopt({ weekTokens: Math.round(weekPeak) })}
             />

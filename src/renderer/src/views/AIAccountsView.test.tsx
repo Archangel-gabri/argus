@@ -204,7 +204,9 @@ describe('экран AI', () => {
     })
     const panel = document.querySelector('aside') as HTMLElement
     expect(within(panel).queryByText(/^\d+%$/)).not.toBeInTheDocument()
-    expect(within(panel).getAllByText(/Взять потолок из наблюдений/).length).toBeGreaterThan(0)
+    // Исторический пик называется наблюдаемым максимумом, а не потолком: настоящий лимит
+    // может быть выше, и подменять одно другим нельзя.
+    expect(within(panel).getAllByText(/Считать по наблюдаемому максимуму/).length).toBeGreaterThan(0)
   })
 
   it('аккаунты провайдера перечислены с тарифом каждого', async () => {
@@ -230,6 +232,27 @@ describe('экран AI', () => {
   it('состояние «не оформлен» видно прямо в строке', async () => {
     await mount({ access: [access('GitHub Copilot', { kind: 'subscription', status: 'planned', hasKey: false })] })
     expect(screen.getAllByText('не оформлен').length).toBeGreaterThan(0)
+  })
+
+  it('расход достаётся одной записи, а не всем записям провайдера', async () => {
+    // Иначе одни и те же токены Claude Code показываются как свои у подписки, у ключа и у
+    // второго ключа — цифра выглядит достоверной и является неправдой.
+    await mount({
+      access: [
+        access('Claude Max', { kind: 'subscription', provider: 'anthropic', usedBy: ['Claude Code'], createdAt: 1 }),
+        access('Ключ Anthropic', { kind: 'api', provider: 'anthropic', createdAt: 2 })
+      ],
+      usage: [usageDay()]
+    })
+    // На первой записи расход есть.
+    expect(within(document.querySelector('aside') as HTMLElement).getByText(/Расход Claude Code/)).toBeInTheDocument()
+
+    // На второй — блока расхода нет вовсе.
+    const rows = screen.getAllByRole('button').filter((b) => b.textContent?.includes('Ключ Anthropic'))
+    rows[0].click()
+    await vi.waitFor(() =>
+      expect(within(document.querySelector('aside') as HTMLElement).queryByText(/Расход Claude Code/)).not.toBeInTheDocument()
+    )
   })
 
   it('пустой реестр предлагает завести первый доступ, а не показывает нули', async () => {

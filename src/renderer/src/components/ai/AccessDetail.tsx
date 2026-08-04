@@ -14,6 +14,7 @@ import {
   daysUntilExpiry,
   monthlyCost,
   subscriptionRoi,
+  sourceFor,
   toUsd,
   totalsFor
 } from '@/lib/ai-account'
@@ -21,13 +22,30 @@ import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess } from '@/types'
 
-/** Инструмент, чьи локальные логи относятся к доступу. Больше ниоткуда расход не берётся. */
-export function sourceOf(a: AiAccess): string | null {
-  if (a.usedBy.some((u) => u.toLowerCase().includes('claude code'))) return 'claude-code'
-  if (a.usedBy.some((u) => u.toLowerCase().includes('codex'))) return 'codex'
-  if (a.provider === 'anthropic') return 'claude-code'
-  if (a.provider === 'openai') return 'codex'
-  return null
+type Block = 'limits' | 'accounts' | 'usage' | 'models'
+
+/**
+ * Порядок блоков под тип доступа.
+ *
+ * За разными записями приходят с разными вопросами: у подписки — «сколько осталось в окне и
+ * окупается ли», у ключа — «жив ли он и что им можно», у локальной модели — «что установлено».
+ * Держать один порядок на всех значит показывать половине записей пустое место в самом верху.
+ */
+export function blocksFor(access: AiAccess): Block[] {
+  switch (access.kind) {
+    case 'subscription':
+    case 'cli-agent':
+      return ['limits', 'usage', 'accounts', 'models']
+    case 'router':
+    case 'api':
+      return ['limits', 'models', 'usage', 'accounts']
+    case 'free-tier':
+      return ['limits', 'models', 'accounts', 'usage']
+    case 'local':
+      return ['models', 'usage', 'limits', 'accounts']
+    default:
+      return ['limits', 'accounts', 'usage', 'models']
+  }
 }
 
 /** Короткий факт в шапке: подпись сверху, значение снизу. */
@@ -65,7 +83,7 @@ export function AccessDetail({
   const sub = subs.find((s) => s.id === access.subscriptionId)
   const monthly = monthlyCost(sub)
   const monthlyUsd = sub && monthly != null ? toUsd(monthly, sub.currency) : null
-  const source = sourceOf(access)
+  const source = sourceFor(access, all)
   const spent = source ? totalsFor(usage, { since: daysAgoDate(29), source }).costUsd : 0
   const roi = sub ? subscriptionRoi(spent, monthlyUsd) : null
   const expiresIn = daysUntilExpiry(access.keyExpiresAt)
@@ -109,26 +127,30 @@ export function AccessDetail({
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-          <HeadFact label="Деньги">
-            {sub ? (
-              <>
-                {money(sub.amount, sub.currency)}
-                <span className="text-slate-600">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
-              </>
-            ) : access.payment === 'free' ? (
-              'бесплатно'
-            ) : (
-              <span className="text-slate-600">не привязано</span>
-            )}
-          </HeadFact>
-          {sub?.nextRenewal && <HeadFact label="Продление">{sub.nextRenewal}</HeadFact>}
-          {roi != null && (
-            <HeadFact label="Окупаемость">
-              <span className="font-medium text-emerald-400">×{roi.toFixed(roi >= 10 ? 0 : 1)}</span>
-              <span className="ml-1 text-slate-600">по ценам API</span>
-            </HeadFact>
-          )}
-          <HeadFact label="Оплата">{PAYMENT_LABEL[access.payment]}</HeadFact>
+          {/* Деньги одной строкой: цена, способ оплаты, продление и окупаемость — это один
+              ответ на вопрос «во что обходится», а не четыре равновеликих факта. */}
+          <div className="col-span-2 min-w-0 sm:col-span-2">
+            <div className="text-[10px] uppercase tracking-[0.12em] text-slate-600">Оплата</div>
+            <div className="mt-0.5 truncate text-[12px] text-slate-300">
+              {sub ? (
+                <>
+                  {money(sub.amount, sub.currency)}
+                  <span className="text-slate-600">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
+                  <span className="text-slate-600"> · {PAYMENT_LABEL[access.payment]}</span>
+                  {sub.nextRenewal && <span className="text-slate-600"> · продление {sub.nextRenewal}</span>}
+                  {roi != null && (
+                    <span className="ml-1 text-emerald-400" title="Оценка: цены каталожные, курс валют справочный">
+                      ≈×{roi.toFixed(roi >= 10 ? 0 : 1)} по ценам API
+                    </span>
+                  )}
+                </>
+              ) : access.payment === 'free' ? (
+                'бесплатно'
+              ) : (
+                <span className="text-slate-600">подписка не привязана · {PAYMENT_LABEL[access.payment]}</span>
+              )}
+            </div>
+          </div>
           {access.usedBy.length > 0 && <HeadFact label="Используют">{access.usedBy.join(', ')}</HeadFact>}
           {fallback && (
             <HeadFact label="Если умрёт">
@@ -162,10 +184,27 @@ export function AccessDetail({
           </p>
         )}
 
-        <LimitCards access={access} blocks={blocks} days={usage} source={source} check={check} />
-        <AccountCards access={access} />
-        <UsageSection access={access} source={source} />
-        <ModelsSection access={access} />
+        {/* Порядок блоков зависит от того, что это за доступ. У подписки сначала лимиты и
+            расход, у ключа — состояние и модели, у локальной модели — где она стоит и что
+            умеет. Один порядок на все шесть типов оставлял большинству записей пустой верх. */}
+        {blocksFor(access).map((block) => {
+          if (block === 'limits')
+            return (
+              <LimitCards
+                key={block}
+                access={access}
+                blocks={blocks}
+                days={usage}
+                source={source}
+                check={check}
+              />
+            )
+          if (block === 'accounts') return <AccountCards key={block} access={access} />
+          // Расход показывается, только когда есть чей считать: заглушка «логов нет» на
+          // полэкрана — это блок, объясняющий собственную бесполезность.
+          if (block === 'usage') return source ? <UsageSection key={block} access={access} source={source} /> : null
+          return <ModelsSection key={block} access={access} />
+        })}
 
         {(access.keyRef || access.notes) && (
           <section className="space-y-2 border-t border-border/60 pt-4 text-[11px] text-slate-600">

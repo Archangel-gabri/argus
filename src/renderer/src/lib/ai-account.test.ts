@@ -281,3 +281,53 @@ describe('аккаунты семьи провайдера', () => {
     expect(familyAccounts(a, [a, b])).toHaveLength(1)
   })
 })
+
+import { sourceFor, usageOwners } from './ai-account'
+
+// Логи знают, каким инструментом сожжены токены, но не знают, на какой доступ он смотрел.
+// Раньше это решалось эвристикой в компоненте — и один и тот же расход показывался как свой
+// у КАЖДОЙ записи провайдера. Цифра выглядела достоверной и была неправдой.
+describe('кому принадлежит расход инструмента', () => {
+  const rec = (id: string, over: Partial<AiAccess> = {}): AiAccess => access(id, over)
+
+  it('источник достаётся ровно одной записи', () => {
+    const list = [
+      rec('подписка', { provider: 'anthropic', createdAt: 100 }),
+      rec('ключ', { provider: 'anthropic', createdAt: 200 }),
+      rec('второй-ключ', { provider: 'anthropic', createdAt: 300 })
+    ]
+    const owners = usageOwners(list)
+    expect(owners.get('claude-code')).toBe('подписка')
+    expect(list.filter((a) => sourceFor(a, list) === 'claude-code')).toHaveLength(1)
+  })
+
+  it('явное «используют» побеждает угадывание по провайдеру', () => {
+    // Утверждение владельца весомее эвристики: он лучше знает, чем именно работает.
+    const list = [
+      rec('старая', { provider: 'anthropic', createdAt: 1 }),
+      rec('рабочая', { provider: 'anthropic', createdAt: 999, usedBy: ['Claude Code'] })
+    ]
+    expect(usageOwners(list).get('claude-code')).toBe('рабочая')
+  })
+
+  it('Codex и ChatGPT не делят один расход', () => {
+    const list = [
+      rec('codex', { provider: 'openai', createdAt: 10, usedBy: ['Codex CLI'] }),
+      rec('chatgpt', { provider: 'openai', createdAt: 20 })
+    ]
+    expect(sourceFor(list[0], list)).toBe('codex')
+    expect(sourceFor(list[1], list)).toBeNull()
+  })
+
+  it('чужому провайдеру расход не достаётся', () => {
+    const list = [rec('ollama', { provider: 'ollama' }), rec('tavily', { provider: 'tavily' })]
+    expect(usageOwners(list).size).toBe(0)
+    expect(sourceFor(list[0], list)).toBeNull()
+  })
+
+  it('выбор устойчив: одинаковый ввод — одинаковый владелец', () => {
+    // Иначе расход перескакивал бы между записями от запуска к запуску.
+    const list = [rec('b', { provider: 'anthropic', createdAt: 5 }), rec('a', { provider: 'anthropic', createdAt: 5 })]
+    expect(usageOwners(list).get('claude-code')).toBe(usageOwners([...list].reverse()).get('claude-code'))
+  })
+})

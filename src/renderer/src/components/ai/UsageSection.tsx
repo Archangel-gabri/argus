@@ -36,6 +36,12 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
   const totals = useMemo(() => totalsFor(rows, { since }), [rows, since])
   const series = useMemo(() => dailySeries(rows, span), [rows, span])
   const models = useMemo(() => byModel(rows, since).slice(0, 6), [rows, since])
+  // Если хоть одна модель периода без цены, итог — НИЖНЯЯ оценка, а крупная сумма выглядит
+  // полной. Об этом нужно сказать там же, где стоит сама сумма.
+  const missingPrices = useMemo(
+    () => byModel(rows, since).filter((m) => unpriced.includes(m.model)).map((m) => m.model),
+    [rows, since, unpriced]
+  )
 
   if (!source)
     return (
@@ -51,7 +57,9 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
   return (
     <section>
       <div className="mb-2 flex items-baseline justify-between gap-3">
-        <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Расход</h3>
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
+          Расход {source === 'claude-code' ? 'Claude Code' : source === 'codex' ? 'Codex' : ''}
+        </h3>
         <div className="flex items-center gap-3">
           {collectedAt && (
             <span className="text-[10px] text-slate-700">
@@ -83,7 +91,9 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
                 {access.kind === 'subscription' ? 'Эквивалент по ценам API' : 'Потрачено'}
               </div>
               <div className="mt-0.5 text-[22px] font-semibold leading-none tabular-nums text-white">
-                {money(Math.round(totals.costUsd))}
+                {/* Знак приблизительности не украшение: сумма считается по каталожным ценам,
+                    а у подписки она вообще не является списанными деньгами. */}
+                ≈{money(Math.round(totals.costUsd))}
               </div>
             </div>
             <div>
@@ -105,6 +115,13 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
         {access.kind === 'subscription' && totals.costUsd > 0 && (
           <p className="mt-3 text-[11px] text-slate-600">
             По подписке это не списанные деньги: столько стоил бы тот же объём по ценам API.
+          </p>
+        )}
+
+        {missingPrices.length > 0 && (
+          <p className="mt-2 text-[11px] text-amber-400/80">
+            Итог занижен: у {missingPrices.length === 1 ? 'модели' : `${missingPrices.length} моделей`} в
+            каталоге нет цены — их токены посчитаны, деньги нет.
           </p>
         )}
 

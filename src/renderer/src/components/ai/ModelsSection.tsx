@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Calculator, Loader2, RefreshCw, Star } from 'lucide-react'
+import { Calculator, Star } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { CostCalculator } from '@/components/ai/CostCalculator'
 import { priceLabel } from '@/lib/ai-account'
@@ -45,15 +45,10 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
   const models = useAi((s) => s.models[access.id]) ?? NO_MODELS
   const loadModels = useAi((s) => s.loadModels)
   const setModel = useAi((s) => s.setModel)
-  const fetchModels = useAi((s) => s.fetchModels)
-  const refreshPrices = useAi((s) => s.refreshPrices)
-  const pricesLoading = useAi((s) => s.pricesLoading)
 
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [calc, setCalc] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState<string | null>(null)
 
   useEffect(() => {
     void loadModels(access.id)
@@ -80,20 +75,6 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
   }, [models, prices, provider, query, filter])
 
   const lastFetch = models.reduce((max, m) => Math.max(max, m.fetchedAt ?? 0), 0)
-
-  const onFetch = async (): Promise<void> => {
-    setBusy(true)
-    setNote(null)
-    try {
-      const r = await fetchModels(access.id)
-      if (r)
-        setNote(
-          `у провайдера ${r.total}${r.added ? `, новых ${r.added}` : ''}${r.removed ? `, убрано ${r.removed}` : ''}`
-        )
-    } finally {
-      setBusy(false)
-    }
-  }
 
   const toggleFavorite = (model: string): void => {
     const cur = models.find((m) => m.model === model)
@@ -124,14 +105,6 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
         >
           <Calculator className="h-3.5 w-3.5" />
         </button>
-        <button
-          onClick={() => void onFetch()}
-          disabled={busy}
-          title="Спросить у провайдера список моделей"
-          className="shrink-0 rounded p-1.5 text-slate-500 ring-1 ring-border transition-colors hover:bg-card-hover hover:text-slate-200 disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-        </button>
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2">
@@ -150,7 +123,9 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
           ))}
         </div>
         <span className="shrink-0 text-[10px] text-slate-600">
-          {note ?? (lastFetch > 0 ? `обновлено ${new Date(lastFetch).toLocaleDateString('ru-RU')}` : 'список не спрашивали')}
+          {lastFetch > 0
+            ? `список от провайдера, обновлён ${new Date(lastFetch).toLocaleDateString('ru-RU')}`
+            : 'список обновляется при запуске'}
         </span>
       </div>
 
@@ -162,16 +137,9 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
 
       {rows.length === 0 ? (
         <div className="mt-4 rounded border border-dashed border-border py-10 text-center text-[12px] text-slate-600">
-          {models.length === 0 ? (
-            <>
-              Список моделей не загружен.
-              <button onClick={() => void onFetch()} className="ml-1 text-accent hover:underline">
-                Спросить у провайдера
-              </button>
-            </>
-          ) : (
-            'Под фильтр ничего не подошло'
-          )}
+          {models.length === 0
+            ? 'Список ещё не получен — он обновляется при запуске приложения.'
+            : 'Под фильтр ничего не подошло'}
         </div>
       ) : (
         <div className="mt-3 max-h-[22rem] overflow-y-auto rounded-lg border border-border bg-card/40 px-3">
@@ -220,15 +188,6 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
         </div>
       )}
 
-      {/* Цены живут отдельно от перечня: провайдер отдаёт список моделей, но не прайс. */}
-      <button
-        onClick={() => void refreshPrices(access.hasKey ? access.id : undefined)}
-        disabled={pricesLoading}
-        className="mt-2 flex shrink-0 items-center justify-center gap-1.5 rounded border border-dashed border-border py-1 text-[11px] text-slate-600 transition-colors hover:border-accent/40 hover:text-slate-300 disabled:opacity-50"
-      >
-        {pricesLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-        Обновить каталог цен
-      </button>
     </section>
   )
 }

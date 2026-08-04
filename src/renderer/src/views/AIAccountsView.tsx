@@ -9,11 +9,12 @@ import {
   groupByKind,
   monthlyCost,
   needsAttention,
-  totalsFor
+  totalsFor,
+  usageOwners
 } from '@/lib/ai-account'
 import { AccessForm } from '@/components/ai/AccessForm'
 import { AccessRow } from '@/components/ai/AccessRow'
-import { AccessDetail, sourceOf } from '@/components/ai/AccessDetail'
+import { AccessDetail } from '@/components/ai/AccessDetail'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess, Subscription } from '@/types'
@@ -73,16 +74,27 @@ export function AIAccountsView(): React.JSX.Element {
 
   const burned = useMemo(() => totalsFor(usage, { since }).costUsd, [usage, since])
   const monthly = useMemo(() => monthlyByCurrency(access, subs), [access, subs])
+  // Кому какой источник логов принадлежит — считается один раз на весь список: иначе один и тот
+  // же расход показывался бы как свой у каждой записи провайдера.
+  const owners = useMemo(() => usageOwners(access), [access])
+  const sourceOf = (a: AiAccess): string | null => {
+    for (const [source, id] of owners) if (id === a.id) return source
+    return null
+  }
+
   const attention = needsAttention(access, checks)
   const groups = groupByKind(access)
   const summary = aiSummary(access, checks)
 
   // Выбор держится за идентификатором: запись могла обновиться или исчезнуть.
   const selected = access.find((a) => a.id === selectedId) ?? null
+  // Первая ВИДИМАЯ строка, а не первая в данных: список сгруппирован по типам, и порядок
+  // хранения с ним не совпадает — иначе справа открывается не то, что подсвечено слева.
+  const firstVisible = groups[0]?.items[0]?.id ?? null
   useEffect(() => {
-    if (!selectedId && access.length > 0) setSelectedId(access[0].id)
-    if (selectedId && access.length > 0 && !access.some((a) => a.id === selectedId)) setSelectedId(access[0].id)
-  }, [access, selectedId])
+    if (!firstVisible) return
+    if (!selectedId || !access.some((a) => a.id === selectedId)) setSelectedId(firstVisible)
+  }, [access, selectedId, firstVisible])
 
   return (
     <div className="flex h-full flex-col">
@@ -107,13 +119,18 @@ export function AIAccountsView(): React.JSX.Element {
 
           <span className="text-slate-500">
             Сожжено{' '}
-            <span className="tabular-nums text-slate-200">{burned > 0 ? money(Math.round(burned)) : '—'}</span>
+            <span className="tabular-nums text-slate-200">{burned > 0 ? `≈${money(Math.round(burned))}` : '—'}</span>
             <span className="text-slate-600"> за 30 дней, по ценам API</span>
           </span>
 
           <span className="text-slate-500">
             <span className="tabular-nums text-slate-200">{loaded ? access.length : '—'}</span> доступов
-            {summary.workingKeys && <span className="text-slate-600"> · ключи {summary.workingKeys}</span>}
+            {summary.workingKeys && (
+              <span className="text-slate-600" title="Среди тех ключей, которые уже успели проверить">
+                {' '}
+                · проверено ключей {summary.workingKeys}
+              </span>
+            )}
           </span>
 
           {attention.length > 0 && (
