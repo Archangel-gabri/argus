@@ -144,6 +144,11 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
     const overdue = days < 0
     if (!overdue && !s.manualRenewal) continue
 
+    // Приложение не видит банковских списаний и знать, прошёл ли автоплатёж, не может.
+    // Прошедшая дата у автосписания значит ровно одно: её никто не подвинул — а это случается
+    // и после успешного платежа. Утверждать «карта отбилась» здесь было бы выдумкой, и такая
+    // тревога горела бы у исправной подписки каждый цикл, пока на неё не перестанут смотреть.
+    const guessed = overdue && !s.manualRenewal
     out.push({
       key: `renewal:${s.id}`,
       kind: 'renewal-soon',
@@ -152,10 +157,11 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
         : days === 0
           ? `${s.name}: продлить сегодня`
           : `${s.name}: продлить через ${days} дн.`,
-      body: overdue && !s.manualRenewal
-        ? `${s.provider}: автосписание не прошло — проверить карту.`
+      body: guessed
+        ? `${s.provider}: сверьте, списалось ли, и отметьте «Продлено».`
         : `${s.provider}: продление ручное, само не спишется.`,
-      severity: days <= 1 ? 'critical' : 'warning'
+      // Догадка не может быть срочной: срочное — только то, что владелец должен сделать сам.
+      severity: guessed ? 'warning' : days <= 1 ? 'critical' : 'warning'
     })
   }
 

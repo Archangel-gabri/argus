@@ -287,7 +287,9 @@ export function SubscriptionsView(): React.JSX.Element {
                   </span>
                   {x.userId ? (
                     <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-                      {stored?.manualRenewal && stored.nextRenewal && (
+                      {/* Кнопка нужна не только ручным: у автосписаний дату тоже никто не
+                          двигает, и без неё прошедший срок остаётся в записи навсегда. */}
+                      {stored?.nextRenewal && (
                         <button
                           onClick={() => {
                             const nextRenewal = advanceRenewal(stored.nextRenewal!, stored.period)

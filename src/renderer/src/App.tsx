@@ -17,6 +17,7 @@ import { useDevices } from './store/devices'
 import { useWallets } from './store/wallets'
 import { useSubs } from './store/subs'
 import { useAi } from './store/ai'
+import { useAccounts } from './store/accounts'
 import { loadPrefs, savePrefs, PREFS_EVENT } from './lib/prefs'
 
 function renderView(view: ViewId): React.JSX.Element {
@@ -92,7 +93,21 @@ export default function App(): React.JSX.Element {
     useWallets.getState().load()
     useSubs.getState().load()
     useAi.getState().load()
+    useAccounts.getState().load()
   }, [status, loadDevices])
+
+  // Фоновый сбор — расход из логов, квоты провайдеров, пароли, модели, остатки бирж — идёт
+  // секундами позже разблокировки и до сих пор оставался невидимым: main рассылал событие, а в
+  // renderer его никто не слушал. Экран показывал прежние данные до перезапуска приложения.
+  useEffect(() => {
+    const api = typeof window !== 'undefined' ? window.api : undefined
+    if (status !== 'unlocked' || !api?.ai?.onUpdated) return
+    return api.ai.onUpdated(({ reason }) => {
+      // Перечитывает тот, кого касается: лишний поход в базу дешевле, но экран от него мигает.
+      if (reason === 'accounts-balance') void useAccounts.getState().load()
+      else void useAi.getState().load(true)
+    })
+  }, [status])
 
   // UI-préfs (reduce-motion) применяются при старте.
   useEffect(() => {

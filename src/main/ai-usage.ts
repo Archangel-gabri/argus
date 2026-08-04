@@ -271,6 +271,26 @@ function sources(home: string): Source[] {
  *
  * Хранилище должно быть открыто: и курсоры, и итоги живут в зашифрованной базе.
  */
+/**
+ * Оставить записи, которые надо учесть: невиданные хранилищем И не повторяющиеся между собой.
+ *
+ * Второе условие — не придирка. Один ответ Claude Code лежит в логе несколькими строками с
+ * одинаковым `message.id` (на живом файле владельца — 11 строк на 4 ответа). Хранилище отвечает
+ * лишь «этот идентификатор мне незнаком», и если проверять только это, все копии пройдут разом:
+ * расход выйдет кратно больше настоящего, а счётчик «отброшено» при этом отрапортует, что дубли
+ * убраны. Дедуп между запусками работал, внутри одного файла — нет.
+ */
+export function takeFresh<T extends { id: string }>(records: T[], fresh: Set<string>): T[] {
+  const taken = new Set<string>()
+  const out: T[] = []
+  for (const rec of records) {
+    if (!fresh.has(rec.id) || taken.has(rec.id)) continue
+    taken.add(rec.id)
+    out.push(rec)
+  }
+  return out
+}
+
 export async function collectUsage(home = homedir()): Promise<CollectResult> {
   const result: CollectResult = { files: 0, records: 0, duplicates: 0, unpriced: [] }
   if (!vault.isUnlocked()) return result
@@ -311,15 +331,14 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
       }
 
       if (records.length) {
-        const fresh = vault.filterUnseenUsage(records.map((r) => r.id))
-        result.duplicates += records.length - fresh.size
+        const usable = takeFresh(records, vault.filterUnseenUsage(records.map((r) => r.id)))
+        result.duplicates += records.length - usable.length
         // Сначала складываем по (день, модель), потом считаем деньги: цена одна на группу.
         const buckets = new Map<string, { date: string; model: string; usage: TokenUsage; requests: number }>()
         // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
         // обращения, и по дневным итогам их не восстановить.
         const forBlocks: BlockInput[] = []
-        for (const rec of records) {
-          if (!fresh.has(rec.id)) continue
+        for (const rec of usable) {
           const date = localDate(rec.ts || stat.mtimeMs)
           const key = `${date}|${rec.model}`
           const b = buckets.get(key) ?? { date, model: rec.model, usage: { ...ZERO_USAGE }, requests: 0 }

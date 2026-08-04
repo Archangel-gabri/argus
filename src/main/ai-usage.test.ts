@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { localDate, parseClaudeLine, parseCodexLine, type CodexState } from './ai-usage'
+import { localDate, parseClaudeLine, parseCodexLine, type CodexState,
+  takeFresh
+} from './ai-usage'
 
 // Образцы — сокращённые, но структурно точные копии реальных строк из логов на машине
 // владельца. Именно на них ловятся ошибки разбора: выдуманный формат проверяет только
@@ -201,5 +203,31 @@ describe('дата расхода', () => {
     // тогда «сегодняшний» расход попадает во вчерашний день.
     const ts = new Date(2026, 7, 3, 1, 30).getTime()
     expect(localDate(ts)).toBe('2026-08-03')
+  })
+})
+
+describe('отбор записей к учёту', () => {
+  const rec = (id: string): { id: string } => ({ id })
+
+  it('копии внутри одного файла считаются ОДИН раз', () => {
+    // Один ответ Claude Code лежит несколькими строками с одинаковым message.id: на живом файле
+    // владельца — 11 строк на 4 ответа. Проверки «хранилище такого не видело» тут мало, она
+    // пропускает все копии разом, и расход выходит кратно больше настоящего.
+    const records = [rec('a'), rec('a'), rec('a'), rec('b')]
+    const out = takeFresh(records, new Set(['a', 'b']))
+    expect(out.map((r) => r.id)).toEqual(['a', 'b'])
+  })
+
+  it('уже учтённое хранилищем не берётся', () => {
+    expect(takeFresh([rec('a'), rec('b')], new Set(['b'])).map((r) => r.id)).toEqual(['b'])
+  })
+
+  it('порядок сохраняется — блоки лимита строятся по времени', () => {
+    const out = takeFresh([rec('c'), rec('a'), rec('b')], new Set(['a', 'b', 'c']))
+    expect(out.map((r) => r.id)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('пустой вход не ломает', () => {
+    expect(takeFresh([], new Set(['a']))).toEqual([])
   })
 })

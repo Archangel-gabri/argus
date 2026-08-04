@@ -269,8 +269,12 @@ describe('просроченная подписка с автосписание�
     })
     const renewal = alerts.find((a) => a.kind === 'renewal-soon')
     expect(renewal?.title).toContain('срок продления прошёл')
-    expect(renewal?.body).toContain('автосписание не прошло')
-    expect(renewal?.severity).toBe('critical')
+    // Приложение не видит банковских списаний: утверждать «карта отбилась» — выдумка. Прошедшая
+    // дата у автосписания значит лишь, что её никто не подвинул, а это бывает и после успешной
+    // оплаты. Поэтому просим сверить, а не объявляем поломку, и не делаем это срочным.
+    expect(renewal?.body).toContain('сверьте')
+    expect(renewal?.body).not.toContain('не прошло')
+    expect(renewal?.severity).toBe('warning')
   })
 
   it('о ПРЕДСТОЯЩЕМ автосписании по-прежнему молчим', () => {
