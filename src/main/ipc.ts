@@ -19,6 +19,7 @@ import { readLogins, type BrowserLogin } from './browser-passwords'
 import { fetchModels } from './ai-models'
 import { fetchQuota } from './ai-quota'
 import { exchangeOf, fetchExchangeBalance } from './exchanges'
+import { fetchTinvestPortfolio } from './tinvest'
 import { collectUsage } from './ai-usage'
 import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
@@ -205,17 +206,32 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
   let updated = 0
   let failed = 0
   for (const account of vault.listFinanceAccounts()) {
-    const exchange = exchangeOf(account)
-    if (!exchange) continue
     const creds = vault.getAccountCreds(account.id)
     if (!creds) continue
-    const balance = await fetchExchangeBalance(exchange, creds)
-    if (balance.status === 'error' || balance.totalUsd == null) {
-      failed++
+
+    const exchange = exchangeOf(account)
+    if (exchange) {
+      const balance = await fetchExchangeBalance(exchange, creds)
+      if (balance.status === 'error' || balance.totalUsd == null) {
+        failed++
+        continue
+      }
+      vault.recordAccountBalance(account.id, balance.totalUsd, balance.fetchedAt)
+      updated++
       continue
     }
-    vault.recordAccountBalance(account.id, balance.totalUsd, balance.fetchedAt)
-    updated++
+
+    // Т-Инвестиции: единственный российский счёт с настоящим API. Токену «только чтение» нужен
+    // один ключ, и он лежит там же, где ключи бирж.
+    if (account.kind === 'broker' && /т-инвест|тинькофф|t-?bank|tinkoff/i.test(`${account.institution} ${account.name}`)) {
+      const portfolio = await fetchTinvestPortfolio(creds.apiKey)
+      if (portfolio.status === 'error' || portfolio.total == null) {
+        failed++
+        continue
+      }
+      vault.recordAccountBalance(account.id, portfolio.total, portfolio.fetchedAt)
+      updated++
+    }
   }
   if (updated > 0) announceAiUpdated('accounts-balance')
   return { updated, failed }

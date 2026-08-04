@@ -140,7 +140,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
       </div>
 
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-        {account.kind === 'exchange' && (
+        {(account.kind === 'exchange' || account.kind === 'broker') && (
           <button
             onClick={() => setKeys((v) => !v)}
             className={cn('rounded p-1 hover:text-accent', account.hasCreds ? 'text-emerald-400/80' : 'text-slate-500')}
@@ -194,32 +194,46 @@ function CredsForm({
   const [passphrase, setPassphrase] = useState('')
   const [busy, setBusy] = useState(false)
   const needsPassphrase = /okx/i.test(`${account.institution} ${account.name}`)
+  // У Т-Инвестиций один токен и никакого секрета: показывать пустые поля «Secret» и
+  // «Passphrase» рядом с ним значит спрашивать то, чего не существует.
+  const tokenOnly = account.kind === 'broker'
   const field =
     'w-full rounded border border-border bg-bg/60 px-2 py-1 text-xs text-slate-200 outline-none focus:border-accent/40'
 
   return (
     <div className="mb-2 rounded-lg border border-border bg-card/40 p-3">
       <p className="mb-2 text-[11px] text-slate-500">
-        Ключ только на чтение, без права на вывод средств. Значение уходит в зашифрованное
-        хранилище и наружу больше не возвращается.
+        {tokenOnly
+          ? 'Токен «только чтение»: т-банк.ру → Инвестиции → Настройки → Токены для API. Значение уходит в зашифрованное хранилище и наружу больше не возвращается.'
+          : 'Ключ только на чтение, без права на вывод средств. Значение уходит в зашифрованное хранилище и наружу больше не возвращается.'}
       </p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <input className={field} placeholder="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} aria-label="API key" />
-        <input className={field} type="password" placeholder="Secret" value={secret} onChange={(e) => setSecret(e.target.value)} aria-label="Secret" />
-        {needsPassphrase && (
+        <input
+          className={cn(field, tokenOnly && 'sm:col-span-3')}
+          type={tokenOnly ? 'password' : 'text'}
+          placeholder={tokenOnly ? 'Токен' : 'API key'}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.target.value)}
+          aria-label={tokenOnly ? 'Токен' : 'API key'}
+        />
+        {!tokenOnly && (
+          <input className={field} type="password" placeholder="Secret" value={secret} onChange={(e) => setSecret(e.target.value)} aria-label="Secret" />
+        )}
+        {!tokenOnly && needsPassphrase && (
           <input className={field} type="password" placeholder="Passphrase" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} aria-label="Passphrase" />
         )}
       </div>
       <div className="mt-2 flex items-center gap-2">
         <button
-          disabled={busy || !apiKey.trim() || !secret.trim() || (needsPassphrase && !passphrase.trim())}
+          disabled={busy || !apiKey.trim() || (!tokenOnly && (!secret.trim() || (needsPassphrase && !passphrase.trim())))}
           onClick={async () => {
             setBusy(true)
             try {
               const ok = await onSave(account.id, {
                 apiKey: apiKey.trim(),
-                secret: secret.trim(),
-                passphrase: needsPassphrase ? passphrase.trim() : undefined
+                // У токена секрета нет: подпись не строится, ключ передаётся как есть.
+                secret: tokenOnly ? apiKey.trim() : secret.trim(),
+                passphrase: !tokenOnly && needsPassphrase ? passphrase.trim() : undefined
               })
               if (ok) onClose()
             } finally {

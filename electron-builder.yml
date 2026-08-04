@@ -20,6 +20,12 @@ extraResources:
   - from: resources/ai
     to: ai
     filter: ['**/*']
+  # Корень государственного УЦ Минцифры: им подписан сертификат invest-public-api.tbank.ru,
+  # и в системном хранилище его нет. Используется РОВНО для запросов к этому хосту — см.
+  # комментарий в src/main/tinvest.ts.
+  - from: resources/ca
+    to: ca
+    filter: ['**/*']
 # SQLCipher-биндинг должен лежать распакованным (не в asar), иначе .node не загрузится.
 asarUnpack:
   - '**/*.node'
