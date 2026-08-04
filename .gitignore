@@ -19,6 +19,7 @@ fleet.local.json
 # Реестр AI-доступов владельца (почты, тарифы, указатели на ключи) — только локально.
 # Значений ключей в нём нет: он ссылается на имена переменных в secrets/env/api-keys.env.
 ai.local.json
+subs.local.json
 
 .DS_Store
 

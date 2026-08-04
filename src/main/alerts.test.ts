@@ -254,3 +254,34 @@ describe('тревоги по AI-доступам', () => {
     expect(runAi([])).toHaveLength(0)
   })
 })
+
+describe('просроченная подписка с автосписанием', () => {
+  it('о прошедшей дате говорим и без ручного продления', () => {
+    // Автосписание не забывает, пока работает карта. У ExtraVM карта отбилась 31 июля, 3 августа
+    // услугу приостановили, 4-го прислали «удалим через 4 дня» — а сторож молчал, потому что
+    // продление значилось автоматическим.
+    const alerts = evaluateAlerts({
+      devices: [],
+      subscriptions: [
+        { id: 's1', name: 'VPS США — узел HubVPN', provider: 'ExtraVM', nextRenewal: '2026-07-28', manualRenewal: false }
+      ],
+      now: NOW
+    })
+    const renewal = alerts.find((a) => a.kind === 'renewal-soon')
+    expect(renewal?.title).toContain('срок продления прошёл')
+    expect(renewal?.body).toContain('автосписание не прошло')
+    expect(renewal?.severity).toBe('critical')
+  })
+
+  it('о ПРЕДСТОЯЩЕМ автосписании по-прежнему молчим', () => {
+    // Иначе каждая рабочая подписка раз в месяц просит внимания без всякого повода.
+    const alerts = evaluateAlerts({
+      devices: [],
+      subscriptions: [
+        { id: 's2', name: 'Claude Max 5x', provider: 'Anthropic', nextRenewal: '2026-08-01', manualRenewal: false }
+      ],
+      now: NOW
+    })
+    expect(alerts.filter((a) => a.kind === 'renewal-soon')).toEqual([])
+  })
+})

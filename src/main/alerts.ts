@@ -130,21 +130,31 @@ export function evaluateAlerts(input: AlertInput): Alert[] {
   }
 
   for (const s of input.subscriptions) {
-    // Напоминаем только о РУЧНЫХ продлениях: автосписание само себя не забудет, а вот
-    // «продлить OVH руками до 13-го» забывается ровно один раз и стоит сервера.
-    if (!s.manualRenewal || !s.nextRenewal) continue
+    if (!s.nextRenewal) continue
     const days = daysUntilCalendar(s.nextRenewal, input.now)
     if (days === null || days > RENEWAL_WARNING_DAYS) continue
+
+    // О ПРЕДСТОЯЩЕМ продлении напоминаем только там, где платят руками: автосписание само себя
+    // не забудет, а «продлить OVH до 13-го» забывается ровно один раз и стоит сервера.
+    //
+    // А вот ПРОШЕДШАЯ дата — повод сказать в любом случае. Автосписание не забывает, пока
+    // работает карта; когда она отбивается, подписка молча уходит в просрочку, и хостер удаляет
+    // услугу вместе с данными. Дата в прошлом означает, что платёж не прошёл: прошедший платёж
+    // подвинул бы её вперёд.
+    const overdue = days < 0
+    if (!overdue && !s.manualRenewal) continue
+
     out.push({
       key: `renewal:${s.id}`,
       kind: 'renewal-soon',
-      title:
-        days < 0
-          ? `${s.name}: срок продления прошёл`
-          : days === 0
-            ? `${s.name}: продлить сегодня`
-            : `${s.name}: продлить через ${days} дн.`,
-      body: `${s.provider}: продление ручное, само не спишется.`,
+      title: overdue
+        ? `${s.name}: срок продления прошёл`
+        : days === 0
+          ? `${s.name}: продлить сегодня`
+          : `${s.name}: продлить через ${days} дн.`,
+      body: overdue && !s.manualRenewal
+        ? `${s.provider}: автосписание не прошло — проверить карту.`
+        : `${s.provider}: продление ручное, само не спишется.`,
       severity: days <= 1 ? 'critical' : 'warning'
     })
   }

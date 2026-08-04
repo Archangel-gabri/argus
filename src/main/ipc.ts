@@ -11,6 +11,7 @@ import { checkAccount, keyEndpointBase } from './ai'
 import * as aiPrices from './ai-prices'
 import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
+import { seedSubscriptions } from './subs-seed'
 import { migrateToAccounts } from './ai-accounts-migrate'
 import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
@@ -80,6 +81,9 @@ function afterUnlock(): void {
   try {
     seedPricesIfEmpty()
     seedAiAccess()
+    // Подписки: суммы и даты продления, сверенные по чекам. В отличие от инвентаря, засев их
+    // ОБНОВЛЯЕТ — устаревшая сумма хуже отсутствующей, потому что выглядит достоверной.
+    seedSubscriptions()
     // Слияние способов доступа в аккаунты: «ChatGPT» и «Codex CLI» — это один аккаунт с двумя
     // каналами, а не две записи. Срабатывает один раз, дальше молчит.
     migrateToAccounts()
