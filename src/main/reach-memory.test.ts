@@ -12,8 +12,9 @@ describe('trackedReach', () => {
     expect(trackedReach('probe', 'node-1', 'offline')).toBe('unknown')
   })
 
-  it('выключенной машина считается со второго промаха подряд', () => {
+  it('выключенной машина считается с третьего промаха подряд', () => {
     trackedReach('probe', 'node-1', 'offline')
+    expect(trackedReach('probe', 'node-1', 'offline')).toBe('unknown')
     expect(trackedReach('probe', 'node-1', 'offline')).toBe('offline')
   })
 

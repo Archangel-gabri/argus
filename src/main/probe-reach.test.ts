@@ -1,5 +1,5 @@
 // Стык двух правил, каждое из которых по отдельности уже проверено: склейка одновременных
-// опросов (single-flight) и «выключено только со второго промаха подряд» (reach-memory).
+// опросов (single-flight) и «выключено только после серии промахов подряд» (reach-memory).
 //
 // Регрессия на реальный дефект. Пока серию промахов считал ОБРАБОТЧИК IPC, склеенный опрос
 // учитывался по разу у каждого спрашивающего. При открытой карточке по устройству независимо
@@ -57,15 +57,17 @@ describe('опрос устройства: промах считается на 
     expect(b.status).toBe('unknown')
   })
 
-  it('две неудачи ПОДРЯД по-прежнему дают «выключено»', async () => {
+  it('серия неудач ПОДРЯД по-прежнему даёт «выключено»', async () => {
     const { probe, missesOf } = await load()
 
-    // Последовательные опросы — это два разных наблюдения, и склейка их не объединяет.
+    // Последовательные опросы — это разные наблюдения, и склейка их не объединяет.
     const first = await probe('node-1')
     const second = await probe('node-1')
+    const third = await probe('node-1')
 
     expect(first.status).toBe('unknown')
-    expect(second.status).toBe('offline')
-    expect(missesOf('probe', 'node-1')).toBe(2)
+    expect(second.status).toBe('unknown')
+    expect(third.status).toBe('offline')
+    expect(missesOf('probe', 'node-1')).toBe(3)
   })
 })

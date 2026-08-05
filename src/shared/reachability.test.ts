@@ -7,12 +7,17 @@ describe('трёхзначная живость', () => {
     expect(initialStatus('online')).toBe('online')
   })
 
-  it('первый промах даёт «не знаю», второй — доказанный offline', () => {
+  it('выключенной машина становится с ТРЕТЬЕГО промаха подряд', () => {
+    // Двух не хватает: замер 2026-08-06 на парке владельца показал, что канал до немецкой
+    // ноды теряет половину соединений даже при 15-секундном бюджете. Пара промахов подряд
+    // там выпадает постоянно, и живая машина объявлялась выключенной.
     const first = nextReachability(0, 'offline')
     const second = nextReachability(first.misses, 'offline')
+    const third = nextReachability(second.misses, 'offline')
 
     expect(first).toEqual({ status: 'unknown', misses: 1 })
-    expect(second).toEqual({ status: 'offline', misses: 2 })
+    expect(second).toEqual({ status: 'unknown', misses: 2 })
+    expect(third).toEqual({ status: 'offline', misses: 3 })
   })
 
   it('успех сбрасывает серию промахов', () => {

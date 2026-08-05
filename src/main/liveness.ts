@@ -18,8 +18,22 @@ export interface Reach {
   ms: number
 }
 
+/**
+ * Бюджет одной проверки живости.
+ *
+ * Замерено на парке владельца 2026-08-06: баннер от нью-йоркской ноды идёт 2.60–2.74 с, от
+ * немецкой 2.43–2.67 с (через VPN-туннель в режиме fake-ip TUN, иначе было бы вдвое быстрее).
+ * При прежних 4 секундах запас был 1.3 с, и его съедал любой всплеск задержки: та же нода,
+ * которая при бюджете 15 с отвечала 4 раза из 4, при 4 с отвечала 4 из 5. То есть каждый пятый
+ * «сервер не отвечает» приложение придумывало само.
+ *
+ * 8 секунд — троекратный запас к самому медленному настоящему ответу. Цена — упавшая машина
+ * признаётся упавшей позже; это дешевле, чем мигающий статус, которому перестают верить.
+ */
+const REACH_BUDGET_MS = 8000
+
 /** Коннект + ожидание SSH-баннера. Резолв DNS входит в бюджет. */
-export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<Reach> {
+export function tcpAlive(host: string, port: number, timeoutMs = REACH_BUDGET_MS): Promise<Reach> {
   const t0 = Date.now()
   return new Promise((resolve) => {
     if (!host || host.includes('x.x')) return resolve({ status: 'unknown', ms: 0 })
@@ -62,7 +76,7 @@ export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<
 }
 
 /** Достижимо ли устройство хоть по одному из своих ОС-эндпоинтов (multi-boot ПК — по любому). */
-export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<Reach> {
+export async function deviceReach(deviceId: string, timeoutMs = REACH_BUDGET_MS): Promise<Reach> {
   const eps = getOsEndpoints(deviceId)
   const conns = eps.length ? eps.map((e) => e.conn) : [getDeviceConn(deviceId)].filter((c) => c !== null)
   if (!conns.length) return { status: 'unknown', ms: 0 }
@@ -85,7 +99,7 @@ export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<R
 }
 
 /** Разом по всему парку — параллельно. Именно это зовём сразу после входа в приложение. */
-export async function fleetReach(timeoutMs = 4000): Promise<Record<string, Reach>> {
+export async function fleetReach(timeoutMs = REACH_BUDGET_MS): Promise<Record<string, Reach>> {
   const devices = listDevices()
   const pairs = await Promise.all(
     // И то же на уровне парка: сломанная запись портит вердикт только о себе. Раньше её
