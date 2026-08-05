@@ -63,4 +63,20 @@ describe('runtime-граница финансового IPC', () => {
   ])('отклоняет кошелёк с недоказанным форматом %#', (input, message) => {
     expect(() => parseWalletInput(input)).toThrow(message)
   })
+
+  it('день-якорь списания проходит границу и проверяется', () => {
+    // Поле возвращалось не всеми путями, и ветка «взять из входа» в хранилище была мертва:
+    // якорь нельзя было ни задать, ни исправить, а однажды зажатое коротким месяцем 28-е
+    // закреплялось навсегда.
+    const base = { name: 'Подписка', amount: 10, currency: 'USD', period: 'mo' }
+    expect(parseSubscriptionInput({ ...base, renewalDay: 31 }).renewalDay).toBe(31)
+    expect(parseSubscriptionInput({ ...base, renewalDay: null }).renewalDay).toBeNull()
+    // Не указан — не трогаем: хранилище само решит, оставить прежний или вывести из даты.
+    expect(parseSubscriptionInput(base).renewalDay).toBeUndefined()
+
+    expect(() => parseSubscriptionInput({ ...base, renewalDay: 0 })).toThrow(/от 1 до 31/)
+    expect(() => parseSubscriptionInput({ ...base, renewalDay: 32 })).toThrow(/от 1 до 31/)
+    expect(() => parseSubscriptionInput({ ...base, renewalDay: 3.5 })).toThrow(/от 1 до 31/)
+    expect(() => parseSubscriptionInput({ ...base, renewalDay: '15' })).toThrow(/от 1 до 31/)
+  })
 })

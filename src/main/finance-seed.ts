@@ -68,11 +68,14 @@ export function planFinanceSeed(
     if (!item.name?.trim() || retire.has(key(item.name))) continue
     const current = byName.get(key(item.name))
 
+    // Ключ помечается принесённым независимо от того, есть запись в хранилище или нет: иначе
+    // у владельца, чьё хранилище уже наполнено, память засева не наполнится вовсе, и первое
+    // удаление всё равно воскресит счёт.
+    plan.seeded.push(key(item.name))
     if (!current) {
       // Заводим ОДИН раз: повторное создание отменяло бы удаление, сделанное владельцем, —
       // и делало бы это молча, на каждом открытии хранилища.
       if (alreadySeeded.has(key(item.name))) continue
-      plan.seeded.push(key(item.name))
       plan.create.push({
         name: item.name,
         kind: item.kind ?? 'bank',

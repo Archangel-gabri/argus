@@ -164,4 +164,12 @@ describe('метка, ставшая каналом', () => {
     ])
     expect(missing.map((m) => m.label)).toEqual(['Новый сервис'])
   })
+
+  it('удалённый владельцем доступ НЕ воскресает', () => {
+    // Засев идёт при каждом открытии хранилища. Пока памяти о принесённом не было, удалённая
+    // запись возвращалась — вместе с ключом из env-файла и деньгами привязанной подписки.
+    const items = [{ label: 'OpenRouter', provider: 'openrouter' }]
+    expect(pickMissing([], items)).toHaveLength(1)
+    expect(pickMissing([], items, new Set(['openrouter']))).toEqual([])
+  })
 })

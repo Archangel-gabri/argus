@@ -1,7 +1,7 @@
 // Список слушающих портов сервера (agentless, read-only). `ss -H -lntup` (sudo -n → fallback
 // без sudo: без прав имя процесса не видно — не ошибка). Питает вкладку «Порты» + one-click туннель.
 import { execOnce } from './ssh'
-import { whichOs } from './pc'
+import { whichOs, osReachable, unreachableReason } from './pc'
 
 export interface ListeningPort {
   proto: 'tcp' | 'udp'
@@ -243,7 +243,7 @@ export async function listListening(
   deviceId: string
 ): Promise<{ ok: boolean; ports: ListeningPort[]; error?: string }> {
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: false, ports: [], error: 'устройство не в сети' }
+  if (!osReachable(os.family)) return { ok: false, ports: [], error: unreachableReason(os.family) }
   if (os.family === 'windows') {
     const w = await execOnce(deviceId, winPortsCmd())
     if (!w.ok) return { ok: false, ports: [], error: w.error }

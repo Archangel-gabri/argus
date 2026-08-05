@@ -30,23 +30,33 @@ describe('trackedReach', () => {
     expect(trackedReach('probe', 'node-2', 'offline')).toBe('unknown')
   })
 
+  it('два опроса ПК не складывают промахи друг другу', () => {
+    // `whichOs` и `pc.metrics` ходят на машину по разным поводам и разными склейками. Пока у
+    // них был общий счётчик, один флап канала попадал в оба и давал два промаха: машина
+    // объявлялась выключенной с первой осечки — ровно то, что правило запрещает.
+    expect(trackedReach('pc-os', 'node-1', 'offline')).toBe('unknown')
+    expect(trackedReach('pc-metrics', 'node-1', 'offline')).toBe('unknown')
+    expect(missesOf('pc-os', 'node-1')).toBe(1)
+    expect(missesOf('pc-metrics', 'node-1')).toBe(1)
+  })
+
   it('быстрая проверка и опрос ПК считаются раздельно', () => {
     trackedReach('probe', 'node-1', 'offline')
     // Тот же идентификатор, другой вид проверки — своя серия.
-    expect(trackedReach('pc', 'node-1', 'offline')).toBe('unknown')
+    expect(trackedReach('pc-metrics', 'node-1', 'offline')).toBe('unknown')
     expect(missesOf('probe', 'node-1')).toBe(1)
-    expect(missesOf('pc', 'node-1')).toBe(1)
+    expect(missesOf('pc-metrics', 'node-1')).toBe(1)
   })
 
   it('блокировка стирает серии — новая сессия начинает с чистого листа', () => {
     trackedReach('probe', 'node-1', 'offline')
-    trackedReach('pc', 'node-1', 'offline')
+    trackedReach('pc-metrics', 'node-1', 'offline')
     expect(missesOf('probe', 'node-1')).toBe(1)
 
     clearReachMemory()
 
     expect(missesOf('probe', 'node-1')).toBe(0)
-    expect(missesOf('pc', 'node-1')).toBe(0)
+    expect(missesOf('pc-metrics', 'node-1')).toBe(0)
     // Главное: первый промах после разблокировки — снова «не знаю», а не «выключено».
     expect(trackedReach('probe', 'node-1', 'offline')).toBe('unknown')
   })

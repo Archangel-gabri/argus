@@ -52,7 +52,13 @@ describe('план засева счетов', () => {
     const file: FinanceSeedFile = {
       accounts: [{ name: 'Сбербанк', kind: 'bank', institution: 'Сбербанк', currency: 'RUB', source: 'manual' }]
     }
-    expect(planFinanceSeed(file, [acc()])).toEqual({ create: [], update: [], retire: [], seeded: [] })
+    expect(planFinanceSeed(file, [acc()])).toEqual({
+      create: [],
+      update: [],
+      retire: [],
+      // Совпавшая запись тоже попадает в память засева — иначе у полного хранилища она пуста.
+      seeded: ['сбербанк']
+    })
   })
 
   it('закрытый счёт убирается и заново не заводится', () => {

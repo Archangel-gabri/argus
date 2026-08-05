@@ -62,6 +62,18 @@ export function parseSubscriptionInput(input: unknown): SubscriptionInput {
   if (value.manualRenewal !== undefined && typeof value.manualRenewal !== 'boolean')
     throw new Error('Способ продления должен быть указан явно')
 
+  // День-якорь списания. Валидатор возвращал объект БЕЗ этого поля, поэтому ветка «взять из
+  // входа» в хранилище была мертва: якорь нельзя было ни задать, ни исправить. У записи с
+  // датой, однажды зажатой коротким месяцем, он навсегда оставался 28-м — даже когда владелец
+  // явно правил дату продления на 31-е.
+  let renewalDay: number | null | undefined
+  if (value.renewalDay !== undefined) {
+    if (value.renewalDay === null) renewalDay = null
+    else if (typeof value.renewalDay !== 'number' || !Number.isInteger(value.renewalDay) || value.renewalDay < 1 || value.renewalDay > 31)
+      throw new Error('День списания должен быть целым числом от 1 до 31')
+    else renewalDay = value.renewalDay
+  }
+
   return {
     name,
     provider,
@@ -70,6 +82,7 @@ export function parseSubscriptionInput(input: unknown): SubscriptionInput {
     currency: currency as SubscriptionInput['currency'],
     period,
     nextRenewal,
+    renewalDay,
     notes: notes || null,
     manualRenewal: value.manualRenewal ?? false
   }

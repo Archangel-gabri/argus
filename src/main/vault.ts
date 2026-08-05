@@ -1364,9 +1364,17 @@ export function updateSubscription(id: string, input: SubscriptionInput): Subscr
     currency: valid.currency ?? 'USD',
     period: valid.period ?? 'mo',
     nextRenewal: valid.nextRenewal ?? null,
-    // Существующий якорь не трогаем: правка суммы или названия не должна переучивать
-    // приложение тому, какого числа списывают.
-    renewalDay: valid.renewalDay ?? cur.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null),
+    // Якорь переучивается ровно тогда, когда человек ЯВНО поменял дату продления: это
+    // единственный случай, когда он действительно сообщает приложению новое число списания.
+    // Правка суммы или названия его не трогает. Порядок важен: сначала явно заданный якорь,
+    // потом смена даты, и только потом прежнее значение — иначе однажды зажатое коротким
+    // месяцем 28-е закреплялось навсегда, и исправить его было нечем.
+    renewalDay:
+      valid.renewalDay !== undefined
+        ? valid.renewalDay
+        : (valid.nextRenewal ?? null) !== (cur.nextRenewal ?? null)
+          ? renewalAnchorDay(valid.nextRenewal ?? null)
+          : (cur.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null)),
     notes: valid.notes ?? null,
     manualRenewal: valid.manualRenewal ?? false
   }
@@ -2299,7 +2307,16 @@ export function recordAccountBalance(accountId: string, balance: number | null, 
 }
 
 export function deleteFinanceAccount(id: string): boolean {
-  return requireDb().prepare('DELETE FROM finance_accounts WHERE id = ?').run(id).changes > 0
+  const d = requireDb()
+  return d.transaction((accountId: string): boolean => {
+    // Ключи биржи принадлежат счёту. Оставаясь, они превращались в секрет, к которому в
+    // интерфейсе больше нет ни одной двери: ни посмотреть, ни стереть. Соседи по хранилищу
+    // (устройство, подписка, ИИ-доступ) уносят своё за собой — этот путь был единственным
+    // исключением.
+    d.prepare('DELETE FROM finance_secrets WHERE account_id = ?').run(accountId)
+    d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(accountId, accountId)
+    return d.prepare('DELETE FROM finance_accounts WHERE id = ?').run(accountId).changes > 0
+  })(id)
 }
 
 // --- Вердикты проверки ключей ----------------------------------------------------------------

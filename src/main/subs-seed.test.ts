@@ -61,7 +61,9 @@ describe('план засева подписок', () => {
       ]
     }
     const plan = planSubsSeed(file, [sub()])
-    expect(plan).toEqual({ create: [], update: [], retire: [], seeded: [] })
+    // seeded наполняется и для совпавших записей: память засева должна знать про них тоже,
+    // иначе у полного хранилища она осталась бы пустой навсегда.
+    expect(plan).toEqual({ create: [], update: [], retire: [], seeded: ['boosty — erafox'] })
   })
 
   it('поле, которого в файле нет, остаётся прежним', () => {
@@ -129,6 +131,20 @@ describe('дата продления против файла', () => {
     expect(second.create).toEqual([])
   })
 
+  it('полное хранилище с пустой памятью запоминает ключи с первого входа', () => {
+    // Ровно случай владельца: подписки уже заведены прежними запусками, таблица seed_applied
+    // только что создана и пуста. Пока ключи запоминались лишь при СОЗДАНИИ, память оставалась
+    // пустой — и первое же удаление воскрешало запись. Один раз на каждую, то есть «иногда».
+    const file: SubsSeedFile = { subscriptions: [{ name: 'Boosty — erafox', amount: 499 }] }
+    const first = planSubsSeed(file, [sub()], new Set())
+    expect(first.create).toEqual([])
+    expect(first.seeded).toEqual(['boosty — erafox'])
+
+    // Владелец удалил запись → следующий вход её НЕ возвращает.
+    const afterDelete = planSubsSeed(file, [], new Set(first.seeded))
+    expect(afterDelete.create).toEqual([])
+  })
+
   it('переименованная подписка не двоится', () => {
     // Совпадение ищется по имени, поэтому после переименования старое имя в базе не находится.
     // Раньше это читалось как «новая запись» и заводило вторую — обе попадали в расход.
@@ -148,7 +164,7 @@ describe('дата продления против файла', () => {
     }
     const plan = planSubsSeed(file, [], new Set(['boosty — erafox']))
     expect(plan.create.map((c) => c.name)).toEqual(['Новая подписка'])
-    expect(plan.seeded).toEqual(['новая подписка'])
+    expect(plan.seeded).toEqual(['boosty — erafox', 'новая подписка'])
   })
 
   it('какая дата побеждает', () => {

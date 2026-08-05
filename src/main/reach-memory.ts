@@ -11,12 +11,21 @@ import { nextReachability, type Reachability } from '../shared/reachability'
  * правило «одна неудача = не знаю» и защищает.
  */
 const probeMisses = new Map<string, number>()
-const pcMisses = new Map<string, number>()
+const pcMetricsMisses = new Map<string, number>()
+const pcOsMisses = new Map<string, number>()
 
-export type ReachKind = 'probe' | 'pc'
+/**
+ * Вид проверки. У каждой своя память, и это принципиально: «выключено со второго промаха»
+ * означает две неудачи ОДНОГО И ТОГО ЖЕ опроса.
+ *
+ * Пока `whichOs` и `pc.metrics` писали в общий счётчик, один флап канала попадал в оба — они
+ * идут разными склейками и по разным поводам — и давал сразу два промаха. Машина объявлялась
+ * выключенной с первой же осечки: ровно то, что правило и запрещает.
+ */
+export type ReachKind = 'probe' | 'pc-metrics' | 'pc-os'
 
 const memoryFor = (kind: ReachKind): Map<string, number> =>
-  kind === 'probe' ? probeMisses : pcMisses
+  kind === 'probe' ? probeMisses : kind === 'pc-metrics' ? pcMetricsMisses : pcOsMisses
 
 /** Учесть наблюдение и вернуть вердикт с поправкой на серию промахов. */
 export function trackedReach(kind: ReachKind, id: string, observation: Reachability): Reachability {
@@ -33,5 +42,6 @@ export const missesOf = (kind: ReachKind, id: string): number => memoryFor(kind)
 /** Забыть серии промахов. Новая сессия начинает считать с чистого листа. */
 export function clearReachMemory(): void {
   probeMisses.clear()
-  pcMisses.clear()
+  pcMetricsMisses.clear()
+  pcOsMisses.clear()
 }

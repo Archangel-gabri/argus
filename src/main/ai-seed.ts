@@ -126,13 +126,21 @@ export function seedLabel(item: { label?: string; provider: string }): string {
  * иначе один заведённый вручную доступ навсегда закрывал бы дорогу остальным девятнадцати.
  * Существующие записи при этом НЕ трогаются — правки владельца важнее файла.
  */
-export function pickMissing<T extends { label?: string; provider: string }>(existingLabels: string[], items: T[]): T[] {
+export function pickMissing<T extends { label?: string; provider: string }>(
+  existingLabels: string[],
+  items: T[],
+  alreadySeeded: ReadonlySet<string> = new Set()
+): T[] {
   const known = new Set(existingLabels.map((l) => l.trim().toLowerCase()))
   const out: T[] = []
   for (const item of items) {
     const key = seedLabel(item).toLowerCase()
     // Дубль внутри самого файла тоже отсекаем — иначе он приедет в базу дважды.
     if (known.has(key)) continue
+    // Запись, которую засев уже приносил, а в реестре её нет, — это решение владельца её
+    // удалить. Повторное создание отменяло бы его на каждом открытии хранилища, да ещё и
+    // возвращало ключ из env-файла и деньги привязанной подписки.
+    if (alreadySeeded.has(key)) continue
     known.add(key)
     out.push(item)
   }
@@ -221,6 +229,9 @@ export function fillGaps(existing: AiAccess, item: SeedAccess): AiAccessInput | 
   return changed ? patch : null
 }
 
+/** Вид засева в памяти применённого — у реестра ИИ своё пространство имён. */
+const SEED_KIND = 'ai'
+
 /**
  * Досеять в реестр то, чего в нём ещё нет, и дополнить уже заведённое.
  *
@@ -280,7 +291,15 @@ export function seedAiAccess(): SeedResult {
   // создания — дрожать.
   const missing = pickMissing(
     existing.flatMap((a) => [a.label, ...a.channels.map((c) => c.label)]),
-    file.access
+    file.access,
+    vault.appliedSeedKeys(SEED_KIND)
+  )
+  // Ключи запоминаются для ВСЕГО, что есть в файле, а не только для созданного: иначе у
+  // владельца, чей реестр уже наполнен, память останется пустой и первое удаление всё равно
+  // воскресит запись.
+  vault.rememberSeedKeys(
+    SEED_KIND,
+    file.access.map((item) => seedLabel(item).toLowerCase())
   )
 
   // Сначала дополняем уже заведённое: новые поля файла (список аккаунтов, окно лимита) иначе

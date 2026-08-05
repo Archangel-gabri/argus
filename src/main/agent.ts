@@ -11,7 +11,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { app } from 'electron'
 import { execOnce, resolveConn } from './ssh'
-import { whichOs } from './pc'
+import { whichOs, osReachable, unreachableReason } from './pc'
 import { getAgentToken, setAgentToken, getAgentCert, setAgentCert } from './vault'
 import { buildForgetCommand, decideForgetOutcome, type ForgetOutcome } from './agent-forget'
 import { remoteFamily, remoteArch } from './os-family'
@@ -246,7 +246,7 @@ export interface ProvisionResult {
  */
 export async function provisionAgent(deviceId: string): Promise<ProvisionResult> {
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: false, step: 'связь', error: 'устройство не в сети' }
+  if (!osReachable(os.family)) return { ok: false, step: 'связь', error: unreachableReason(os.family) }
   const conn = await resolveConn(deviceId)
   if (!conn) return { ok: false, step: 'связь', error: 'не удалось определить адрес' }
 
@@ -676,9 +676,15 @@ export async function forgetAgent(
   // ничего, чем его отозвать. Теперь токен уходит последним и только после подтверждения.
   const os = await whichOs(deviceId)
 
-  if (os.family === 'off') {
+  if (!osReachable(os.family)) {
+    // До машины не дошли. Для отзыва это один исход — «сделать нечего», — но причина разная:
+    // выключенную можно включить, а неответившую стоит просто спросить ещё раз.
     const out = decideForgetOutcome({ family: 'off', execOk: false, output: '' })
-    return { ok: out.ok, revoked: out.revoked, error: out.ok ? undefined : out.error }
+    return {
+      ok: out.ok,
+      revoked: out.revoked,
+      error: out.ok ? undefined : (out.error ?? unreachableReason(os.family))
+    }
   }
 
   // Семейство спрашиваем у машины, а не у `whichOs`: тот знает только Windows и «всё остальное»,

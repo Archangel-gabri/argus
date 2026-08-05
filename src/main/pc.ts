@@ -21,6 +21,21 @@ import {
 // экране: у выключенной машины действия питания предлагают включить, у неизвестной — повторить.
 export type OsFamily = 'linux' | 'windows' | 'off' | 'unknown'
 
+/**
+ * Можно ли сейчас идти на машину по SSH.
+ *
+ * Отдельный предикат, а не сравнение с `'off'` в каждом месте: когда в тип добавили `'unknown'`,
+ * шесть проверок по всему main остались на старом сравнении и пропускали неизвестность дальше —
+ * запрос уходил на мёртвый хост и ждал полный SSH-таймаут вместо мгновенного ответа. Компилятор
+ * такого не ловит, поэтому решение живёт в одном месте.
+ */
+export const osReachable = (family: OsFamily): family is 'linux' | 'windows' =>
+  family !== 'off' && family !== 'unknown'
+
+/** Что показать, когда идти некуда: выключено — это факт, неизвестность — повод повторить. */
+export const unreachableReason = (family: OsFamily): string =>
+  family === 'off' ? 'устройство не в сети' : 'устройство не ответило — попробуй ещё раз'
+
 const family = (osLabel: string): 'linux' | 'windows' => (/win/i.test(osLabel) ? 'windows' : 'linux')
 
 // Семейство по ФАКТУ, если метка ОС не заполнена.
@@ -137,7 +152,7 @@ async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
 export function whichOs(deviceId: string): Promise<{ current: string; family: OsFamily }> {
   return singleFlight(`whichOs:${deviceId}`, async () => {
     const r = await whichOsNow(deviceId)
-    const status = trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online')
+    const status = trackedReach('pc-os', deviceId, r.family === 'off' ? 'offline' : 'online')
     // «Не знаю» не выдаём за «выключено»: пустая метка ОС читается интерфейсом как offline,
     // поэтому на неподтверждённом промахе оставляем прежнюю неопределённость.
     return status === 'unknown' ? { current: '', family: 'unknown' as const } : r
@@ -330,7 +345,7 @@ function parseWinMetrics(out: string): { cpu?: number; ramUsed?: number; ramTota
 export function metrics(deviceId: string): Promise<PcMetrics> {
   return singleFlight(`pcMetrics:${deviceId}`, async () => {
     const r = await metricsNow(deviceId)
-    return { ...r, status: trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online') }
+    return { ...r, status: trackedReach('pc-metrics', deviceId, r.family === 'off' ? 'offline' : 'online') }
   })
 }
 

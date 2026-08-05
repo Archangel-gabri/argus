@@ -104,13 +104,19 @@ export function planSubsSeed(
     if (!item.name?.trim() || retire.has(key(item.name))) continue
     const current = byName.get(key(item.name))
     const input = merge(item, current)
+    // Ключ помечается принесённым, ЕСТЬ запись в хранилище или нет.
+    //
+    // Иначе память засева не наполняется у того, у кого хранилище уже заполнено прежними
+    // запусками: имена совпадают, план идёт в «обновить» или «ничего не делать», ключ не
+    // запоминается — и первое же удаление воскрешает запись ровно один раз на каждую. Выглядит
+    // это как «иногда возвращается», то есть хуже честной поломки.
+    plan.seeded.push(key(item.name))
     if (!current) {
       // Запись из файла, которой в хранилище нет. Заводим её ОДИН раз: если этот ключ уже
       // приносили, значит владелец её удалил (или переименовал) — и повторное создание
       // отменяло бы его решение на каждом входе.
       if (alreadySeeded.has(key(item.name))) continue
       plan.create.push(input)
-      plan.seeded.push(key(item.name))
       continue
     }
     const same =

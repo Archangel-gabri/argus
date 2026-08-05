@@ -3,7 +3,7 @@
 // через -EncodedCommand (устойчиво к DefaultShell=PowerShell — урок live-теста 2026-07-23).
 // Кэшируется в vault (железо меняется редко). Сбор по живой ОС (resolveConn через whichOs).
 import { execOnce } from './ssh'
-import { whichOs } from './pc'
+import { whichOs, osReachable, unreachableReason } from './pc'
 import { getDeviceHardware, setDeviceHardware } from './vault'
 import type { HardwareInfo, DiskInfo } from './types'
 
@@ -167,7 +167,7 @@ function parseWinHw(out: string): HardwareInfo {
 /** Собрать железо заново (по живой ОС) + записать в кэш. */
 export async function refreshHardware(deviceId: string): Promise<{ ok: boolean; info?: HardwareInfo; error?: string }> {
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: false, error: 'хост не в сети' }
+  if (!osReachable(os.family)) return { ok: false, error: unreachableReason(os.family) }
   const r = await execOnce(deviceId, os.family === 'windows' ? WIN_HW_CMD : LINUX_HW_CMD)
   if (!r.ok) return { ok: false, error: r.error }
   const info = os.family === 'windows' ? parseWinHw(r.output) : parseLinuxHw(r.output)

@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { screen as electronScreen, BrowserWindow } from 'electron'
 import GuacamoleLite from 'guacamole-lite'
 import { execOnce, resolveConn } from './ssh'
-import { whichOs } from './pc'
+import { whichOs, osReachable, unreachableReason } from './pc'
 import { createScreenWindow } from './windows'
 import { listDevices, getScreenPassword, setScreenPassword, isUnlocked } from './vault'
 import { agentEndpoint, agentStatus } from './agent'
@@ -111,7 +111,7 @@ function parseWin(out: string): ScreenPreflight {
 /** Пред-полётная проба готовности ПК к скринерингу (по живой ОС). */
 export async function screenPreflight(deviceId: string): Promise<ScreenPreflight> {
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: false, os: 'off', warnings: [], error: 'ПК не в сети' }
+  if (!osReachable(os.family)) return { ok: false, os: os.family, warnings: [], error: unreachableReason(os.family) }
   const r = await execOnce(deviceId, os.family === 'windows' ? winPreflightCmd() : LINUX_PREFLIGHT)
   if (!r.ok) return { ok: false, os: os.family === 'windows' ? 'windows' : 'linux', warnings: [], error: r.error }
   return os.family === 'windows' ? parseWin(r.output) : parseLinux(r.output)
@@ -354,7 +354,7 @@ export async function screenStart(
   opts: { password: string; width?: number; height?: number }
 ): Promise<ScreenStartResult> {
   const os = await whichOs(deviceId)
-  if (os.family === 'off') return { ok: false, error: 'ПК не в сети' }
+  if (!osReachable(os.family)) return { ok: false, error: unreachableReason(os.family) }
   if (os.family !== 'windows')
     return { ok: false, error: 'Пока встроен Windows-путь (RDP). Linux/единый агент — следующий инкремент.' }
   if (!opts.password) return { ok: false, error: 'Нужен пароль Windows-аккаунта' }
