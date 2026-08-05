@@ -284,7 +284,7 @@ export function AIAccountsView(): React.JSX.Element {
           ) : access.length === 0 ? (
             <button
               onClick={() => setAdding(true)}
-              className="mx-6 my-8 block w-[calc(100%-3rem)] rounded border border-dashed border-border py-14 text-center text-[12px] text-slate-400 transition-colors hover:border-accent/40 hover:text-slate-400"
+              className="mx-6 my-8 block w-[calc(100%-3rem)] rounded border border-dashed border-border py-14 text-center text-[12px] text-slate-400 transition-colors hover:border-accent/40 hover:text-slate-200"
             >
               Доступов нет — добавь первый
             </button>

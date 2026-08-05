@@ -205,8 +205,12 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     </button>
   )
 
-  const dotCls =
-    current && famOf(current) === 'windows' ? 'bg-sky-400' : current ? 'bg-emerald-500' : 'bg-slate-500'
+  // «Не знаю» — это не «работает». Сентинел неизвестности надо снимать ВЕЗДЕ, где раньше
+  // хватало проверки на непустую строку: иначе рядом с честным «не ответила — пробую ещё»
+  // горит зелёная точка «машина жива», а кнопка «Включить» считает её включённой и гаснет —
+  // ровно тогда, когда разбудить и нужно.
+  const running = current !== null && current !== UNKNOWN_OS && current !== ''
+  const dotCls = running && famOf(current) === 'windows' ? 'bg-sky-400' : running ? 'bg-emerald-500' : 'bg-slate-500'
 
   // Сегмент ОС: активная (запущенная) подсвечена; клик по неактивной — загрузить в неё.
   const Seg = ({ osLabel }: { osLabel: string }): React.JSX.Element => {
@@ -257,7 +261,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
       {/* Питание живой ОС + Включить (WoL). «Включить» видна ВСЕГДА при заданном MAC
           (не прячется во время проверки); disabled только когда ПК подтверждённо online. */}
       <div className="flex flex-wrap gap-2">
-        {d.mac && <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={!!current} />}
+        {d.mac && <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={running} />}
         <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
         <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
         <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />

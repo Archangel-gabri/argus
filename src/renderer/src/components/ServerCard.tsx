@@ -10,9 +10,9 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
-import { providerHex, providerGlyph, providerLogoUrl } from '@/lib/providers'
-import { loadPrefs } from '@/lib/prefs'
+import { providerHex, providerGlyph } from '@/lib/providers'
 import { providerLogo } from '@/lib/providerLogos'
+import { markFor } from '@/assets/providers/marks'
 import { deviceIllustration } from '@/lib/illustrations'
 import type { DeviceDTO, DeviceKind, Status } from '@/types'
 import { useUI } from '@/store/ui'
@@ -77,17 +77,19 @@ export function ProviderBadge({
 }): React.JSX.Element {
   const bundled = providerLogo(provider)
   const [bundledFailed, setBundledFailed] = useState(false)
-  const [remoteFailed, setRemoteFailed] = useState(false)
-  // Пометки «логотип не загрузился» относятся к КОНКРЕТНОМУ хостеру. Сменили хостера в карточке —
+  // Пометка «логотип не загрузился» относится к КОНКРЕТНОМУ хостеру. Сменили хостера в карточке —
   // компонент тот же, состояние остаётся, и новый логотип даже не пробовали показать: сразу
   // рисовалась монограмма. Сбрасываем при смене.
-  useEffect(() => {
-    setBundledFailed(false)
-    setRemoteFailed(false)
-  }, [provider])
+  useEffect(() => setBundledFailed(false), [provider])
   const box = size === 'sm' ? 'h-8 w-8 rounded-md' : 'h-10 w-10 rounded-lg'
   const img = size === 'sm' ? 'h-5 w-5' : 'h-7 w-7'
-  // Тир 1: bundled-логотип; тир 2: Clearbit по домену хостера; тир 3: цветная монограмма.
+
+  // Три яруса, и ни один не ходит в сеть.
+  //
+  // Раньше вторым ярусом стояла фавиконка от Google по домену хостера — за флагом, но всё же:
+  // такой запрос сообщает третьей стороне список хостеров владельца, то есть часть приватной
+  // топологии. Каталог знаков (общий с банками, биржами и подписками) закрывает тот же случай
+  // без единого обращения наружу и опознаёт написание в обоих алфавитах, а не точным ключом.
   if (bundled && !bundledFailed) {
     return (
       <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
@@ -95,13 +97,15 @@ export function ProviderBadge({
       </div>
     )
   }
-  // Логотип из интернета — только по явной настройке: запрос сообщает Google список хостеров
-  // владельца, а это часть приватной топологии.
-  const remote = providerLogoUrl(provider, loadPrefs().remoteLogos)
-  if (remote && !remoteFailed) {
+  const mark = markFor(provider)
+  if (mark) {
     return (
-      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
-        <img src={remote} alt={provider} className={cn('object-contain', img)} onError={() => setRemoteFailed(true)} draggable={false} />
+      <div className={cn('flex shrink-0 items-center justify-center rounded-lg bg-white/[0.04]', box)}>
+        <svg viewBox={mark.vb} className={img} fill="currentColor" aria-hidden style={{ color: mark.tint }}>
+          {mark.paths.map((path, i) => (
+            <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
+          ))}
+        </svg>
       </div>
     )
   }

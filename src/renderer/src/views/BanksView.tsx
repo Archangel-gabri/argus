@@ -3,11 +3,10 @@ import { Bitcoin, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-rea
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
-import { money } from '@/lib/format'
+import { approxMoney, money } from '@/lib/format'
 import { toUsd } from '@/data/subscriptions'
 import { cn } from '@/lib/cn'
 import { KIND_COLOR } from '@/data/finance'
-import { FX_IS_APPROXIMATE } from '../../../shared/fx'
 import { AccountList } from '@/components/finance/AccountList'
 import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
@@ -231,10 +230,13 @@ export function BanksView(): React.JSX.Element {
   const accountSums = accountTotals(accounts, Date.now())
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
   const net = liveUsd + accountSums.usd
-  // Итог сводит рубли, евро и доллары по ВШИТОМУ справочному курсу. Без пометки цифра читается
-  // как посчитанные деньги — на соседнем экране подписок то же решение принято явно.
-  const mixedCurrencies =
-    FX_IS_APPROXIMATE && new Set([...accounts.filter((a) => a.balance != null).map((a) => a.currency), ...(liveUsd > 0 ? ['USD'] : [])]).size > 1
+  // Пометка «≈» нужна там, где КОНВЕРТАЦИЯ реально была, а не там, где валют несколько.
+  //
+  // Первая редакция проверяла разнообразие (`size > 1`) — и на самом частом наборе данных
+  // молчала: у владельца все счета в рублях, кошельков с балансом нет, значит валюта одна и
+  // «≈» не ставилось. А итог всё равно получен умножением на вшитый курс 0.0126. То есть
+  // правка, сделанная ради честности цифры, на живых данных её и не давала.
+  const currencies = accounts.filter((a) => a.balance != null).map((a) => a.currency)
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   // Группируем по ТИПУ счёта, а подпись и цвет берём от него же. Раньше ключом группы служила
@@ -336,8 +338,8 @@ export function BanksView(): React.JSX.Element {
             описывает не состояние владельца, а ту его часть, которую мы правда знаем. */}
         <StatTile
           label="Известно"
-          value={mixedCurrencies ? `≈ ${money(net)}` : money(net)}
-          hint={`по ${accountSums.known + wallets.length} источникам из ${accounts.length + wallets.length}`}
+          value={approxMoney(net, currencies)}
+          hint={`по ${accountSums.known + (wallets.length - unavailable)} источникам из ${accounts.length + wallets.length}`}
         />
         <StatTile
           label="Не внесено"
@@ -432,7 +434,7 @@ export function BanksView(): React.JSX.Element {
 
         <Card>
           <h2 className="mb-3 text-sm font-semibold text-white">Аллокация</h2>
-          <Donut data={byKind} center={mixedCurrencies ? `≈ ${money(net)}` : money(net)} sub="всего" />
+          <Donut data={byKind} center={approxMoney(net, currencies)} sub="всего" />
         </Card>
       </div>
     </Page>

@@ -238,7 +238,7 @@ export function AccessDetail({
                 href={access.baseUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-400"
+                className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-200"
               >
                 <ExternalLink className="h-3 w-3" /> открыть адрес доступа
               </a>

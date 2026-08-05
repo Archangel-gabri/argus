@@ -1,6 +1,6 @@
 import { Plus, type LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { money } from '@/lib/format'
+import { approxMoney } from '@/lib/format'
 import { useDevices, totals } from '@/store/devices'
 import { useUI } from '@/store/ui'
 import { SpendPie } from './SpendPie'
@@ -18,6 +18,8 @@ export function InsightsPanel(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const openCreate = useUI((s) => s.openCreate)
   const { monthly, yearly } = totals(devices)
+  // Валюты слагаемых нужны, чтобы отличить «посчитано» от «сведено по вшитому курсу».
+  const spendCurrencies = devices.filter((d) => d.cost.usd > 0).map((d) => d.cost.currency)
 
   return (
     <div className="space-y-7">
@@ -33,12 +35,12 @@ export function InsightsPanel(): React.JSX.Element {
         <div className="rounded-xl border border-border bg-card/60 p-4">
           <div className="flex items-center justify-between py-1">
             <span className="text-sm text-slate-400">В месяц</span>
-            <span className="text-lg font-semibold tabular-nums text-white">{money(monthly)}</span>
+            <span className="text-lg font-semibold tabular-nums text-white">{approxMoney(monthly, spendCurrencies)}</span>
           </div>
           <div className="my-1 h-px bg-border" />
           <div className="flex items-center justify-between py-1">
             <span className="text-sm text-slate-400">В год</span>
-            <span className="text-lg font-semibold tabular-nums text-white">{money(yearly)}</span>
+            <span className="text-lg font-semibold tabular-nums text-white">{approxMoney(yearly, spendCurrencies)}</span>
           </div>
         </div>
       </section>

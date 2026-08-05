@@ -10,16 +10,15 @@ export type Prefs = {
    * адреса, которые мы старательно не отправляем в гео-сервис. Цена отказа — монограмма
    * вместо картинки.
    */
-  remoteLogos: boolean
 }
 
 const KEY = 'argus.prefs'
 
 export function loadPrefs(): Prefs {
   try {
-    return { autolockMin: 0, reduceMotion: false, remoteLogos: false, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
+    return { autolockMin: 0, reduceMotion: false, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') }
   } catch {
-    return { autolockMin: 0, reduceMotion: false, remoteLogos: false }
+    return { autolockMin: 0, reduceMotion: false }
   }
 }
 

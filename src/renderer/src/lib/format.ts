@@ -1,3 +1,5 @@
+import { FX_IS_APPROXIMATE } from '../../../shared/fx'
+
 const SYMBOL: Record<string, string> = {
   USD: '$', EUR: '€', RUB: '₽', GBP: '£', CNY: '¥', JPY: '¥', CHF: 'Fr', CAD: 'C$',
   AUD: 'A$', INR: '₹', BRL: 'R$', KRW: '₩', TRY: '₺', PLN: 'zł', UAH: '₴', KZT: '₸',
@@ -20,15 +22,36 @@ const TRAILING = new Set(['RUB', 'PLN', 'UAH', 'KZT', 'SEK', 'NOK', 'CHF'])
  * Разделитель разрядов — узкий неразрывный пробел, как принято в русской типографике; запятая
  * между тысячами («125,000 ₽») в рублях читается как дробная часть.
  */
+// Форматтеров ровно два, и строятся они один раз: `Intl.NumberFormat` с явными опциями движок
+// не кэширует, а `money` зовётся десятками раз за рендер (таблица моделей, списки, карточки).
+const WHOLE = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+const CENTS = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 export function money(amount: number, currency = 'USD'): string {
   const sym = SYMBOL[currency] ?? ''
-  const digits = Math.abs(amount) >= 1000 ? 0 : 2
-  const n = new Intl.NumberFormat('ru-RU', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits
-  }).format(amount)
+  const n = (Math.abs(amount) >= 1000 ? WHOLE : CENTS).format(amount)
   return TRAILING.has(currency) ? `${n} ${sym}` : `${sym}${n}`
 }
+
+/**
+ * Сумма, сведённая к доллару по вшитому курсу.
+ *
+ * Правило одно на все экраны денег: если хоть одна слагаемая была не в долларах, итог получен
+ * умножением на справочный курс — он не обновляется, и цифра приблизительная. Без «≈» она
+ * читается как посчитанные деньги.
+ *
+ * Живёт здесь, а не на экранах, потому что уже дважды разъехалось: сначала пометку поставили
+ * только на «Подписках», потом на «Финансах» — и оба раза условием было «валют больше одной»,
+ * то есть на самом частом наборе (всё в рублях) пометка молчала, хотя пересчёт был.
+ */
+export function approxMoney(amountUsd: number, currencies: Iterable<string>): string {
+  const converted = FX_IS_APPROXIMATE && [...currencies].some((c) => c !== 'USD')
+  return converted ? `≈ ${money(amountUsd)}` : money(amountUsd)
+}
+
+/** Была ли конвертация — для подписи «сведено по приблизительному курсу» рядом с суммой. */
+export const isApprox = (currencies: Iterable<string>): boolean =>
+  FX_IS_APPROXIMATE && [...currencies].some((c) => c !== 'USD')
 
 export function pct(n: number): string {
   return `${Math.round(n)}%`

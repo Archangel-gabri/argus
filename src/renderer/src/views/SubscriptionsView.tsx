@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react'
 import { CalendarClock, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
-import { money, plural } from '@/lib/format'
+import { approxMoney, isApprox, money, plural } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
 import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
-import { FX_IS_APPROXIMATE } from '../../../shared/fx'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
@@ -16,6 +15,8 @@ import { markFor } from '@/assets/providers/marks'
 interface Row {
   id: string
   name: string
+  /** Компания, которой платят: по ней ищется логотип. У строки-устройства это хостер. */
+  provider?: string
   category: string
   amount: number
   currency: Currency
@@ -203,6 +204,10 @@ export function SubscriptionsView(): React.JSX.Element {
     .map((d) => ({
       id: 'dev-' + d.id,
       name: d.name,
+      // Хостер — та же компания, что и «провайдер» у подписки, и знак у неё в каталоге есть.
+      // Без этого поля строки парка молча оставались без логотипа, хотя фича заявлена «по
+      // всему приложению».
+      provider: d.provider,
       category: 'Infra',
       amount: d.cost.amount,
       currency: d.cost.currency,
@@ -214,6 +219,7 @@ export function SubscriptionsView(): React.JSX.Element {
   const userRows: Row[] = subs.map((s) => ({
     id: s.id,
     name: s.name,
+    provider: s.provider,
     category: s.category,
     amount: s.amount,
     currency: s.currency,
@@ -226,9 +232,11 @@ export function SubscriptionsView(): React.JSX.Element {
   const all = [...infra, ...userRows]
   const monthly = all.reduce((s, x) => s + monthlyUsd(x), 0)
   const yearly = monthly * 12
-  // Пометка «≈» нужна только там, где сведение реально произошло: если всё в долларах, курс
-  // ни при чём и лишний значок только сеет сомнение в точной цифре.
-  const mixedCurrencies = FX_IS_APPROXIMATE && new Set(all.map((x) => x.currency)).size > 1
+  // Пометка «≈» нужна там, где КОНВЕРТАЦИЯ реально была. Проверять разнообразие валют
+  // (`size > 1`) неверно: подписки целиком в евро — это одна валюта и всё равно пересчёт по
+  // вшитому курсу. Если всё в долларах, курс ни при чём и значок только сеет сомнение.
+  const currencies = all.map((x) => x.currency)
+  const converted = isApprox(currencies)
 
   const byCat = Object.entries(
     all.reduce<Record<string, number>>((a, x) => {
@@ -301,13 +309,13 @@ export function SubscriptionsView(): React.JSX.Element {
       <div className="grid grid-cols-3 gap-4">
         <StatTile
           label="В месяц"
-          value={mixedCurrencies ? `≈ ${money(monthly)}` : money(monthly)}
-          hint={mixedCurrencies ? 'сведено по приблизительному курсу' : undefined}
+          value={approxMoney(monthly, currencies)}
+          hint={converted ? 'сведено по приблизительному курсу' : undefined}
         />
         <StatTile
           label="В год"
-          value={mixedCurrencies ? `≈ ${money(yearly)}` : money(yearly)}
-          hint={mixedCurrencies ? 'сведено по приблизительному курсу' : undefined}
+          value={approxMoney(yearly, currencies)}
+          hint={converted ? 'сведено по приблизительному курсу' : undefined}
         />
         <StatTile label="Активных" value={String(all.length)} hint={`${infra.length} инфра · ${userRows.length} приложений`} />
       </div>
@@ -326,7 +334,7 @@ export function SubscriptionsView(): React.JSX.Element {
                   {/* Знак компании узнаётся быстрее строки: в списке из двадцати подписок глаз
                       находит Spotify по зелёному кружку раньше, чем прочитает название. Цвет
                       категории остаётся запасным вариантом — для тех, чьего знака нет. */}
-                  <BrandDot name={x.name} provider={stored?.provider} category={x.category} />
+                  <BrandDot name={x.name} provider={x.provider} category={x.category} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-slate-200">{x.name}</span>
                     {stored && <span className="block truncate text-[10px] text-slate-500">{stored.provider || 'провайдер не указан'}</span>}
@@ -436,7 +444,7 @@ export function SubscriptionsView(): React.JSX.Element {
         <div className="space-y-6">
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-white">По категориям</h2>
-            <Donut data={byCat} center={mixedCurrencies ? `≈ ${money(monthly)}` : money(monthly)} sub="/ мес" />
+            <Donut data={byCat} center={approxMoney(monthly, currencies)} sub="/ мес" />
           </Card>
           <Card>
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">

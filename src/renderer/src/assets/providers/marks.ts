@@ -71,11 +71,22 @@ const ALIAS: Record<string, string> = {
  * Принимает и точный ключ, и свободное написание («Хетцнер», «Т-Банк», «Claude Max»):
  * опознание живёт в src/shared/brands.ts и работает на обоих алфавитах.
  */
+// Опознание по написанию прогоняет несколько десятков регулярок, а зовут его из строки списка —
+// то есть на каждый рендер каждой записи, и при поллинге это повторяется каждые несколько секунд.
+// Ответ для одного и того же написания не меняется, поэтому считаем его один раз. Ключей здесь
+// столько, сколько разных названий у владельца, — десятки, не мегабайты.
+const resolved = new Map<string, ProviderMark | null>()
+
 export function markFor(provider: string): ProviderMark | null {
   const key = provider.trim().toLowerCase()
+  const cached = resolved.get(key)
+  if (cached !== undefined) return cached
+
   const direct = PROVIDER_MARKS[key] ?? PROVIDER_MARKS[ALIAS[key] ?? ''] ?? BRAND_MARKS[key]
-  if (direct) return direct
-  const recognized = brandOf(provider)
-  return recognized ? (PROVIDER_MARKS[recognized] ?? BRAND_MARKS[recognized] ?? null) : null
+  const recognized = direct ? null : brandOf(provider)
+  const mark =
+    direct ?? (recognized ? (PROVIDER_MARKS[recognized] ?? BRAND_MARKS[recognized] ?? null) : null)
+  resolved.set(key, mark)
+  return mark
 }
 
