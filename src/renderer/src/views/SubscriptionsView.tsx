@@ -11,7 +11,6 @@ import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
 import { markFor } from '@/assets/providers/marks'
-import { findDuplicateSpend } from '../../../shared/duplicate-spend'
 import { initialsOf } from '../../../shared/brands'
 
 interface Row {
@@ -263,25 +262,6 @@ export function SubscriptionsView(): React.JSX.Element {
       renews: null,
       source: 'live'
     }))
-  // Пары «железка + платёж за неё», которые пока не связаны: их суммы складываются в расходе
-  // дважды. Показываем их наверху и предлагаем связать — сам человек эту пару не найдёт,
-  // потому что записи называются по-разному и лежат на разных экранах.
-  const duplicates = findDuplicateSpend(
-    devices.map((d) => ({ id: d.id, name: d.name, provider: d.provider, cost: d.cost })),
-    subs
-  )
-  // Связать пару: цена остаётся у подписки, сервер перестаёт добавлять её к расходу второй раз.
-  // Одной кнопкой — потому что пар обычно несколько, и чинить их по одной значит согласиться,
-  // что месячный расход какое-то время будет врать.
-  const link = async (d: (typeof duplicates)[number]): Promise<void> => {
-    const stored = subs.find((x) => x.id === d.subscriptionId)
-    if (stored) await updateSub(stored.id, { ...stored, deviceId: d.deviceId })
-  }
-  const linkAll = async (): Promise<void> => {
-    // Последовательно: каждая правка перечитывает список, и параллельные записи затирают друг друга.
-    for (const d of duplicates) await link(d)
-  }
-
   const deviceName = new Map(devices.map((d) => [d.id, d.name]))
   const userRows: Row[] = subs.map((s) => ({
     id: s.id,
@@ -388,46 +368,15 @@ export function SubscriptionsView(): React.JSX.Element {
           value={approxMoney(yearly, currencies)}
           hint={converted ? 'сведено по приблизительному курсу' : undefined}
         />
-        <StatTile label="Активных" value={String(all.length)} hint={`${infra.length} инфра · ${userRows.length} приложений`} />
+        {/* Считаем по КАТЕГОРИИ записи, а не по тому, откуда строка взялась. Раньше «инфрой»
+            назывались только строки парка, и после связывания сервера с его платежом подпись
+            показывала «0 инфра» при семи хостинговых подписках на экране. */}
+        <StatTile
+          label="Активных"
+          value={String(all.length)}
+          hint={`${all.filter((x) => x.category === 'Infra' || x.category === 'Hosting').length} на инфраструктуру · ${all.filter((x) => x.category !== 'Infra' && x.category !== 'Hosting').length} на сервисы`}
+        />
       </div>
-
-      {duplicates.length > 0 && !adding && !editing && (
-        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-amber-300">
-              {duplicates.length === 1 ? 'Похоже, одна трата посчитана дважды' : `Похоже, ${duplicates.length} траты посчитаны дважды`}
-            </p>
-            {duplicates.length > 1 && (
-              <button
-                onClick={() => void linkAll()}
-                className="rounded-md bg-amber-500/20 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/30"
-              >
-                Связать все ({duplicates.length})
-              </button>
-            )}
-          </div>
-          <ul className="mt-2 space-y-1.5">
-            {duplicates.map((d) => (
-              <li key={d.deviceId} className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                <span className="text-slate-400">{d.deviceName}</span>
-                <span className="text-slate-500">и</span>
-                <span className="text-slate-400">{d.subscriptionName}</span>
-                <span className="text-[11px] text-slate-500">— {d.reason}</span>
-                <button
-                  onClick={() => void link(d)}
-                  className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25"
-                >
-                  Это одна трата
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2 text-[11px] leading-snug text-slate-500">
-            Связанные записи считаются один раз: цена остаётся у подписки, а сервер перестаёт
-            добавлять её к расходу второй раз.
-          </p>
-        </div>
-      )}
 
       {error && !adding && !editing && <p role="alert" className="mt-3 text-xs text-rose-400">{error}</p>}
 
@@ -456,6 +405,10 @@ export function SubscriptionsView(): React.JSX.Element {
                     <span className="block truncate text-slate-200">{x.name}</span>
                     <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
                       <span className="shrink-0">{catLabel(x.category)}</span>
+                      {/* За какую железку платим. Это же единственный видимый след того, что
+                          приложение связало сервер с его платежом: без имени строка выглядит
+                          так, будто цена сервера просто пропала. */}
+                      {x.forDevice && <span className="shrink-0 text-slate-400">· за {x.forDevice}</span>}
                       {stored?.provider && <span className="truncate">· {stored.provider}</span>}
                       <SourceBadge kind={x.source} />
                       {stored?.manualRenewal && (

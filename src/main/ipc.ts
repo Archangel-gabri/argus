@@ -13,6 +13,7 @@ import { seedPricesIfEmpty } from './ai-prices'
 import { seedAiAccess } from './ai-seed'
 import { seedSubscriptions } from './subs-seed'
 import { seedFinanceAccounts } from './finance-seed'
+import { linkPaidDevices } from './spend-link'
 import { migrateToAccounts } from './ai-accounts-migrate'
 import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
@@ -140,6 +141,14 @@ function afterUnlock(): void {
   // Уборка за прежним импортом: он принимал вход через Google за учётку сервиса и заводил
   // чужие почты десятками.
   step('уборка неподтверждённых аккаунтов', pruneUnverifiedAccounts)
+  // Один сервер — одна трата. Идёт ПОСЛЕ засева подписок: связывать надо с теми записями,
+  // которые уже принесены из файла, иначе первая же пара разъедется.
+  step('связать серверы с платежами', () => {
+    const linked = linkPaidDevices()
+    for (const l of linked) {
+      console.log(`[связь] «${l.deviceName}» платится подпиской «${l.subscriptionName}» — ${l.reason}`)
+    }
+  })
 
   void refreshEverything()
 }
@@ -436,6 +445,8 @@ export function registerIpc(): void {
   ipcMain.handle('devices:create', (_e, input: DeviceInput) => {
     try {
       const device = vault.createDevice(input)
+      // Та же связь с другой стороны: сервер завели после того, как платёж за него уже был.
+      if (device.cost.amount > 0) linkPaidDevices()
       return { ok: true, device }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -608,7 +619,14 @@ export function registerIpc(): void {
 
   // Subscriptions — stored in the encrypted vault
   ipcMain.handle('subs:list', () => (vault.isUnlocked() ? vault.listSubscriptions() : []))
-  ipcMain.handle('subs:create', (_e, input: unknown) => vault.createSubscription(parseSubscriptionInput(input)))
+  ipcMain.handle('subs:create', (_e, input: unknown) => {
+    const created = vault.createSubscription(parseSubscriptionInput(input))
+    // Завели платёж за сервер, который уже стоит в парке со своей ценой, — связываем сразу.
+    // Иначе двойной счёт появлялся бы заново у каждой новой записи, и разбираться с ним снова
+    // пришлось бы владельцу, хотя пару приложение видит.
+    if (!created.deviceId) linkPaidDevices()
+    return created
+  })
   ipcMain.handle('subs:update', (_e, id: unknown, input: unknown) =>
     vault.updateSubscription(asString(id), parseSubscriptionInput(input))
   )
