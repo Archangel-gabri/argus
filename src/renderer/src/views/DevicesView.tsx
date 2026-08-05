@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { plural } from '@/lib/format'
 import { useDevices } from '@/store/devices'
@@ -28,9 +27,10 @@ export function DevicesView(): React.JSX.Element {
   const loadError = useDevices((s) => s.error)
   const loadDevices = useDevices((s) => s.load)
   const refreshMetrics = useDevices((s) => s.refreshMetrics)
+  const refreshLiveness = useDevices((s) => s.refreshLiveness)
   const openCreate = useUI((s) => s.openCreate)
   const search = useUI((s) => s.search).trim().toLowerCase()
-  const [refreshing, setRefreshing] = useState(false)
+  const [polling, setPolling] = useState(false)
   const [group, setGroup] = useState<FleetGroup>('all')
 
   const inGroup = group === 'all' ? devices : devices.filter((d) => groupOf(d.kind) === group)
@@ -40,41 +40,66 @@ export function DevicesView(): React.JSX.Element {
       )
     : inGroup
   const onlineCount = devices.filter((d) => d.status === 'online').length
+  // Единственная сводка о падении на этом экране. Раньше о том же говорили ещё и полоса тревог
+  // (по строке на машину), и метка на карточке — три голоса об одном факте, из-за которых
+  // полоса становилась длинной именно тогда, когда её надо читать внимательнее всего.
+  const offlineCount = devices.filter((d) => d.status === 'offline').length
   const countOf = (g: FleetGroup): number =>
     g === 'all' ? devices.length : devices.filter((d) => groupOf(d.kind) === g).length
 
+  // Кнопки «Обновить» в шапке больше нет. Парк опрашивается сам — связь раз в 10 секунд, полные
+  // метрики раз в 30 (App.tsx), — то есть кнопка обещала действие, которое и так происходит, и
+  // чаще всего попадала в уже идущий проход: `refreshMetrics` гасит наложение флагом
+  // `metricsInFlight` и в этом случае возвращается сразу, ничего не сделав. Кнопка, которая
+  // иногда работает, а иногда молча нет, — хуже отсутствующей.
+  //
+  // Способ поторопить опрос всё же нужен: подняли ноду руками и ждать десять секунд не хочется.
+  // Он остался там, куда в этот момент и смотрят: счётчик «N на связи» сам является кнопкой.
+  // Второй путь, для клавиатуры, — ⌘K → «Обновить метрики».
   const onRefresh = async (): Promise<void> => {
-    setRefreshing(true)
+    if (polling) return
+    setPolling(true)
     try {
-      await refreshMetrics()
+      // Живость — вместе с метриками. Полный опрос намеренно обходит машины, уже признанные
+      // выключенными (это 10 секунд SSH-таймаута с известным ответом), поэтому без быстрой
+      // проверки нажатие не воскресило бы ровно ту машину, ради которой его сделали.
+      await Promise.all([refreshLiveness(), refreshMetrics()])
     } finally {
-      setRefreshing(false)
+      setPolling(false)
     }
   }
 
   return (
     <div className="flex h-full">
       <section className="flex-1 overflow-y-auto px-8 py-7">
-        {/* Тревоги сторожа — над списком: открыл и сразу видишь, что не так, не обходя карточки. */}
+        {/* Тревоги сторожа — над списком: открыл и сразу видишь, что не так, не обходя карточки.
+            Строкой здесь только то, что чинят на этом экране и о чём больше нигде не сказано
+            (сейчас это диск); прочее полоса сворачивает сама — разбор в AlertStrip.tsx. */}
         <AlertStrip />
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-white">Парк</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              {devices.length} {plural(devices.length, 'устройство', 'устройства', 'устройств')} · {onlineCount} на связи
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
+        <div className="mb-4">
+          <h1 className="text-2xl font-semibold text-white">Парк</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {devices.length} {plural(devices.length, 'устройство', 'устройства', 'устройств')} ·{' '}
             <button
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="rounded-lg p-2 text-slate-400 ring-1 ring-border transition-colors hover:bg-white/5 hover:text-slate-200 disabled:opacity-60"
-              aria-label="Обновить метрики"
-              title="Обновить метрики по SSH"
+              onClick={() => void onRefresh()}
+              disabled={polling}
+              aria-label={`${onlineCount} на связи. Опросить парк сейчас`}
+              title="Опросить сейчас. Обычно это происходит само: связь — раз в 10 с, метрики — раз в 30 с."
+              className={cn(
+                'rounded underline-offset-2 transition-colors hover:text-slate-300 hover:underline',
+                polling && 'animate-pulse'
+              )}
             >
-              <RefreshCw className={cn('h-[18px] w-[18px]', refreshing && 'animate-spin')} />
+              {onlineCount} на связи
             </button>
-          </div>
+            {offlineCount > 0 && (
+              <span className="text-rose-400">
+                {' · '}
+                {offlineCount}{' '}
+                {plural(offlineCount, 'не отвечает', 'не отвечают', 'не отвечают')}
+              </span>
+            )}
+          </p>
         </div>
 
         <div className="mb-5 flex items-center gap-1.5">

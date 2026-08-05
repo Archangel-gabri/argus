@@ -75,10 +75,11 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
       </p>
     )}
     <div className="group flex items-center gap-3 py-2.5 text-sm">
-      <span
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400"
-        style={mark ? { color: mark.tint } : undefined}
-      >
+      {/* Знак наследует цвет текста и остаётся приглушённым — как в разделе ИИ. Фирменные цвета
+          в списке спорили друг с другом: зелёный Сбер, жёлтый Т-Банк и синий PayPal в одном
+          столбце читались как СТАТУСЫ («у этого что-то не так»), хотя означали только бренд.
+          Цвет в приложении занят делом — им подписаны состояния. */}
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400">
         {mark ? (
           <svg viewBox={mark.vb} width={17} height={17} fill="currentColor" aria-hidden>
             {mark.paths.map((path, i) => (

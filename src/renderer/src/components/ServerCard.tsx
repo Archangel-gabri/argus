@@ -86,26 +86,31 @@ export function ProviderBadge({
 
   // Три яруса, и ни один не ходит в сеть.
   //
-  // Раньше вторым ярусом стояла фавиконка от Google по домену хостера — за флагом, но всё же:
-  // такой запрос сообщает третьей стороне список хостеров владельца, то есть часть приватной
-  // топологии. Каталог знаков (общий с банками, биржами и подписками) закрывает тот же случай
-  // без единого обращения наружу и опознаёт написание в обоих алфавитах, а не точным ключом.
-  if (bundled && !bundledFailed) {
-    return (
-      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
-        <img src={bundled} alt={provider} className={cn('object-contain', img)} onError={() => setBundledFailed(true)} draggable={false} />
-      </div>
-    )
-  }
+  // Раньше первым ярусом стояла картинка из assets/logos — цветной PNG на белой плашке. В тёмном
+  // окне такая плашка светится сильнее самой карточки и тянет взгляд на хостера вместо состояния
+  // машины; вдобавок парк выглядел иначе, чем список ИИ, где знаки приглушённо-серые. Поэтому
+  // первым идёт векторный знак из каталога: он рисуется цветом текста и одинаков во всех разделах.
+  // PNG остался ярусом ниже — для хостеров, которых нет ни в одном свободном наборе (FlokiNET,
+  // ExtraVM): лучше цветной знак, чем буквы.
+  //
+  // Фавиконки от Google по домену хостера здесь не было и не будет: такой запрос сообщает третьей
+  // стороне список хостеров владельца, то есть часть приватной топологии.
   const mark = markFor(provider)
   if (mark) {
     return (
-      <div className={cn('flex shrink-0 items-center justify-center rounded-lg bg-white/[0.04]', box)}>
-        <svg viewBox={mark.vb} className={img} fill="currentColor" aria-hidden style={{ color: mark.tint }}>
+      <div className={cn('flex shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400', box)}>
+        <svg viewBox={mark.vb} className={img} fill="currentColor" aria-hidden>
           {mark.paths.map((path, i) => (
             <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
           ))}
         </svg>
+      </div>
+    )
+  }
+  if (bundled && !bundledFailed) {
+    return (
+      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
+        <img src={bundled} alt={provider} className={cn('object-contain', img)} onError={() => setBundledFailed(true)} draggable={false} />
       </div>
     )
   }
@@ -284,36 +289,39 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-2">
-        {ssh && (
-          <button
-            onClick={() => openTerminal(s)}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover"
-          >
-            <TerminalSquare className="h-3.5 w-3.5" /> SSH
-          </button>
-        )}
-        {s.consoleUrl ? (
-          <a
-            href={s.consoleUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-border transition-colors hover:bg-white/5"
-          >
-            <ExternalLink className="h-3.5 w-3.5" /> Панель
-          </a>
-        ) : (
-          <span className="flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-xs text-slate-400 ring-1 ring-border/50">
-            Нет панели
-          </span>
-        )}
-        {s.cost.amount > 0 && (
-          <span className="shrink-0 rounded-md bg-white/5 px-2 py-1.5 text-xs font-medium tabular-nums text-slate-300">
-            {money(s.cost.amount, s.cost.currency)}
-            <span className="text-slate-500">/мес</span>
-          </span>
-        )}
-      </div>
+      {/* Ряд действий рисуется, только если в нём есть хоть что-то. Раньше место отсутствующей
+          панели хостера занимала надпись «Нет панели» в рамке — с виду кнопка, но нажать её
+          нельзя, и сообщает она об отсутствии, которое и так видно по отсутствию кнопки.
+          Панель заведена не у всех устройств парка, то есть такие ложные кнопки висели
+          на нескольких карточках сразу. */}
+      {(ssh || s.consoleUrl || s.cost.amount > 0) && (
+        <div className="mt-4 flex items-center gap-2">
+          {ssh && (
+            <button
+              onClick={() => openTerminal(s)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-bg transition-colors hover:bg-accent-hover"
+            >
+              <TerminalSquare className="h-3.5 w-3.5" /> SSH
+            </button>
+          )}
+          {s.consoleUrl && (
+            <a
+              href={s.consoleUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-border transition-colors hover:bg-white/5"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Панель
+            </a>
+          )}
+          {s.cost.amount > 0 && (
+            <span className="shrink-0 rounded-md bg-white/5 px-2 py-1.5 text-xs font-medium tabular-nums text-slate-300">
+              {money(s.cost.amount, s.cost.currency)}
+              <span className="text-slate-500">/мес</span>
+            </span>
+          )}
+        </div>
+      )}
     </div>
   )
 }

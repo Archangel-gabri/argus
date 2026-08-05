@@ -27,6 +27,7 @@
     "agent:build": "bash agent/build-all.sh",
     "ai:prices": "node tools/build-price-catalog.mjs",
     "brand:logos": "node tools/build-brand-catalog.mjs",
+    "ui:lab": "npm run build && node tools/ui-lab.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run test:agent && npm run build",
     "check:full": "npm run check && npm run test:vault && npm run test:net && npm run test:e2e",
     "rebuild": "electron-rebuild",
