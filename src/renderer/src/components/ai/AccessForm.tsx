@@ -5,6 +5,7 @@ import { providerChangeError, KIND_LABEL, KIND_ORDER, PAYMENT_LABEL, STATUS_LABE
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
 import type { AiAccess, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from '@/types'
+import { mergeLimits } from '../../../../shared/ai-limits'
 
 const PROVIDERS = [
   'anthropic',
@@ -129,12 +130,18 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
     }
     setBusy(true)
     try {
-      const limits: AiLimits = {
+      // Поля, которых в форме НЕТ, сохраняются как есть. Форма знает про четыре лимита из
+      // десяти, а в хранилище уезжал весь объект целиком — поэтому правка одной заметки
+      // обнуляла tpd, weekTokens, tpmo и rpmo. На экране это выглядело так: полосы «Сегодня» и
+      // «7 дней» переключались с точного потолка на приблизительную оценку по наблюдаемому
+      // максимуму, а строка «По условиям тарифа» исчезала. Заданное руками терялось навсегда:
+      // засев дозаполняет только пустые поля и только для записей из файла.
+      const limits: AiLimits = mergeLimits(initial?.limits, {
         rpm: numOrNull(rpm),
         rpd: numOrNull(rpd),
         windowHours: numOrNull(windowHours),
         windowTokens: numOrNull(windowTokens)
-      }
+      })
       const input = {
         kind,
         provider,
