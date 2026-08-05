@@ -3,7 +3,7 @@ import { Bitcoin, Pencil, Plus, Trash2, X, Loader2 } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
-import { approxMoney, money } from '@/lib/format'
+import { approxMoney, money, plural } from '@/lib/format'
 import { toUsd } from '@/data/subscriptions'
 import { cn } from '@/lib/cn'
 import { KIND_COLOR } from '@/data/finance'
@@ -292,7 +292,7 @@ export function BanksView(): React.JSX.Element {
     <Page>
       <PageHeader
         title="Финансы"
-        subtitle="банки и биржи — остаток вписывается вручную · криптокошельки читаются из сети"
+        subtitle={`${accounts.length + wallets.length} ${plural(accounts.length + wallets.length, 'источник', 'источника', 'источников')}`}
         action={
           <div className="flex items-center gap-2">
             <button

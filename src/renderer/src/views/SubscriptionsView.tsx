@@ -363,11 +363,7 @@ export function SubscriptionsView(): React.JSX.Element {
           value={approxMoney(monthly, currencies)}
           hint={converted ? 'сведено по приблизительному курсу' : undefined}
         />
-        <StatTile
-          label="В год"
-          value={approxMoney(yearly, currencies)}
-          hint={converted ? 'сведено по приблизительному курсу' : undefined}
-        />
+        <StatTile label="В год" value={approxMoney(yearly, currencies)} />
         {/* Считаем по КАТЕГОРИИ записи, а не по тому, откуда строка взялась. Раньше «инфрой»
             назывались только строки парка, и после связывания сервера с его платежом подпись
             показывала «0 инфра» при семи хостинговых подписках на экране. */}

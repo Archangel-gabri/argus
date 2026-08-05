@@ -118,15 +118,19 @@ function LimitCard({
 
   const byLimit = used != null
   const fill = Math.min(1, byLimit ? used : elapsed)
-  const over = byLimit && used > 1
-  const nearing = byLimit && used >= 0.8
+  // Красным помечается только превышение НАСТОЯЩЕГО потолка. Превысить наблюдаемый максимум —
+  // значит просто поработать больше, чем когда-либо раньше; это рекорд, а не поломка. Раньше
+  // экран красил такое в красный и показывал «204 %», хотя ни одного предела не нарушено.
+  const record = Boolean(observed) && used != null && used > 1
+  const over = Boolean(own) && used != null && used > 1
+  const nearing = Boolean(own) && used != null && used >= 0.8
 
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3.5">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-[12px] font-medium text-slate-200">{title}</span>
         <span className={cn('text-[15px] font-semibold tabular-nums', over ? 'text-rose-400' : 'text-white')}>
-          {byLimit ? `${observed ? '≈' : ''}${Math.round(used * 100)}%` : tokens(spent)}
+          {record ? 'рекорд' : byLimit ? `${observed ? '≈' : ''}${Math.round(used * 100)}%` : tokens(spent)}
         </span>
       </div>
 
