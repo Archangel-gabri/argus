@@ -12,7 +12,7 @@
 // подключении, так что происходящее не скрыто от того, кто сидит за ней.
 
 import { execOnce } from './ssh'
-import { whichOs } from './pc'
+import { whichOs, osReachable, unreachableReason } from './pc'
 
 /** Один сеанс logind в том виде, в каком его описывает `loginctl show-session`. */
 export type RemoteSession = {
@@ -289,6 +289,10 @@ export function interpretWindowsLockProbe(r: ExecResult): ScreenAccess {
  */
 export async function ensureScreenUnlocked(deviceId: string): Promise<ScreenAccess> {
   const os = await whichOs(deviceId)
+  // «Не знаю» — не повод угадывать: ветка ниже разделена по семейству, и неизвестность
+  // проваливалась в Linux-путь, отправляя `loginctl` на Windows-машину. Ответ честный:
+  // спросить не удалось, состоянием экрана управлять нечем.
+  if (!osReachable(os.family)) return { state: 'unsupported', reason: unreachableReason(os.family) }
   if (os.family === 'windows') {
     // Windows не даёт снять блокировку без пароля: экран блокировки живёт на защищённом
     // рабочем столе, и обычному процессу он недоступен — ни показать, ни разблокировать.

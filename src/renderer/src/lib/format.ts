@@ -27,9 +27,27 @@ const TRAILING = new Set(['RUB', 'PLN', 'UAH', 'KZT', 'SEK', 'NOK', 'CHF'])
 const WHOLE = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 const CENTS = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+/**
+ * Деньги: символ спереди ($1 234) или сзади (5 000 ₽).
+ *
+ * Копейки показываются, если они ЕСТЬ, и не показываются, если их нет. Ни одно из двух прежних
+ * правил не годилось: «целое — без копеек, иначе две» давало «$5,778.2» (один знак, потому что
+ * сотых там ноль и он молча отбрасывался), а «от тысячи — без копеек» округляло банковский
+ * остаток 1000,49 до «$1 000» и подписку 1999,50 ₽ до «2 000 ₽» — то есть показывало ДРУГУЮ
+ * сумму. Эта функция обслуживает и точные остатки, и цены, поэтому терять копейки ей нельзя;
+ * округляют — там, где сумма и так приблизительная (см. approxMoney).
+ */
 export function money(amount: number, currency = 'USD'): string {
   const sym = SYMBOL[currency] ?? ''
-  const n = (Math.abs(amount) >= 1000 ? WHOLE : CENTS).format(amount)
+  // Сравнение по копейкам, а не `Number.isInteger`: 4354.001 — это «$4 354», а не «$4 354,00».
+  const rounded = Math.round(amount * 100) / 100
+  // Сумма меньше копейки, но не ноль: «$0» прочиталось бы как «бесплатно», хотя расход есть.
+  // Для помодельных строк ИИ это обычное дело — доли цента за короткий ответ.
+  if (rounded === 0 && amount > 0) {
+    const min = CENTS.format(0.01)
+    return TRAILING.has(currency) ? `<${min} ${sym}` : `<${sym}${min}`
+  }
+  const n = (Number.isInteger(rounded) ? WHOLE : CENTS).format(rounded)
   return TRAILING.has(currency) ? `${n} ${sym}` : `${sym}${n}`
 }
 
@@ -46,7 +64,9 @@ export function money(amount: number, currency = 'USD'): string {
  */
 export function approxMoney(amountUsd: number, currencies: Iterable<string>): string {
   const converted = FX_IS_APPROXIMATE && [...currencies].some((c) => c !== 'USD')
-  return converted ? `≈ ${money(amountUsd)}` : money(amountUsd)
+  // У приблизительной суммы копейки — шум: они создают видимость точности там, где её нет.
+  // Точные остатки и цены идут через `money` и копейки сохраняют.
+  return converted ? `≈ ${money(Math.round(amountUsd))}` : money(amountUsd)
 }
 
 /** Была ли конвертация — для подписи «сведено по приблизительному курсу» рядом с суммой. */

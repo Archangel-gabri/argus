@@ -294,13 +294,6 @@ export function seedAiAccess(): SeedResult {
     file.access,
     vault.appliedSeedKeys(SEED_KIND)
   )
-  // Ключи запоминаются для ВСЕГО, что есть в файле, а не только для созданного: иначе у
-  // владельца, чей реестр уже наполнен, память останется пустой и первое удаление всё равно
-  // воскресит запись.
-  vault.rememberSeedKeys(
-    SEED_KIND,
-    file.access.map((item) => seedLabel(item).toLowerCase())
-  )
 
   // Сначала дополняем уже заведённое: новые поля файла (список аккаунтов, окно лимита) иначе
   // никогда не доедут до записи, созданной прошлой версией приложения.
@@ -313,6 +306,14 @@ export function seedAiAccess(): SeedResult {
     vault.updateAiAccess(found.id, patch)
     result.updated++
   }
+
+  // Метки, которые в реестре УЖЕ ЕСТЬ, помечаем принесёнными сразу: они заведены, и вопрос
+  // «создавать ли» по ним закрыт. Это и есть случай владельца с полным хранилищем — без такой
+  // пометки его память засева осталась бы пустой, и первое удаление воскресило бы запись.
+  const present = file.access
+    .map((item) => seedLabel(item).toLowerCase())
+    .filter((key) => !missing.some((m) => seedLabel(m).toLowerCase() === key))
+  vault.rememberSeedKeys(SEED_KIND, present)
 
   if (!missing.length) return result
 
@@ -384,6 +385,18 @@ export function seedAiAccess(): SeedResult {
     const target = byLabel.get(item.fallback.toLowerCase())
     if (id && target && id !== target) vault.updateAiAccess(id, { provider: item.provider, fallbackId: target })
   }
+
+  // Пометка «принесли» ставится ПОСЛЕ успешного создания, а не до него.
+  //
+  // Иначе одна кривая строка в файле (недопустимая валюта у вложенной подписки, сумма строкой)
+  // превращала временную ошибку в необратимую: ключ уже записан, запись не создана — и на всех
+  // следующих запусках она считается «удалённой владельцем» и не заводится больше никогда,
+  // даже после исправления файла. У подписок и счетов пометка идёт внутри той же транзакции,
+  // что и операции; здесь порядок был обратным.
+  vault.rememberSeedKeys(
+    SEED_KIND,
+    missing.filter((item) => byLabel.has(seedLabel(item).toLowerCase())).map((item) => seedLabel(item).toLowerCase())
+  )
 
   return result
 }

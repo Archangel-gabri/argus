@@ -1766,6 +1766,10 @@ export function deleteAiAccess(id: string): void {
   // почему срезов квоты вдвое больше, чем доступов.
   d.prepare('DELETE FROM ai_quota_slice WHERE access_id = ?').run(id)
   d.prepare('DELETE FROM ai_key_checks WHERE access_id = ?').run(id)
+  // Кросс-доменные связи уносят все остальные удаления (устройство, подписка, кошелёк, счёт);
+  // ИИ-доступ оставался единственным исключением. Внешних ключей в схеме нет, поэтому сироту
+  // здесь никто, кроме нас, не уберёт.
+  d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(id, id)
   // Ссылка «чем заменить» указывала на удалённую запись — обнуляем, иначе интерфейс покажет
   // фолбэк, которого нет.
   d.prepare('UPDATE ai_accounts SET fallback_id = NULL WHERE fallback_id = ?').run(id)

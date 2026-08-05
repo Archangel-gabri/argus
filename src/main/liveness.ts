@@ -23,6 +23,8 @@ export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<
   const t0 = Date.now()
   return new Promise((resolve) => {
     if (!host || host.includes('x.x')) return resolve({ status: 'unknown', ms: 0 })
+    // Порт вне диапазона — «не знаю»: мы ничего не проверили. Ноль сюда тоже попадает.
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) return resolve({ status: 'unknown', ms: 0 })
     const sock = new net.Socket()
     let done = false
     let banner = ''
@@ -49,7 +51,10 @@ export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<
     // ВСЕГО парка, навсегда до перезапуска, оставляя на карточках протухшее «Онлайн» как факт.
     // «Не знаю» здесь честнее «offline»: мы ничего не проверили.
     try {
-      sock.connect({ host, port: port || 22 })
+      // Порт берём как есть: `port || 22` молча подменял ноль двадцать вторым, и запись с
+      // явно неверным портом объявлялась живой по ЧУЖОМУ порту. Значение по умолчанию ставит
+      // хранилище при создании записи — здесь догадываться не о чем.
+      sock.connect({ host, port })
     } catch {
       finish('unknown')
     }
