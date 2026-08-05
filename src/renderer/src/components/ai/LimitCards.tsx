@@ -1,17 +1,10 @@
 import { cn } from '@/lib/cn'
-import { money } from '@/lib/format'
+import { money, tokens } from '@/lib/format'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { DEFAULT_WINDOW_HOURS, formatResetIn, mergeBlocks, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
 import { CREDIT_WARNING_USD } from '../../../../shared/ai-thresholds'
 import type { AiAccess, AiCheck, AiQuotaSlice, AiUsageBlock, AiUsageDay } from '@/types'
-
-function tokens(n: number): string {
-  // По-русски: «4.9M» и «20k» в остальном русском интерфейсе читаются как чужие.
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`
-  if (n >= 1000) return `${Math.round(n / 1000)} тыс.`
-  return String(n)
-}
 
 /** Сутки. Снимок квоты старше — уже не «сейчас», и об этом надо сказать. */
 const STALE_MS = 24 * 60 * 60 * 1000

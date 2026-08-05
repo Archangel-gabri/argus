@@ -53,6 +53,19 @@ export function approxMoney(amountUsd: number, currencies: Iterable<string>): st
 export const isApprox = (currencies: Iterable<string>): boolean =>
   FX_IS_APPROXIMATE && [...currencies].some((c) => c !== 'USD')
 
+/**
+ * Токены короткой строкой: «4.9 млн», «20 тыс.».
+ *
+ * Живёт здесь, а не рядом с экраном: копий было две, слово в слово вместе с комментарием, и
+ * сегодняшняя правка (латинские M/k → русские сокращения) потребовала одинаково изменить оба
+ * файла. Следующая разъехалась бы молча.
+ */
+export function tokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`
+  if (n >= 1000) return `${Math.round(n / 1000)} тыс.`
+  return String(n)
+}
+
 export function pct(n: number): string {
   return `${Math.round(n)}%`
 }

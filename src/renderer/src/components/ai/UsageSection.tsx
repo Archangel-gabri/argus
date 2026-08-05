@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { money } from '@/lib/format'
+import { money, tokens } from '@/lib/format'
 import { UsageBars } from '@/components/ai/UsageBars'
 import { byModel, dailySeries, daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { totalTokens } from '../../../../shared/ai-pricing'
@@ -12,13 +12,6 @@ const SPANS = [
   { days: 30, label: '30 дней' },
   { days: 90, label: '90 дней' }
 ]
-
-function tokens(n: number): string {
-  // Сокращения по-русски: «4.9M» и «20k» в остальном русском интерфейсе читаются как чужие.
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`
-  if (n >= 1000) return `${Math.round(n / 1000)} тыс.`
-  return String(n)
-}
 
 /**
  * Расход доступа: сколько сожжено и на что.

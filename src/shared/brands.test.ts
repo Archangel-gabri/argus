@@ -12,10 +12,16 @@ describe('brandOf', () => {
   })
 
   it('узкое написание побеждает общее', () => {
-    // Порядок правил — не косметика: «Yandex Cloud» не должен опознаваться как просто «Yandex»,
-    // а «Google Cloud» — как «Google» (которого в каталоге и нет).
     expect(brandOf('Yandex Cloud')).toBe('yandex-cloud')
     expect(brandOf('Google Cloud Platform')).toBe('google-cloud')
+  })
+
+  it('соседние продукты одной компании не получают чужой знак', () => {
+    // «Яндекс Плюс» и «Яндекс Пэй» — не облако, и рисовать им его логотип было бы неправдой.
+    // Своего знака у них в каталоге нет, поэтому честный исход — остаться без логотипа.
+    expect(brandOf('Яндекс Плюс')).toBeNull()
+    expect(brandOf('Yandex Pay')).toBeNull()
+    expect(brandOf('Яндекс Облако')).toBe('yandex-cloud')
   })
 
   it('собирает написание из нескольких полей записи', () => {

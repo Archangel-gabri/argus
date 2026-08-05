@@ -108,9 +108,12 @@ function SubForm({
           onChange={(e) => setAmount(e.target.value)}
         />
         <select className={inputCls} value={currency} onChange={(e) => setCurrency(e.target.value as Currency)}>
+          {/* Код валюты — сам себе подпись. Раньше он проходил через карту КАТЕГОРИЙ: сейчас
+              спасал фолбэк «нет в карте — верни как есть», но первый же ключ категории,
+              совпавший с кодом валюты, показал бы вместо «USD» слово «ИИ». */}
           {CURRENCY_CODES.map((c) => (
             <option key={c} value={c}>
-              {catLabel(c)}
+              {c}
             </option>
           ))}
         </select>

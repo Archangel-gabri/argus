@@ -212,6 +212,7 @@ export function BanksView(): React.JSX.Element {
   const updateWallet = useWallets((s) => s.update)
   const remove = useWallets((s) => s.remove)
   const refresh = useWallets((s) => s.refresh)
+  const refreshAccounts = useAccounts((s) => s.refresh)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Wallet | null>(null)
   const [addingAccount, setAddingAccount] = useState(false)
@@ -268,7 +269,10 @@ export function BanksView(): React.JSX.Element {
         action={
           <div className="flex items-center gap-2">
             <button
-              onClick={() => refresh()}
+              // Кнопка обновляла ТОЛЬКО криптокошельки, хотя счета занимают верхнюю половину
+              // экрана и часть из них помечена «можно автоматом». Единственная кнопка
+              // обновления обязана обновлять всё, что умеет обновляться само.
+              onClick={() => void Promise.all([refresh(), refreshAccounts()])}
               disabled={loading}
               className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
             >
