@@ -22,6 +22,48 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decodePng, encodePng, monochrome } from '../shared/png-mono.mjs'
 
+
+/**
+ * Адрес, по которому не жалко сходить.
+ *
+ * Здесь единственное место приложения, где адрес запроса диктует ЧУЖАЯ страница: значок
+ * указан в её разметке и лежит, как правило, на стороннем CDN (`cdn.tbank.ru`,
+ * `paypalobjects.com`), поэтому запретить чужие домены нельзя — на них всё и лежит.
+ *
+ * Зато можно запретить то, что снаружи не бывает. Без этой проверки страница банка — своя или
+ * подменённая — могла назвать значком `http://127.0.0.1:4822/x.png`, и приложение постучалось бы
+ * в guacd на петле; `169.254.169.254` в облаке отдаёт учётные данные машины, а `file:///x.png`
+ * прочитал бы диск. Ни один настоящий значок так не адресуется.
+ */
+export function publicHttpsUrl(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return null
+  }
+  // Только https: обычный http дал бы подменить картинку любому, кто сидит на канале, а прочие
+  // схемы (file:, data:, blob:) к сети отношения не имеют вовсе.
+  if (url.protocol !== 'https:') return null
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+
+  // Служебные имена локальной сети. Точки в них есть, поэтому проверкой на «домен» не ловятся.
+  if (host === 'localhost' || /\.(local|internal|lan|home|localdomain)$/.test(host)) return null
+
+  // IPv4-литерал: петля, частные сети и link-local (там же облачные метаданные).
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host)
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])]
+    if (a === 127 || a === 10 || a === 0 || a === 169 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
+      return null
+    }
+  }
+  // IPv6: петля, уникальные локальные (fc00::/7) и link-local (fe80::/10).
+  if (host === '::1' || /^f[cd]/.test(host) || /^fe[89ab]/.test(host)) return null
+
+  return url.href
+}
+
 /** Куда смотрим, если сайт не сказал сам. Порядок — от крупного к мелкому: 180×180 лучше 16×16. */
 const GUESSES = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/favicon-192.png', '/favicon.png']
 
@@ -43,11 +85,14 @@ export function iconLinksFrom(html: string, pageUrl: string): string[] {
     // PNG предпочтителен: SVG нечем растеризовать, ICO — свой формат, до него дело не дошло.
     if (!/\.png(\?|$)/i.test(href)) continue
     const size = Number(/sizes=["']?(\d+)/i.exec(tag)?.[1] ?? 0)
+    let abs: string
     try {
-      found.push({ href: new URL(href, pageUrl).href, size })
+      abs = new URL(href, pageUrl).href
     } catch {
-      /* негодная ссылка — пропускаем */
+      continue
     }
+    const safe = publicHttpsUrl(abs)
+    if (safe) found.push({ href: safe, size })
   }
   return found.sort((a, b) => b.size - a.size).map((f) => f.href)
 }
@@ -58,7 +103,9 @@ export function cleanDomain(input: string): string | null {
   // Требуем точку и допустимые символы: «сбер» доменом не является, а идти в сеть за ним —
   // это ждать таймаут ради заведомо пустого ответа.
   if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(raw)) return null
-  return raw
+  // Форма домена ещё ничего не гарантирует: `127.0.0.1`, `10.0.0.5` и `router.lan` выглядят
+  // доменами и проходят её насквозь. Настоящий фильтр — тот же, что для адресов со страницы.
+  return publicHttpsUrl(`https://${raw}/`) ? raw : null
 }
 
 const cacheDir = (): string => {
@@ -81,7 +128,19 @@ function download(url: string, timeoutMs = 6000): Promise<Buffer | null> {
     }
     const timer = setTimeout(() => finish(null), timeoutMs)
     try {
-      const req = net.request({ method: 'GET', url })
+      // Редиректы разбираем сами: без этого сайт отдаёт 302 на `http://127.0.0.1:4822` и все
+      // проверки адреса оказываются бесполезны — запрос всё равно уходит на петлю.
+      const req = net.request({ method: 'GET', url, redirect: 'manual' })
+      let hops = 0
+      req.on('redirect', (_status, _method, redirectUrl) => {
+        if (hops++ >= 3 || !publicHttpsUrl(redirectUrl)) {
+          req.abort()
+          clearTimeout(timer)
+          finish(null)
+          return
+        }
+        req.followRedirect()
+      })
       req.on('response', (res) => {
         if (res.statusCode !== 200) {
           clearTimeout(timer)
