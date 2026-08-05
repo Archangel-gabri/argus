@@ -31,6 +31,9 @@ import type { DeviceDTO, PowerResult, HardwareInfo } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
+/** Метка «спросить не удалось». Отличается от пустой строки, которая значит «машина выключена». */
+const UNKNOWN_OS = '\u0000unknown'
+
 // Человекочитаемое сообщение по двухфазному результату питания (main/pc.ts).
 function powerMsg(r: PowerResult): string {
   switch (r.phase) {
@@ -104,7 +107,9 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     if (!api) return
     setCurrent(null)
     const r = await api.pc.whichOs(d.id)
-    if (aliveRef.current) setCurrent(r.current)
+    // «Не знаю» и «выключена» приходят по-разному: у первого пустая метка ОС, но семейство
+    // `unknown`. Раньше различия не было вовсе, и одна осечка опроса рисовала «выключен».
+    if (aliveRef.current) setCurrent(r.family === 'unknown' ? UNKNOWN_OS : r.current)
   }
   // Опрашиваем живую ОС на маунте И каждые 15с, пока карточка открыта — иначе после ребута/
   // boot-switch сегмент «Сейчас: …» навсегда показывал ОС на момент открытия drawer.
@@ -162,9 +167,11 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   const badge =
     current === null
       ? { text: 'проверяю…', cls: 'text-slate-500' }
-      : current === ''
-        ? { text: 'выключен / offline', cls: 'text-slate-500' }
-        : { text: `Сейчас: ${current}`, cls: famOf(current) === 'windows' ? 'text-sky-400' : 'text-emerald-400' }
+      : current === UNKNOWN_OS
+        ? { text: 'не ответила — пробую ещё', cls: 'text-slate-500' }
+        : current === ''
+          ? { text: 'выключен / offline', cls: 'text-slate-500' }
+          : { text: `Сейчас: ${current}`, cls: famOf(current) === 'windows' ? 'text-sky-400' : 'text-emerald-400' }
 
   const Btn = ({
     id,

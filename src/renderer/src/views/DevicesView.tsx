@@ -24,6 +24,8 @@ const GROUPS: Array<{ id: FleetGroup; label: string }> = [
 
 export function DevicesView(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
+  const loadError = useDevices((s) => s.error)
+  const loadDevices = useDevices((s) => s.load)
   const refreshMetrics = useDevices((s) => s.refreshMetrics)
   const openCreate = useUI((s) => s.openCreate)
   const search = useUI((s) => s.search).trim().toLowerCase()
@@ -92,7 +94,20 @@ export function DevicesView(): React.JSX.Element {
           ))}
         </div>
 
-        {devices.length === 0 ? (
+        {/* Отказ чтения и пустой парк — разные вещи, и путать их нельзя: «устройств нет»
+            вместо «не удалось прочитать» читается как «база потеряна». Стор эту разницу
+            уже различал, а экран её терял. */}
+        {loadError ? (
+          <div className="rounded-xl border border-dashed border-rose-500/30 py-16 text-center text-sm">
+            <p className="text-rose-400">Парк не прочитан: {loadError}</p>
+            <button
+              onClick={() => void loadDevices()}
+              className="mt-3 rounded-lg border border-border px-3 py-1.5 text-xs text-slate-300 transition-colors hover:border-accent/40 hover:text-white"
+            >
+              Повторить
+            </button>
+          </div>
+        ) : devices.length === 0 ? (
           <button
             onClick={openCreate}
             className="w-full rounded-xl border border-dashed border-border py-16 text-center text-sm text-slate-500 transition-colors hover:border-accent/40 hover:text-slate-300"

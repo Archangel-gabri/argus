@@ -17,7 +17,9 @@ import {
   bootEntryListResult
 } from './pc-boot-policy'
 
-export type OsFamily = 'linux' | 'windows' | 'off'
+// 'unknown' — «спросить не удалось»: это не «выключено» и не «работает». Разница видна на
+// экране: у выключенной машины действия питания предлагают включить, у неизвестной — повторить.
+export type OsFamily = 'linux' | 'windows' | 'off' | 'unknown'
 
 const family = (osLabel: string): 'linux' | 'windows' => (/win/i.test(osLabel) ? 'windows' : 'linux')
 
@@ -124,9 +126,22 @@ async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
   return firstAlive(open.length ? open : eps)
 }
 
-/** Текущая запущенная ОС: метка + семейство (или off). */
+/**
+ * Текущая запущенная ОС: метка + семейство (или off).
+ *
+ * Промах считается так же, как у метрик, и по той же причине. Раньше `whichOs` отвечал «off» с
+ * первой же неудачи, а `pc.metrics` в тот же момент — «не знаю»: карточка и вкладка «Обзор»
+ * показывали про одну машину разное, причём вкладка утверждала «выключен» там, где приложение
+ * ничего не проверило. Правило проекта одно на всех: одна осечка — это ещё не «выключено».
+ */
 export function whichOs(deviceId: string): Promise<{ current: string; family: OsFamily }> {
-  return singleFlight(`whichOs:${deviceId}`, () => whichOsNow(deviceId))
+  return singleFlight(`whichOs:${deviceId}`, async () => {
+    const r = await whichOsNow(deviceId)
+    const status = trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online')
+    // «Не знаю» не выдаём за «выключено»: пустая метка ОС читается интерфейсом как offline,
+    // поэтому на неподтверждённом промахе оставляем прежнюю неопределённость.
+    return status === 'unknown' ? { current: '', family: 'unknown' as const } : r
+  })
 }
 
 async function whichOsNow(deviceId: string): Promise<{ current: string; family: OsFamily }> {
