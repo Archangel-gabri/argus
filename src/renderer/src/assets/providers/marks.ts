@@ -7,6 +7,9 @@
 // Хранятся РАЗОБРАННЫМИ на контуры, а не куском разметки: так знак рисуется обычными
 // React-элементами, и в приложении не заводится место, куда однажды подставят чужую строку.
 
+import { BRAND_MARKS } from '../brands/catalog'
+import { brandOf } from '../../../../shared/brands'
+
 export interface MarkPath {
   d: string
   fillRule?: 'evenodd' | 'nonzero'
@@ -57,9 +60,22 @@ const ALIAS: Record<string, string> = {
   copilot: 'github'
 }
 
-/** Знак провайдера или null, если своего логотипа нет — тогда рисуется монограмма. */
+/**
+ * Знак компании или null, если своего логотипа нет — тогда рисуется монограмма.
+ *
+ * Ищет в двух наборах: знаки ИИ-провайдеров (этот файл) и общий каталог компаний
+ * (assets/brands/catalog.ts — хостеры, банки, биржи, сервисы подписок). Наборы разделены по
+ * происхождению, а не по смыслу: у них разные источники и разные лицензии, но для вызывающего
+ * это один вопрос — «есть ли знак у этого имени».
+ *
+ * Принимает и точный ключ, и свободное написание («Хетцнер», «Т-Банк», «Claude Max»):
+ * опознание живёт в src/shared/brands.ts и работает на обоих алфавитах.
+ */
 export function markFor(provider: string): ProviderMark | null {
   const key = provider.trim().toLowerCase()
-  return PROVIDER_MARKS[key] ?? PROVIDER_MARKS[ALIAS[key] ?? ''] ?? null
+  const direct = PROVIDER_MARKS[key] ?? PROVIDER_MARKS[ALIAS[key] ?? ''] ?? BRAND_MARKS[key]
+  if (direct) return direct
+  const recognized = brandOf(provider)
+  return recognized ? (PROVIDER_MARKS[recognized] ?? BRAND_MARKS[recognized] ?? null) : null
 }
 

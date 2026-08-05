@@ -6,6 +6,7 @@ import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import type { FinanceAccount, FinanceKind } from '@/types'
 import { bankOf } from '../../../../shared/banks'
+import { markFor } from '@/assets/providers/marks'
 
 const ICON: Record<FinanceKind, typeof Landmark> = {
   bank: Landmark,
@@ -33,6 +34,10 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const [busy, setBusy] = useState(false)
 
   const Icon = ICON[account.kind] ?? Landmark
+  // Знак самой компании узнаётся быстрее общей иконки «банк»: в списке из десяти счетов только
+  // он и отличает Сбер от Т-Банка. Иконка по типу счёта остаётся запасным вариантом — для тех,
+  // чьего логотипа в каталоге нет.
+  const mark = markFor(`${account.institution} ${account.name}`)
   // Банк, чей остаток читается из сессии кабинета: у него вместо ключа — вход.
   const bank = account.source === 'api' ? bankOf(account) : null
   // Возраст показывается и у автоматических: если опрос перестал получаться, цифра стареет
@@ -55,8 +60,19 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   return (
     <>
     <div className="group flex items-center gap-3 py-2.5 text-sm">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400">
-        <Icon className="h-4 w-4" />
+      <span
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400"
+        style={mark ? { color: mark.tint } : undefined}
+      >
+        {mark ? (
+          <svg viewBox={mark.vb} width={17} height={17} fill="currentColor" aria-hidden>
+            {mark.paths.map((path, i) => (
+              <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
+            ))}
+          </svg>
+        ) : (
+          <Icon className="h-4 w-4" />
+        )}
       </span>
 
       <div className="min-w-0 flex-1">

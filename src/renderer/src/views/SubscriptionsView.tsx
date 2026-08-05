@@ -10,6 +10,7 @@ import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
+import { markFor } from '@/assets/providers/marks'
 
 interface Row {
   id: string
@@ -138,6 +139,43 @@ function SubForm({
   )
 }
 
+/**
+ * Знак компании в строке подписки.
+ *
+ * Раньше здесь была цветная точка категории — она отвечала на вопрос «к какой полке относится»,
+ * но не на тот, который человек задаёт списку на самом деле: «где здесь Spotify». Логотип
+ * отвечает быстрее любой строки. Компании без знака сохраняют точку категории, чтобы ряд не
+ * рассыпался на «с картинкой» и «без картинки».
+ */
+function BrandDot({
+  name,
+  provider,
+  category
+}: {
+  name: string
+  provider?: string
+  category: string
+}): React.JSX.Element {
+  const mark = markFor(`${provider ?? ''} ${name}`)
+  if (!mark)
+    return <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: catColor(category) }} />
+  return (
+    <svg
+      viewBox={mark.vb}
+      width={16}
+      height={16}
+      fill="currentColor"
+      aria-hidden
+      className="shrink-0"
+      style={{ color: mark.tint }}
+    >
+      {mark.paths.map((path, i) => (
+        <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
+      ))}
+    </svg>
+  )
+}
+
 export function SubscriptionsView(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const subs = useSubs((s) => s.subs)
@@ -255,17 +293,29 @@ export function SubscriptionsView(): React.JSX.Element {
               const stored = x.userId ? subs.find((sub) => sub.id === x.userId) : undefined
               return (
                 <div key={x.id} className="group flex items-center gap-3 py-2.5 text-sm">
-                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: catColor(x.category) }} />
+                  {/* Знак компании узнаётся быстрее строки: в списке из двадцати подписок глаз
+                      находит Spotify по зелёному кружку раньше, чем прочитает название. Цвет
+                      категории остаётся запасным вариантом — для тех, чьего знака нет. */}
+                  <BrandDot name={x.name} provider={stored?.provider} category={x.category} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-slate-200">{x.name}</span>
                     {stored && <span className="block truncate text-[10px] text-slate-500">{stored.provider || 'провайдер не указан'}</span>}
                   </span>
                   {days != null && days <= 14 && (
-                    <span className="hidden shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-400 sm:inline">
-                      через {days}д
+                    <span
+                      className={cn(
+                        'hidden shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium sm:inline',
+                        days < 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-amber-500/15 text-amber-400'
+                      )}
+                    >
+                      {renewalLabel(days)}
                     </span>
                   )}
-                  <span className="hidden w-16 text-xs text-slate-500 sm:inline">{catLabel(x.category)}</span>
+                  {/* Ширины не хватало на «Инфраструктура», и подпись уезжала под соседний бейдж.
+                      Обрезаем явно и даём полный текст подсказкой, а не рисуем поверх. */}
+                  <span className="hidden w-24 truncate text-xs text-slate-500 sm:inline" title={catLabel(x.category)}>
+                    {catLabel(x.category)}
+                  </span>
                   <SourceBadge kind={x.source} />
                   {stored?.manualRenewal && (
                     <span className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline">вручную</span>
@@ -277,7 +327,7 @@ export function SubscriptionsView(): React.JSX.Element {
                     {x.amount > 0 ? (
                       <>
                         {money(x.amount, x.currency)}
-                        <span className="text-slate-500">/{x.period}</span>
+                        <span className="text-slate-500">{x.period === 'yr' ? '/год' : '/мес'}</span>
                       </>
                     ) : (
                       <span className="text-[11px] text-amber-400/70" title="Подписка есть, но её цена не внесена — в месячный итог она не попадает">

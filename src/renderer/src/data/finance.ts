@@ -1,27 +1,20 @@
-export type HoldingKind = 'cash' | 'crypto' | 'brokerage'
+import type { FinanceKind } from '@/types'
 
-export interface Holding {
-  id: string
-  name: string
-  kind: HoldingKind
-  detail: string
-  amount: number
-  unit: string // RUB / ETH / TON …
-  usd: number
-  source: 'live' | 'manual' | 'soon'
-}
-
-// Honest RU reality: live = on-chain wallets (public RPC) + T-Invest; cash = manual; banks = import only.
-export const MOCK_HOLDINGS: Holding[] = [
-  { id: 'cash-rub', name: 'Cash (₽)', kind: 'cash', detail: 'manual entry', amount: 120000, unit: 'RUB', usd: 1512, source: 'manual' },
-  { id: 'eth', name: 'Ethereum', kind: 'crypto', detail: '0x6f…a13 · Etherscan/Ankr RPC', amount: 0.84, unit: 'ETH', usd: 2310, source: 'live' },
-  { id: 'ton', name: 'TON', kind: 'crypto', detail: 'UQ…7d · Ankr RPC', amount: 540, unit: 'TON', usd: 1290, source: 'live' },
-  { id: 'tinvest', name: 'T-Invest brokerage', kind: 'brokerage', detail: 'T-Invest API (token)', amount: 85000, unit: 'RUB', usd: 1071, source: 'soon' },
-  { id: 'sber', name: 'Sber (statement import)', kind: 'cash', detail: 'CSV/1C import — no live API', amount: 64000, unit: 'RUB', usd: 806, source: 'manual' }
-]
-
-export const KIND_COLOR: Record<HoldingKind, string> = {
-  cash: '#f59e0b',
-  crypto: '#a855f7',
-  brokerage: '#22c55e'
+/**
+ * Цвет группы в диаграмме «Аллокация».
+ *
+ * Ключи — ТИПЫ счетов, а не их подписи. Раньше здесь лежали ключи вымышленного набора
+ * (`cash`/`crypto`/`brokerage`) от давно удалённых демо-данных, а цвет искался по русскому
+ * названию группы («Банки», «Биржи», «Электронные кошельки») — не совпадало ничего, и все
+ * секторы, кроме крипты, красились в один серый. Диаграмма переставала быть диаграммой:
+ * различить доли можно было только по легенде.
+ */
+export const KIND_COLOR: Record<FinanceKind | 'crypto', string> = {
+  bank: '#38bdf8',
+  broker: '#22c55e',
+  exchange: '#f59e0b',
+  ewallet: '#14b8a6',
+  cash: '#94a3b8',
+  // Кошельки живут отдельно от счетов: их остаток читается из сети, а не вписывается руками.
+  crypto: '#a855f7'
 }

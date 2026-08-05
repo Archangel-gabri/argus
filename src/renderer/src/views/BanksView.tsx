@@ -11,7 +11,7 @@ import { AccountList } from '@/components/finance/AccountList'
 import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import { useWallets } from '@/store/wallets'
-import type { Wallet, WalletInput } from '@/types'
+import type { FinanceKind, Wallet, WalletInput } from '@/types'
 
 const CHAINS = ['ETH', 'BTC', 'TON']
 const inputCls =
@@ -111,18 +111,25 @@ export function BanksView(): React.JSX.Element {
   const net = liveUsd + accountSums.usd
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
+  // Группируем по ТИПУ счёта, а подпись и цвет берём от него же. Раньше ключом группы служила
+  // русская подпись, а цвет искался по ней в карте с английскими ключами — не совпадало ничего,
+  // и все секторы, кроме крипты, оказывались одного цвета.
   const byKind = [
-    { label: 'crypto', value: liveUsd },
+    { kind: 'crypto' as const, label: 'Криптокошельки', value: liveUsd },
     ...Object.entries(
       accounts.reduce<Record<string, number>>((a, x) => {
         if (x.balance == null) return a
-        a[KIND_LABEL[x.kind]] = (a[KIND_LABEL[x.kind]] ?? 0) + toUsd(x.balance, x.currency)
+        a[x.kind] = (a[x.kind] ?? 0) + toUsd(x.balance, x.currency)
         return a
       }, {})
-    ).map(([label, value]) => ({ label, value }))
+    ).map(([kind, value]) => ({
+      kind: kind as FinanceKind,
+      label: KIND_LABEL[kind as FinanceKind] ?? kind,
+      value
+    }))
   ]
     .filter((x) => x.value > 0)
-    .map((x) => ({ ...x, color: (KIND_COLOR as Record<string, string>)[x.label] ?? '#64748b' }))
+    .map((x) => ({ label: x.label, value: x.value, color: KIND_COLOR[x.kind] ?? '#64748b' }))
     .sort((a, b) => b.value - a.value)
 
   return (
