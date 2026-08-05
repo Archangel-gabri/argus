@@ -100,7 +100,7 @@ export function AccessRow({
       onClick={onSelect}
       aria-current={selected}
       className={cn(
-        'group grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-l-2 px-3 py-2 text-left transition-colors',
+        'group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 text-left transition-colors',
         selected
           ? 'border-l-accent bg-card'
           : 'border-l-transparent hover:border-l-border hover:bg-card/50'
@@ -137,16 +137,16 @@ export function AccessRow({
         </span>
       </span>
 
-      <span className="shrink-0 whitespace-nowrap text-right text-[11px]">{cell}</span>
-
-      {/* Место под график резервируется, только когда график есть. Фиксированные 120 пикселей
-          стояли всегда — и у доступа без расхода (а таких в списке большинство: бесплатные
-          тарифы, ключи без обращений) эта полоса пустовала, отнимая место у названия. В итоге
-          почти каждое имя обрывалось на середине: «DeepSeek (Deep Co…», «Google AI S…». */}
-      <span className={cn('flex items-center justify-end gap-2', showBars && 'w-[120px]')}>
-        {showBars && <UsageBars data={series} width={100} height={18} title={`Расход за период: ${money(spent)}`} />}
-        <StatusDot tone={state.tone} title={state.title} />
+      {/* Лента расхода стоит под суммой, а не рядом с именем. Раньше она отнимала у названия
+          120 пикселей той же строки, и на имя оставался 71 — «Claude Max 5x» не влезал даже
+          целиком, хотя это самый дорогой доступ в списке. Внизу лента читается так же (она и
+          нужна как форма кривой, а не как точные значения), а имя наконец помещается. */}
+      <span className="flex shrink-0 flex-col items-end gap-1">
+        <span className="whitespace-nowrap text-right text-[11px]">{cell}</span>
+        {showBars && <UsageBars data={series} width={72} height={14} title={`Расход за период: ${money(spent)}`} />}
       </span>
+
+      <StatusDot tone={state.tone} title={state.title} />
     </button>
   )
 }

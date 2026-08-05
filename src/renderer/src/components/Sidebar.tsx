@@ -1,8 +1,9 @@
-import { Search, Server, Landmark, Repeat, Bot, Settings, type LucideIcon } from 'lucide-react'
+import { Search, Server, Landmark, Repeat, Bot, Settings, Lock, ShieldCheck, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useUI, type ViewId } from '@/store/ui'
 import { useDevices } from '@/store/devices'
 import { useAi } from '@/store/ai'
+import { useVault } from '@/store/vault'
 import eyeMark from '@/assets/brand/argus-eye.png'
 
 interface NavItem {
@@ -60,10 +61,11 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.E
 export function Sidebar(): React.JSX.Element {
   const search = useUI((s) => s.search)
   const setSearch = useUI((s) => s.setSearch)
-  const setView = useUI((s) => s.setView)
   const deviceCount = useDevices((s) => s.devices.length)
   const aiCount = useAi((s) => s.access.length)
   const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: aiCount }
+  const locked = useVault((s) => s.status) !== 'unlocked'
+  const lock = useVault((s) => s.lock)
 
   return (
     <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-surface">
@@ -73,7 +75,7 @@ export function Sidebar(): React.JSX.Element {
         </div>
         <div className="leading-tight">
           <div className="text-[15px] font-semibold text-white">Argus</div>
-          <div className="text-[11px] text-slate-500">command center</div>
+          <div className="text-[11px] text-slate-400">командный центр</div>
         </div>
       </div>
 
@@ -101,21 +103,41 @@ export function Sidebar(): React.JSX.Element {
       </nav>
 
       <div className="border-t border-border p-3">
-        <div className="flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-white/5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-accent/30 to-indigo-500/30 text-sm font-semibold text-white ring-1 ring-white/10">
-            DK
+        {/* Здесь была карточка «Danya Kubrak · owner · HubVPN» — выдуманная личность, вшитая
+            строкой в разметку: приложение однопользовательское, и рассказывать владельцу, как
+            его зовут, ему незачем. Тем более что имя было чужое (Danya — имя учётной записи в
+            системе). Вместо этого место занято тем, что действительно меняется и о чём полезно
+            знать: открыто ли хранилище с секретами. */}
+        <div className="flex items-center gap-3 rounded-lg px-2 py-2">
+          <div
+            className={cn(
+              'flex h-9 w-9 items-center justify-center rounded-full ring-1',
+              locked ? 'bg-slate-800 text-slate-400 ring-white/10' : 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/20'
+            )}
+          >
+            {locked ? <Lock className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
           </div>
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="truncate text-sm font-medium text-white">Danya Kubrak</div>
-            <div className="truncate text-[11px] text-slate-500">owner · HubVPN</div>
+            <div className="truncate text-sm font-medium text-white">
+              {locked ? 'Хранилище закрыто' : 'Хранилище открыто'}
+            </div>
+            <div className="truncate text-[11px] text-slate-400">
+              {locked ? 'секреты недоступны' : 'ключи и пароли доступны'}
+            </div>
           </div>
-          <button
-            onClick={() => setView('settings')}
-            className="rounded-md p-1.5 text-slate-500 hover:bg-white/5 hover:text-slate-300"
-            aria-label="Настройки"
-          >
-            <Settings className="h-[18px] w-[18px]" />
-          </button>
+          {/* Шестерёнки здесь больше нет: «Настройки» — обычный пункт списка выше, и вторая
+              дорога к ним отнимала ширину у подписи. Осталось действие, которого больше нигде
+              нет, — закрыть хранилище, не выходя из приложения. */}
+          {!locked && (
+            <button
+              onClick={() => void lock()}
+              className="shrink-0 rounded-md p-1.5 text-slate-400 hover:bg-white/5 hover:text-slate-200"
+              aria-label="Закрыть хранилище"
+              title="Закрыть хранилище — секреты станут недоступны до следующего ввода пароля"
+            >
+              <Lock className="h-[18px] w-[18px]" />
+            </button>
+          )}
         </div>
       </div>
     </aside>
