@@ -28,6 +28,9 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }): React.JSX.E
     <button
       onClick={() => setView(item.id)}
       aria-current={active ? 'page' : undefined}
+      // Без явного имени бейдж слипается с названием, и кнопка называется «Парк8»: и программе
+      // чтения с экрана, и тесту. Счётчик проговариваем словами — он часть смысла пункта.
+      aria-label={badge != null && badge > 0 ? `${item.label}, ${badge}` : item.label}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
         active ? 'bg-card text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'

@@ -92,6 +92,7 @@ export function AccessRow({
 }): React.JSX.Element {
   const state = rowState(access, check)
   const cell = moneyCell(access, sub, check)
+  const showBars = series.length > 0 && spent > 0
 
   return (
     <button
@@ -136,12 +137,14 @@ export function AccessRow({
         </span>
       </span>
 
-      <span className="whitespace-nowrap text-right text-[11px]">{cell}</span>
+      <span className="shrink-0 whitespace-nowrap text-right text-[11px]">{cell}</span>
 
-      <span className="flex w-[120px] items-center justify-end gap-2">
-        {series.length > 0 && spent > 0 && (
-          <UsageBars data={series} width={100} height={18} title={`Расход за период: ${money(spent)}`} />
-        )}
+      {/* Место под график резервируется, только когда график есть. Фиксированные 120 пикселей
+          стояли всегда — и у доступа без расхода (а таких в списке большинство: бесплатные
+          тарифы, ключи без обращений) эта полоса пустовала, отнимая место у названия. В итоге
+          почти каждое имя обрывалось на середине: «DeepSeek (Deep Co…», «Google AI S…». */}
+      <span className={cn('flex items-center justify-end gap-2', showBars && 'w-[120px]')}>
+        {showBars && <UsageBars data={series} width={100} height={18} title={`Расход за период: ${money(spent)}`} />}
         <StatusDot tone={state.tone} title={state.title} />
       </span>
     </button>
