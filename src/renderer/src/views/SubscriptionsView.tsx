@@ -427,10 +427,13 @@ export function SubscriptionsView(): React.JSX.Element {
                       {renewalLabel(days)}
                     </span>
                   )}
-                  {/* Ширины не хватало на «Инфраструктура», и подпись уезжала под соседний бейдж.
-                      Обрезаем явно и даём полный текст подсказкой, а не рисуем поверх. */}
-                  <span className="hidden w-24 truncate text-xs text-slate-500 sm:inline" title={catLabel(x.category)}>
-                    {catLabel(x.category)}
+                  {/* Категория уступает место названию и появляется только на широком экране.
+                      Раньше она занимала 96 пикселей всегда — и названия вроде «VPS Германия —
+                      мастер-панель HubVPN» обрывались на середине, хотя вид траты и так виден
+                      по знаку компании слева. Само слово тоже сокращено: «Инфраструктура» в эту
+                      ширину не влезала и обрезалась у каждой строки парка. */}
+                  <span className="hidden w-24 truncate text-xs text-slate-500 xl:inline" title={catLabel(x.category)}>
+                    {x.category === 'Infra' ? 'Инфра' : catLabel(x.category)}
                   </span>
                   <SourceBadge kind={x.source} />
                   {stored?.manualRenewal && (

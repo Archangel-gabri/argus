@@ -124,6 +124,7 @@ export function AccessDetail({
             <button
               onClick={onEdit}
               title="Изменить"
+              aria-label={`Изменить доступ ${access.label}`}
               className="rounded p-1.5 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
             >
               <Pencil className="h-4 w-4" />
@@ -131,6 +132,7 @@ export function AccessDetail({
             <button
               onClick={onDelete}
               title="Удалить"
+              aria-label={`Удалить доступ ${access.label}`}
               className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
             >
               <Trash2 className="h-4 w-4" />

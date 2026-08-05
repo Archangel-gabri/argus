@@ -99,6 +99,7 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
         <button
           onClick={() => setCalc((v) => !v)}
           title="Посчитать стоимость задачи"
+          aria-label="Посчитать стоимость задачи"
           aria-pressed={calc}
           className={cn(
             'shrink-0 rounded p-1.5 ring-1 ring-border transition-colors',
