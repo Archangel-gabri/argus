@@ -11,12 +11,15 @@ import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
 import { markFor } from '@/assets/providers/marks'
+import { findDuplicateSpend } from '../../../shared/duplicate-spend'
 
 interface Row {
   id: string
   name: string
   /** Компания, которой платят: по ней ищется логотип. У строки-устройства это хостер. */
   provider?: string
+  /** За какую железку платят — показывается в строке, когда связь задана. */
+  forDevice?: string
   category: string
   amount: number
   currency: Currency
@@ -34,11 +37,14 @@ const inputCls =
   'w-full rounded-lg border border-border bg-bg/60 px-2.5 py-1.5 text-sm text-slate-200 outline-none focus:border-accent/40'
 
 function SubForm({
+  payableDevices,
   initial,
   onSubmit,
   onClose,
   error
 }: {
+  /** Устройства парка — чтобы платёж можно было привязать к железке, за которую он идёт. */
+  payableDevices: Array<{ id: string; name: string }>
   initial?: Subscription | null
   onSubmit: (i: SubscriptionInput) => Promise<boolean>
   onClose: () => void
@@ -53,6 +59,7 @@ function SubForm({
   const [renews, setRenews] = useState(initial?.nextRenewal ?? '')
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [manualRenewal, setManualRenewal] = useState(initial?.manualRenewal ?? false)
+  const [deviceId, setDeviceId] = useState(initial?.deviceId ?? '')
   const [busy, setBusy] = useState(false)
   const [validation, setValidation] = useState<string | null>(null)
   const submit = async (): Promise<void> => {
@@ -76,7 +83,8 @@ function SubForm({
     try {
       await onSubmit({
         name: name.trim(), provider: provider.trim(), category, amount: parsedAmount,
-        currency, period, nextRenewal: renews || null, notes: notes.trim() || null, manualRenewal
+        currency, period, nextRenewal: renews || null, notes: notes.trim() || null, manualRenewal,
+        deviceId: deviceId || null
       })
     } finally {
       setBusy(false)
@@ -128,6 +136,22 @@ function SubForm({
           value={notes}
           onChange={(event) => setNotes(event.target.value)}
         />
+        {/* Связь с железкой из парка. Без неё сервер, у которого в парке проставлена цена,
+            попадает в месячный расход ДВАЖДЫ — и понять это по экрану невозможно, потому что
+            записи называются по-разному и лежат в разных разделах. */}
+        <select
+          className={inputCls}
+          value={deviceId}
+          onChange={(e) => setDeviceId(e.target.value)}
+          aria-label="За какое устройство платим"
+        >
+          <option value="">Не за устройство</option>
+          {payableDevices.map((d) => (
+            <option key={d.id} value={d.id}>
+              Платёж за {d.name}
+            </option>
+          ))}
+        </select>
         <label className="flex items-center gap-2 rounded-lg border border-border bg-bg/40 px-3 py-2 text-sm text-slate-300">
           <input
             type="checkbox"
@@ -202,8 +226,16 @@ export function SubscriptionsView(): React.JSX.Element {
     if (!loaded) loadSubs()
   }, [loaded, loadSubs])
 
+  // Устройство, за которое уже платит подписка, отдельной строкой НЕ показывается.
+  //
+  // Сервер живёт в приложении дважды по замыслу: как железка в парке (со своей ценой) и как
+  // регулярный платёж в подписках. Пока связи между ними не было, экран складывал обе строки —
+  // и месячный расход по инфраструктуре был вдвое больше настоящего. Заметить это можно было
+  // только сверив список глазами, потому что называются они по-разному: «HubVPN · Germany» и
+  // «VPS Германия — мастер-панель HubVPN».
+  const paidBySubscription = new Set(subs.map((x) => x.deviceId).filter(Boolean))
   const infra: Row[] = devices
-    .filter((d) => d.cost.usd > 0)
+    .filter((d) => d.cost.usd > 0 && !paidBySubscription.has(d.id))
     .map((d) => ({
       id: 'dev-' + d.id,
       name: d.name,
@@ -219,10 +251,21 @@ export function SubscriptionsView(): React.JSX.Element {
       renews: null,
       source: 'live'
     }))
+  // Пары «железка + платёж за неё», которые пока не связаны: их суммы складываются в расходе
+  // дважды. Показываем их наверху и предлагаем связать — сам человек эту пару не найдёт,
+  // потому что записи называются по-разному и лежат на разных экранах.
+  const duplicates = findDuplicateSpend(
+    devices.map((d) => ({ id: d.id, name: d.name, provider: d.provider, cost: d.cost })),
+    subs
+  )
+  const deviceName = new Map(devices.map((d) => [d.id, d.name]))
   const userRows: Row[] = subs.map((s) => ({
     id: s.id,
     name: s.name,
     provider: s.provider,
+    // Имя железки в строке платежа: иначе непонятно, за что именно платим, и хочется завести
+    // «ещё одну» запись — как раз то, из чего дубли и берутся.
+    forDevice: s.deviceId ? deviceName.get(s.deviceId) : undefined,
     category: s.category,
     amount: s.amount,
     currency: s.currency,
@@ -288,6 +331,7 @@ export function SubscriptionsView(): React.JSX.Element {
       {(adding || editing) && (
         <SubForm
           key={editing?.id ?? 'new'}
+          payableDevices={devices.map((d) => ({ id: d.id, name: d.name }))}
           initial={editing}
           error={error}
           onSubmit={async (input) => {
@@ -322,6 +366,37 @@ export function SubscriptionsView(): React.JSX.Element {
         />
         <StatTile label="Активных" value={String(all.length)} hint={`${infra.length} инфра · ${userRows.length} приложений`} />
       </div>
+
+      {duplicates.length > 0 && !adding && !editing && (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
+          <p className="text-xs font-medium text-amber-300">
+            {duplicates.length === 1 ? 'Похоже, одна трата посчитана дважды' : `Похоже, ${duplicates.length} траты посчитаны дважды`}
+          </p>
+          <ul className="mt-2 space-y-1.5">
+            {duplicates.map((d) => (
+              <li key={d.deviceId} className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                <span className="text-slate-400">{d.deviceName}</span>
+                <span className="text-slate-500">и</span>
+                <span className="text-slate-400">{d.subscriptionName}</span>
+                <span className="text-[11px] text-slate-500">— {d.reason}</span>
+                <button
+                  onClick={() => {
+                    const stored = subs.find((x) => x.id === d.subscriptionId)
+                    if (stored) void updateSub(stored.id, { ...stored, deviceId: d.deviceId })
+                  }}
+                  className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25"
+                >
+                  Это одна трата
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] leading-snug text-slate-500">
+            Связанные записи считаются один раз: цена остаётся у подписки, а сервер перестаёт
+            добавлять её к расходу второй раз.
+          </p>
+        </div>
+      )}
 
       {error && !adding && !editing && <p role="alert" className="mt-3 text-xs text-rose-400">{error}</p>}
 

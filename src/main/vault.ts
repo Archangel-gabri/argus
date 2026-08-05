@@ -219,6 +219,9 @@ function migrate(d: Database.Database): void {
   )`)
   // День-якорь списания: см. Subscription.renewalDay.
   addColumn(exec, 'ALTER TABLE subscriptions ADD COLUMN renewal_day INTEGER')
+  // За какое устройство платят. Пока связи не было, сервер с ценой в парке и подписка на тот
+  // же сервер складывались в месячном расходе как две разные траты.
+  addColumn(exec, 'ALTER TABLE subscriptions ADD COLUMN device_id TEXT')
   const addedManualRenewal = addColumn(
     exec,
     'ALTER TABLE subscriptions ADD COLUMN manual_renewal INTEGER NOT NULL DEFAULT 0'
@@ -1141,6 +1144,9 @@ export function deleteDevice(id: string): boolean {
     // Устройства, для которых удаляемый был бастионом, теряют jump — иначе висячий jump_id
     // ломает им подключение.
     d.prepare('UPDATE devices SET jump_id = NULL WHERE jump_id = ?').run(deviceId)
+    // Подписка переживает устройство: платёж-то остался. Но ссылка на исчезнувшую железку
+    // сделала бы её невидимой в расходе — снимаем связь, строка возвращается в общий список.
+    d.prepare('UPDATE subscriptions SET device_id = NULL WHERE device_id = ?').run(deviceId)
     return d.prepare('DELETE FROM devices WHERE id = ?').run(deviceId).changes > 0
   })
   return tx(id)
@@ -1320,8 +1326,8 @@ export function listSubscriptions(): Subscription[] {
   const rows = requireDb()
     .prepare(
       `SELECT id, name, provider, category, amount, currency, period,
-              next_renewal as nextRenewal, renewal_day as renewalDay, notes,
-              manual_renewal as manualRenewal
+              next_renewal as nextRenewal, renewal_day as renewalDay, device_id as deviceId,
+              notes, manual_renewal as manualRenewal
          FROM subscriptions ORDER BY name`
     )
     .all() as Array<Omit<Subscription, 'manualRenewal'> & { manualRenewal: number }>
@@ -1342,15 +1348,18 @@ export function createSubscription(input: SubscriptionInput): Subscription {
     // Якорь берём из первой известной даты и больше не пересчитываем: после короткого месяца
     // в nextRenewal будет уже зажатое число.
     renewalDay: valid.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null),
+    deviceId: valid.deviceId ?? null,
     notes: valid.notes ?? null,
     manualRenewal: valid.manualRenewal ?? false
   }
   requireDb()
     .prepare(
       `INSERT INTO subscriptions
-         (id, name, provider, category, amount, currency, period, next_renewal, renewal_day, notes, manual_renewal, created_at)
+         (id, name, provider, category, amount, currency, period, next_renewal, renewal_day,
+          device_id, notes, manual_renewal, created_at)
        VALUES
-         (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @renewalDay, @notes, @manual_renewal, @created_at)`
+         (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @renewalDay,
+          @deviceId, @notes, @manual_renewal, @created_at)`
     )
     .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0, created_at: Date.now() })
   return sub
@@ -1380,6 +1389,7 @@ export function updateSubscription(id: string, input: SubscriptionInput): Subscr
         : (valid.nextRenewal ?? null) !== (cur.nextRenewal ?? null)
           ? renewalAnchorDay(valid.nextRenewal ?? null)
           : (cur.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null)),
+    deviceId: valid.deviceId !== undefined ? valid.deviceId : (cur.deviceId ?? null),
     notes: valid.notes ?? null,
     manualRenewal: valid.manualRenewal ?? false
   }
@@ -1387,7 +1397,7 @@ export function updateSubscription(id: string, input: SubscriptionInput): Subscr
     .prepare(
       `UPDATE subscriptions SET name=@name, provider=@provider, category=@category, amount=@amount,
        currency=@currency, period=@period, next_renewal=@nextRenewal, renewal_day=@renewalDay,
-       notes=@notes, manual_renewal=@manual_renewal WHERE id=@id`
+       device_id=@deviceId, notes=@notes, manual_renewal=@manual_renewal WHERE id=@id`
     )
     .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0 })
   return sub

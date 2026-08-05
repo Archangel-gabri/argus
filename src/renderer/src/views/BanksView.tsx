@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bitcoin, Pencil, Plus, Trash2, RefreshCw, X, Loader2 } from 'lucide-react'
+import { Bitcoin, Pencil, Plus, Trash2, X, Loader2 } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
@@ -205,7 +205,6 @@ export function BanksView(): React.JSX.Element {
   const balanceLoading = useWallets((s) => s.balanceLoading)
   const balanceErrors = useWallets((s) => s.balanceErrors)
   const loaded = useWallets((s) => s.loaded)
-  const loading = useWallets((s) => s.loading)
   const error = useWallets((s) => s.error)
   const load = useWallets((s) => s.load)
   const add = useWallets((s) => s.add)
@@ -228,6 +227,17 @@ export function BanksView(): React.JSX.Element {
     if (!accountsLoaded) void loadAccounts()
   }, [accountsLoaded, loadAccounts])
 
+  // Кнопки «Обновить» здесь больше нет: она требовала помнить о ней и нажимать, а всё, что
+  // умеет обновляться само (остатки бирж по ключу, балансы кошельков по RPC), обновляется при
+  // открытии раздела. Кнопка, которую надо нажимать каждый раз, — это не функция, а
+  // недоделанная автоматика.
+  useEffect(() => {
+    void refresh()
+    void refreshAccounts()
+    // Один раз на открытие экрана: чаще незачем, реже — цифры устареют незаметно.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const accountSums = accountTotals(accounts, Date.now())
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
   const net = liveUsd + accountSums.usd
@@ -238,6 +248,23 @@ export function BanksView(): React.JSX.Element {
   // «≈» не ставилось. А итог всё равно получен умножением на вшитый курс 0.0126. То есть
   // правка, сделанная ради честности цифры, на живых данных её и не давала.
   const currencies = accounts.filter((a) => a.balance != null).map((a) => a.currency)
+  // «Где основное» — счёт с наибольшим остатком в пересчёте на доллары. Это первое, что человек
+  // хочет знать о своих деньгах, и единственное, чего экран раньше не говорил вовсе.
+  const withBalance = accounts.filter((a) => a.balance != null && a.balance > 0)
+  const biggestAccount = withBalance
+    .map((a) => ({ ...a, usd: toUsd(a.balance ?? 0, a.currency) }))
+    .sort((x, y) => y.usd - x.usd)[0]
+  const biggest = biggestAccount && net > 0 ? { ...biggestAccount, share: biggestAccount.usd / net } : null
+  // Доли по валютам: при жизни между двумя странами это половина смысла раздела.
+  const byCurrency = Object.entries(
+    withBalance.reduce<Record<string, number>>((acc, a) => {
+      acc[a.currency] = (acc[a.currency] ?? 0) + toUsd(a.balance ?? 0, a.currency)
+      return acc
+    }, {})
+  )
+    .map(([code, usd]) => ({ code, usd, share: net > 0 ? usd / net : 0 }))
+    .sort((x, y) => y.usd - x.usd)
+    .slice(0, 3)
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   // Группируем по ТИПУ счёта, а подпись и цвет берём от него же. Раньше ключом группы служила
@@ -268,16 +295,6 @@ export function BanksView(): React.JSX.Element {
         subtitle="банки и биржи — остаток вписывается вручную · криптокошельки читаются из сети"
         action={
           <div className="flex items-center gap-2">
-            <button
-              // Кнопка обновляла ТОЛЬКО криптокошельки, хотя счета занимают верхнюю половину
-              // экрана и часть из них помечена «можно автоматом». Единственная кнопка
-              // обновления обязана обновлять всё, что умеет обновляться само.
-              onClick={() => void Promise.all([refresh(), refreshAccounts()])}
-              disabled={loading}
-              className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
-            >
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} /> Обновить
-            </button>
             <button
               onClick={() => {
                 setAdding(false)
@@ -337,23 +354,34 @@ export function BanksView(): React.JSX.Element {
         />
       )}
 
+      {/* Плитки отвечают на вопросы, которые человек задаёт деньгам: «сколько у меня», «где
+          основное» и «в чём оно лежит». Раньше две из трёх считали ПРОБЕЛЫ в данных («не
+          внесено 6», «устарело 0») — это счётчик недоделанной работы, а не состояние счетов, и
+          на спокойном экране он просто занимал место. Полнота данных осталась подписью под
+          «Известно», где она и уместна: рядом с цифрой, к которой относится. */}
       <div className="grid grid-cols-3 gap-4">
-        {/* «Известно», а не «Всего»: счёт без внесённого остатка в сумму не входит, и цифра
-            описывает не состояние владельца, а ту его часть, которую мы правда знаем. */}
         <StatTile
           label="Известно"
           value={approxMoney(net, currencies)}
-          hint={`по ${accountSums.known + (wallets.length - unavailable)} источникам из ${accounts.length + wallets.length}`}
+          hint={
+            accountSums.unknown + unavailable > 0
+              ? `по ${accountSums.known + (wallets.length - unavailable)} из ${accounts.length + wallets.length} источников · остальные без остатка`
+              : `по всем ${accounts.length + wallets.length} источникам`
+          }
         />
         <StatTile
-          label="Не внесено"
-          value={String(accountSums.unknown + unavailable)}
-          hint="счета без остатка и кошельки без ответа RPC"
+          label="Где основное"
+          value={biggest ? biggest.name : '—'}
+          hint={biggest ? `${money(biggest.balance ?? 0, biggest.currency)} · ${Math.round(biggest.share * 100)}% от известного` : 'внеси остаток хотя бы одного счёта'}
         />
         <StatTile
-          label="Устарело"
-          value={String(accountSums.stale)}
-          hint="остатки, вписанные больше месяца назад"
+          label="По валютам"
+          value={byCurrency.length ? byCurrency.map((c) => c.code).join(' · ') : '—'}
+          hint={
+            byCurrency.length
+              ? byCurrency.map((c) => `${c.code} ${Math.round(c.share * 100)}%`).join(' · ')
+              : 'остатки не внесены'
+          }
         />
       </div>
 

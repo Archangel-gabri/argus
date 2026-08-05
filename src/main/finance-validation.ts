@@ -74,6 +74,14 @@ export function parseSubscriptionInput(input: unknown): SubscriptionInput {
     else renewalDay = value.renewalDay
   }
 
+  // Привязка к устройству: строка-идентификатор либо явный null («это самостоятельный платёж»).
+  let deviceId: string | null | undefined
+  if (value.deviceId !== undefined) {
+    if (value.deviceId === null || value.deviceId === '') deviceId = null
+    else if (typeof value.deviceId !== 'string') throw new Error('Ссылка на устройство должна быть строкой')
+    else deviceId = value.deviceId
+  }
+
   return {
     name,
     provider,
@@ -83,6 +91,7 @@ export function parseSubscriptionInput(input: unknown): SubscriptionInput {
     period,
     nextRenewal,
     renewalDay,
+    deviceId,
     notes: notes || null,
     manualRenewal: value.manualRenewal ?? false
   }

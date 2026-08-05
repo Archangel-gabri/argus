@@ -42,9 +42,9 @@ export const toUsd = (amount: number, currency: string): number =>
 
 // Browser-preview fallback (no Electron API): app subscriptions in the vault shape.
 export const MOCK_SUBSCRIPTIONS: Subscription[] = [
-  { id: 'claude', name: 'Claude Pro', provider: 'Anthropic', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-14', renewalDay: 14, notes: null, manualRenewal: false },
-  { id: 'chatgpt', name: 'ChatGPT Plus', provider: 'OpenAI', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-09', renewalDay: 9, notes: null, manualRenewal: false },
-  { id: 'copilot', name: 'GitHub Copilot', provider: 'GitHub', category: 'Dev', amount: 10, currency: 'USD', period: 'mo', nextRenewal: '2026-07-22', renewalDay: 22, notes: null, manualRenewal: false },
-  { id: 'spotify', name: 'Spotify Premium', provider: 'Spotify', category: 'Media', amount: 169, currency: 'RUB', period: 'mo', nextRenewal: '2026-07-20', renewalDay: 20, notes: null, manualRenewal: false },
-  { id: 'domains', name: 'Domains (HubVPN)', provider: 'Namecheap', category: 'Other', amount: 35, currency: 'USD', period: 'yr', nextRenewal: '2026-11-02', renewalDay: 2, notes: null, manualRenewal: true }
+  { id: 'claude', name: 'Claude Pro', provider: 'Anthropic', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-14', renewalDay: 14, deviceId: null, notes: null, manualRenewal: false },
+  { id: 'chatgpt', name: 'ChatGPT Plus', provider: 'OpenAI', category: 'AI', amount: 20, currency: 'USD', period: 'mo', nextRenewal: '2026-07-09', renewalDay: 9, deviceId: null, notes: null, manualRenewal: false },
+  { id: 'copilot', name: 'GitHub Copilot', provider: 'GitHub', category: 'Dev', amount: 10, currency: 'USD', period: 'mo', nextRenewal: '2026-07-22', renewalDay: 22, deviceId: null, notes: null, manualRenewal: false },
+  { id: 'spotify', name: 'Spotify Premium', provider: 'Spotify', category: 'Media', amount: 169, currency: 'RUB', period: 'mo', nextRenewal: '2026-07-20', renewalDay: 20, deviceId: null, notes: null, manualRenewal: false },
+  { id: 'domains', name: 'Domains (HubVPN)', provider: 'Namecheap', category: 'Other', amount: 35, currency: 'USD', period: 'yr', nextRenewal: '2026-11-02', renewalDay: 2, deviceId: null, notes: null, manualRenewal: true }
 ]

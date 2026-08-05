@@ -15,7 +15,7 @@ const sub = (over: Partial<Subscription> = {}): Subscription => ({
   currency: 'RUB',
   period: 'mo',
   nextRenewal: '2026-08-10',
-  renewalDay: 10,
+  renewalDay: 10, deviceId: null,
   notes: null,
   manualRenewal: false,
   ...over
