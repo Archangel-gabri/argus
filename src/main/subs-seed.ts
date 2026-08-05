@@ -37,9 +37,14 @@ export interface SubsSeedPlan {
   create: SubscriptionInput[]
   update: Array<{ id: string; input: SubscriptionInput }>
   retire: string[]
+  /** Ключи, которые после применения плана надо запомнить как принесённые. */
+  seeded: string[]
 }
 
 const key = (name: string): string => name.trim().toLowerCase()
+
+/** Вид засева в памяти применённого — у подписок, счетов и ИИ-доступов свои пространства имён. */
+const SEED_KIND = 'subs'
 
 /**
  * Какая дата продления победит.
@@ -84,9 +89,13 @@ function merge(item: SeedSubscription, current?: Subscription): SubscriptionInpu
  * Запись, ничем не отличающаяся от файла, в план не попадает: лишняя запись в базу — это лишнее
  * событие «данные изменились» на каждом запуске.
  */
-export function planSubsSeed(file: SubsSeedFile, existing: Subscription[]): SubsSeedPlan {
+export function planSubsSeed(
+  file: SubsSeedFile,
+  existing: Subscription[],
+  alreadySeeded: ReadonlySet<string> = new Set()
+): SubsSeedPlan {
   const byName = new Map(existing.map((s) => [key(s.name), s]))
-  const plan: SubsSeedPlan = { create: [], update: [], retire: [] }
+  const plan: SubsSeedPlan = { create: [], update: [], retire: [], seeded: [] }
 
   const retire = new Set((file.retire ?? []).map(key))
   for (const s of existing) if (retire.has(key(s.name))) plan.retire.push(s.id)
@@ -96,7 +105,12 @@ export function planSubsSeed(file: SubsSeedFile, existing: Subscription[]): Subs
     const current = byName.get(key(item.name))
     const input = merge(item, current)
     if (!current) {
+      // Запись из файла, которой в хранилище нет. Заводим её ОДИН раз: если этот ключ уже
+      // приносили, значит владелец её удалил (или переименовал) — и повторное создание
+      // отменяло бы его решение на каждом входе.
+      if (alreadySeeded.has(key(item.name))) continue
       plan.create.push(input)
+      plan.seeded.push(key(item.name))
       continue
     }
     const same =
@@ -138,18 +152,24 @@ export function seedSubscriptions(): SubsSeedResult {
     return result
   }
 
-  const plan = planSubsSeed(file, vault.listSubscriptions())
-  for (const id of plan.retire) {
-    vault.deleteSubscription(id)
-    result.retired++
-  }
-  for (const input of plan.create) {
-    vault.createSubscription(input)
-    result.created++
-  }
-  for (const { id, input } of plan.update) {
-    vault.updateSubscription(id, input)
-    result.updated++
-  }
+  const plan = planSubsSeed(file, vault.listSubscriptions(), vault.appliedSeedKeys(SEED_KIND))
+  // План применяется целиком или никак. Иначе одна кривая строка в файле (неизвестная валюта,
+  // сумма строкой, несуществующая дата) роняла засев в середине — уже с выполненными
+  // удалениями и половиной созданных записей, причём молча: выше стоит общий catch.
+  vault.atomically(() => {
+    for (const id of plan.retire) {
+      vault.deleteSubscription(id)
+      result.retired++
+    }
+    for (const input of plan.create) {
+      vault.createSubscription(input)
+      result.created++
+    }
+    for (const { id, input } of plan.update) {
+      vault.updateSubscription(id, input)
+      result.updated++
+    }
+    vault.rememberSeedKeys(SEED_KIND, plan.seeded)
+  })
   return result
 }

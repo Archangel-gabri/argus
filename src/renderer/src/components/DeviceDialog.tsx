@@ -835,7 +835,27 @@ export function DeviceDialog(): React.JSX.Element | null {
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setF((p) => ({ ...p, authMethod: m }))}
+                    // Смена способа входа СТИРАЕТ секрет прежнего: хранилище намеренно не держит
+                    // два секрета сразу, иначе подключение молча шло бы старым, а признак
+                    // «доступ есть» врал. Раньше это происходило без предупреждения — человек
+                    // переключал тумблер посмотреть и терял пароль, который больше негде взять.
+                    onClick={() => {
+                      const losesSecret =
+                        editing &&
+                        m !== f.authMethod &&
+                        dialog.device?.hasSecret === true &&
+                        dialog.device.authType === f.authMethod
+                      if (
+                        losesSecret &&
+                        !window.confirm(
+                          f.authMethod === 'password'
+                            ? 'Сохранённый пароль будет удалён — восстановить его приложение не сможет. Переключить на SSH-ключ?'
+                            : 'Сохранённый приватный ключ будет удалён — восстановить его приложение не сможет. Переключить на пароль?'
+                        )
+                      )
+                        return
+                      setF((p) => ({ ...p, authMethod: m }))
+                    }}
                     aria-pressed={f.authMethod === m}
                     className={cn(
                       'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',

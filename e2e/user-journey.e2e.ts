@@ -16,6 +16,9 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+// Мост объявлен глобально в декларациях preload — тянем их, чтобы `window.api` в
+// `page.evaluate` был типизирован тем же контрактом, что видит настоящий renderer.
+import '../src/preload/index.d'
 
 let app: ElectronApplication
 let page: Page

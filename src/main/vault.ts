@@ -19,6 +19,7 @@ import { initialStatus } from '../shared/reachability'
 import {
   legacyManualRenewal,
   parseDeviceCost,
+  parseDevicePort,
   parseSubscriptionInput,
   parseWalletInput,
   text
@@ -455,6 +456,20 @@ function migrate(d: Database.Database): void {
     device_id TEXT PRIMARY KEY,
     json TEXT NOT NULL,
     collected_at INTEGER NOT NULL
+  )`)
+
+  // Что засев уже приносил в хранилище.
+  //
+  // Без этой памяти файл засева — не «первичное наполнение», а вечный источник истины: он
+  // применяется на КАЖДОМ открытии хранилища и не отличает «записи ещё нет» от «владелец её
+  // удалил». Удалённая подписка воскресала при следующем входе, а переименованная двоилась —
+  // старое имя в файле не находилось и заводилось заново. Обе цифры при этом попадали в
+  // месячный расход, и заметить это можно было только сверкой со списком.
+  d.exec(`CREATE TABLE IF NOT EXISTS seed_applied (
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    applied_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, key)
   )`)
 }
 
@@ -994,7 +1009,7 @@ export function createDevice(input: DeviceInput): DeviceDTO {
     role: input.role ?? null,
     kind: input.kind ?? 'server',
     ip: input.ip ?? '',
-    port: input.port ?? 22,
+    port: parseDevicePort(input.port),
     user: input.user || 'root',
     country: input.country ?? '',
     flag: input.flag || '🖥️',
@@ -1065,7 +1080,9 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
     role: input.role ?? cur.role,
     kind: input.kind ?? cur.kind ?? 'server',
     ip: input.ip ?? cur.ip,
-    port: input.port ?? cur.port,
+    // Правка проходит ту же проверку, что и создание: менять порт приходится чаще, чем заводить
+    // сервер, и дыра именно здесь была бы дороже.
+    port: input.port === undefined ? cur.port : parseDevicePort(input.port),
     user: input.user ?? cur.user,
     country: input.country ?? cur.country,
     flag: input.flag ?? cur.flag,
@@ -1440,6 +1457,28 @@ export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
     )
     .all(deviceId, limit) as MetricSnapshot[]
   return rows.reverse()
+}
+
+// ── Память засева ──────────────────────────────────────────────────────────────────────────────
+// Ответ на один вопрос: приносили ли мы эту запись из файла раньше. Отсюда следует остальное —
+// «не приносили» значит завести, «приносили, а записи нет» значит владелец её удалил и повторять
+// не надо.
+
+/** Ключи, которые засев этого вида уже применял. */
+export function appliedSeedKeys(kind: string): Set<string> {
+  const rows = requireDb().prepare('SELECT key FROM seed_applied WHERE kind = ?').all(kind) as Array<{ key: string }>
+  return new Set(rows.map((r) => r.key))
+}
+
+/** Запомнить, что запись из файла заведена. Повторный вызов безвреден. */
+export function rememberSeedKeys(kind: string, keys: string[]): void {
+  if (!keys.length) return
+  const d = requireDb()
+  const stmt = d.prepare('INSERT OR IGNORE INTO seed_applied (kind, key, applied_at) VALUES (?, ?, ?)')
+  const now = Date.now()
+  d.transaction((list: string[]) => {
+    for (const k of list) stmt.run(kind, k, now)
+  })(keys)
 }
 
 /** Кэш сводки железа устройства (или null). */

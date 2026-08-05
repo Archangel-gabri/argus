@@ -38,9 +38,14 @@ export interface FinanceSeedPlan {
   create: FinanceAccountInput[]
   update: Array<{ id: string; input: FinanceAccountInput }>
   retire: string[]
+  /** Ключи, которые после применения плана надо запомнить как принесённые. */
+  seeded: string[]
 }
 
 const key = (name: string): string => name.trim().toLowerCase()
+
+/** Вид засева в памяти применённого — у счетов своё пространство имён. */
+const SEED_KIND = 'finance'
 
 /**
  * Что засев сделает со счетами.
@@ -48,9 +53,13 @@ const key = (name: string): string => name.trim().toLowerCase()
  * Чистая функция: решение видно целиком, не открывая базу. Совпадение — по названию без учёта
  * регистра: идентификаторов в файле нет, его пишет человек.
  */
-export function planFinanceSeed(file: FinanceSeedFile, existing: FinanceAccount[]): FinanceSeedPlan {
+export function planFinanceSeed(
+  file: FinanceSeedFile,
+  existing: FinanceAccount[],
+  alreadySeeded: ReadonlySet<string> = new Set()
+): FinanceSeedPlan {
   const byName = new Map(existing.map((a) => [key(a.name), a]))
-  const plan: FinanceSeedPlan = { create: [], update: [], retire: [] }
+  const plan: FinanceSeedPlan = { create: [], update: [], retire: [], seeded: [] }
 
   const retire = new Set((file.retire ?? []).map(key))
   for (const a of existing) if (retire.has(key(a.name))) plan.retire.push(a.id)
@@ -60,6 +69,10 @@ export function planFinanceSeed(file: FinanceSeedFile, existing: FinanceAccount[
     const current = byName.get(key(item.name))
 
     if (!current) {
+      // Заводим ОДИН раз: повторное создание отменяло бы удаление, сделанное владельцем, —
+      // и делало бы это молча, на каждом открытии хранилища.
+      if (alreadySeeded.has(key(item.name))) continue
+      plan.seeded.push(key(item.name))
       plan.create.push({
         name: item.name,
         kind: item.kind ?? 'bank',
@@ -117,18 +130,23 @@ export function seedFinanceAccounts(): FinanceSeedResult {
     return result
   }
 
-  const plan = planFinanceSeed(file, vault.listFinanceAccounts())
-  for (const id of plan.retire) {
-    vault.deleteFinanceAccount(id)
-    result.retired++
-  }
-  for (const input of plan.create) {
-    vault.createFinanceAccount(input)
-    result.created++
-  }
-  for (const { id, input } of plan.update) {
-    vault.updateFinanceAccount(id, input)
-    result.updated++
-  }
+  const plan = planFinanceSeed(file, vault.listFinanceAccounts(), vault.appliedSeedKeys(SEED_KIND))
+  // Целиком или никак: одна кривая строка в файле не должна оставлять применёнными удаления и
+  // половину созданий.
+  vault.atomically(() => {
+    for (const id of plan.retire) {
+      vault.deleteFinanceAccount(id)
+      result.retired++
+    }
+    for (const input of plan.create) {
+      vault.createFinanceAccount(input)
+      result.created++
+    }
+    for (const { id, input } of plan.update) {
+      vault.updateFinanceAccount(id, input)
+      result.updated++
+    }
+    vault.rememberSeedKeys(SEED_KIND, plan.seeded)
+  })
   return result
 }

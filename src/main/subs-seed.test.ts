@@ -60,7 +60,7 @@ describe('план засева подписок', () => {
       ]
     }
     const plan = planSubsSeed(file, [sub()])
-    expect(plan).toEqual({ create: [], update: [], retire: [] })
+    expect(plan).toEqual({ create: [], update: [], retire: [], seeded: [] })
   })
 
   it('поле, которого в файле нет, остаётся прежним', () => {
@@ -93,7 +93,7 @@ describe('план засева подписок', () => {
   })
 
   it('пустой файл ничего не ломает', () => {
-    expect(planSubsSeed({}, [sub()])).toEqual({ create: [], update: [], retire: [] })
+    expect(planSubsSeed({}, [sub()])).toEqual({ create: [], update: [], retire: [], seeded: [] })
   })
 })
 
@@ -112,6 +112,42 @@ describe('дата продления против файла', () => {
       sub({ nextRenewal: '2026-08-10' })
     ])
     expect(plan.update[0].input.nextRenewal).toBe('2026-10-10')
+  })
+
+  it('удалённая владельцем подписка НЕ воскресает при следующем входе', () => {
+    // Засев идёт на каждом открытии хранилища и не отличает «записи ещё нет» от «её удалили».
+    // Пока памяти о принесённом не было, корзина в интерфейсе не работала вовсе: подписка
+    // возвращалась при следующем входе — с новым id и снова в месячном расходе.
+    const file: SubsSeedFile = { subscriptions: [{ name: 'Boosty — erafox', amount: 499 }] }
+    const first = planSubsSeed(file, [])
+    expect(first.create).toHaveLength(1)
+    expect(first.seeded).toEqual(['boosty — erafox'])
+
+    // Второй вход: запись уже приносили, в хранилище её нет — значит владелец её убрал.
+    const second = planSubsSeed(file, [], new Set(first.seeded))
+    expect(second.create).toEqual([])
+  })
+
+  it('переименованная подписка не двоится', () => {
+    // Совпадение ищется по имени, поэтому после переименования старое имя в базе не находится.
+    // Раньше это читалось как «новая запись» и заводило вторую — обе попадали в расход.
+    const file: SubsSeedFile = { subscriptions: [{ name: 'Boosty — erafox', amount: 499 }] }
+    const renamed = sub({ name: 'Boosty (Erafox)' })
+    const plan = planSubsSeed(file, [renamed], new Set(['boosty — erafox']))
+    expect(plan.create).toEqual([])
+    expect(plan.update).toEqual([])
+  })
+
+  it('память засева не мешает заводить НОВЫЕ записи из файла', () => {
+    const file: SubsSeedFile = {
+      subscriptions: [
+        { name: 'Boosty — erafox', amount: 499 },
+        { name: 'Новая подписка', amount: 100 }
+      ]
+    }
+    const plan = planSubsSeed(file, [], new Set(['boosty — erafox']))
+    expect(plan.create.map((c) => c.name)).toEqual(['Новая подписка'])
+    expect(plan.seeded).toEqual(['новая подписка'])
   })
 
   it('какая дата побеждает', () => {

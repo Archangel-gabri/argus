@@ -52,7 +52,7 @@ describe('план засева счетов', () => {
     const file: FinanceSeedFile = {
       accounts: [{ name: 'Сбербанк', kind: 'bank', institution: 'Сбербанк', currency: 'RUB', source: 'manual' }]
     }
-    expect(planFinanceSeed(file, [acc()])).toEqual({ create: [], update: [], retire: [] })
+    expect(planFinanceSeed(file, [acc()])).toEqual({ create: [], update: [], retire: [], seeded: [] })
   })
 
   it('закрытый счёт убирается и заново не заводится', () => {
@@ -67,6 +67,18 @@ describe('план засева счетов', () => {
   })
 
   it('пустой файл ничего не ломает', () => {
-    expect(planFinanceSeed({}, [acc()])).toEqual({ create: [], update: [], retire: [] })
+    expect(planFinanceSeed({}, [acc()])).toEqual({ create: [], update: [], retire: [], seeded: [] })
+  })
+
+  it('удалённый владельцем счёт НЕ воскресает при следующем входе', () => {
+    // Тот же дефект, что был у подписок: засев идёт на каждом открытии хранилища и не отличает
+    // «счёта ещё нет» от «его удалили». Корзина в интерфейсе не работала — счёт возвращался.
+    const file: FinanceSeedFile = { accounts: [{ name: 'Т-Банк', kind: 'bank', currency: 'RUB' }] }
+    const first = planFinanceSeed(file, [])
+    expect(first.create).toHaveLength(1)
+    expect(first.seeded).toEqual(['т-банк'])
+
+    const second = planFinanceSeed(file, [], new Set(first.seeded))
+    expect(second.create).toEqual([])
   })
 })

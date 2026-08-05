@@ -43,7 +43,16 @@ export function tcpAlive(host: string, port: number, timeoutMs = 4000): Promise<
     sock.once('timeout', () => finish('offline'))
     sock.once('error', () => finish('offline'))
     sock.once('close', () => finish('offline'))
-    sock.connect({ host, port: port || 22 })
+    // Порт приходит из записи устройства, а её заполняет человек. Node на порту вне 1..65535
+    // бросает СИНХРОННО (`ERR_SOCKET_BAD_PORT`), и этот бросок улетал наружу через Promise.all
+    // в `deviceReach`/`fleetReach` — то есть одна кривая запись выключала обновление статусов у
+    // ВСЕГО парка, навсегда до перезапуска, оставляя на карточках протухшее «Онлайн» как факт.
+    // «Не знаю» здесь честнее «offline»: мы ничего не проверили.
+    try {
+      sock.connect({ host, port: port || 22 })
+    } catch {
+      finish('unknown')
+    }
   })
 }
 
@@ -56,7 +65,12 @@ export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<R
   // и пометила бы устройство мёртвым. Такие проверяем только полным опросом, который умеет
   // ходить туннелем, — а здесь честно говорим «не знаю», не роняя статус.
   if (conns.some((c) => c.jump)) return { status: 'unknown', ms: 0 }
-  const results = await Promise.all(conns.map((c) => tcpAlive(c.host, c.port, timeoutMs)))
+  const results = await Promise.all(
+    // Отказ пробы одного эндпоинта не должен ронять вердикт по устройству целиком.
+    conns.map((c) =>
+      tcpAlive(c.host, c.port, timeoutMs).catch((): Reach => ({ status: 'unknown', ms: 0 }))
+    )
+  )
   const alive = results.filter((r) => r.status === 'online')
   return alive.length
     ? { status: 'online', ms: Math.min(...alive.map((r) => r.ms)) }
@@ -69,7 +83,15 @@ export async function deviceReach(deviceId: string, timeoutMs = 4000): Promise<R
 export async function fleetReach(timeoutMs = 4000): Promise<Record<string, Reach>> {
   const devices = listDevices()
   const pairs = await Promise.all(
-    devices.map(async (d) => [d.id, await deviceReach(d.id, timeoutMs)] as const)
+    // И то же на уровне парка: сломанная запись портит вердикт только о себе. Раньше её
+    // исключение всплывало в обработчик IPC, где ловить было уже некому.
+    devices.map(async (d) => {
+      try {
+        return [d.id, await deviceReach(d.id, timeoutMs)] as const
+      } catch {
+        return [d.id, { status: 'unknown', ms: 0 }] as const
+      }
+    })
   )
   return Object.fromEntries(pairs)
 }

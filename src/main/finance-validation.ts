@@ -104,6 +104,21 @@ export function parseWalletInput(input: unknown): WalletInput {
  * Пересчёт в доллары здесь НЕ делается и значение `usd` от renderer не принимается: курс знает
  * хранилище, и доверять чужой арифметике в деньгах незачем.
  */
+/**
+ * Сетевой порт устройства.
+ *
+ * Проверять обязательно на границе, а не «когда понадобится»: Node на порту вне 1..65535 бросает
+ * СИНХРОННО, и этот бросок из быстрой проверки живости выключал обновление статусов у всего
+ * парка. Пустое значение — это «по умолчанию 22», а не ошибка: порт указывают не все.
+ */
+export function parseDevicePort(value: unknown): number {
+  if (value == null || value === '') return 22
+  const port = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
+    throw new Error(`Порт должен быть целым числом от 1 до 65535: ${describeValue(value)}`)
+  return port
+}
+
 export function parseDeviceCost(input: unknown): { amount: number; currency: Currency } {
   if (input == null) return { amount: 0, currency: 'USD' }
   const value = objectOf(input, 'Стоимость')
