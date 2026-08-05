@@ -85,51 +85,62 @@ const SIMPLE_ICONS = {
 // логотип, фактически мусор. Поэтому там, где на Commons есть отдельная эмблема, берётся она,
 // и в `why` записано, чем не подошёл P154: без этого следующий человек снимет закрепление и
 // молча получит полоски.
+//
+// Набор CoreUI Icons целиком залит на Commons под CC BY 4.0 отдельными файлами «Cib-<бренд>».
+// Это готовые ОДНОЦВЕТНЫЕ знаки 32×32 — ровно тот формат, который здесь нужен, поэтому там, где
+// у бренда есть Cib-файл, берётся он, а не «официальный» логотип из P154.
 const COMMONS = {
-  // P154 подходит как есть — тот самый случай, ради которого путь через Wikidata и написан.
-  aws: { q: 'Amazon Web Services', lang: 'en' },
+  // ── Собираются ───────────────────────────────────────────────────────────────────────────
+  // P154 у AWS — двухцветный знак (тёмная надпись + оранжевая улыбка) под Apache-2.0.
+  aws: { q: 'Amazon Web Services', lang: 'en', file: 'Cib-amazon-aws (CoreUI Icons v1.0.0).svg', why: 'P154 — знак из двух цветов' },
 
-  // У Wikidata в P154 лежит «Logo Sberbank.svg» — надпись 400×80 на градиентах: в монохроме
-  // от неё остаётся серая клякса. Латинский вариант со знаком — единственный пригодный.
-  sberbank: { q: 'Сбербанк', lang: 'ru', file: 'Sberbank Logo latin.svg', why: 'P154 — надпись 5:1 на градиентах' },
+  // У Oracle P154 — надпись 512×66.
+  oracle: { q: 'Oracle Corporation', lang: 'en', file: 'Cib-oracle (CoreUI Icons v1.0.0).svg', why: 'P154 — надпись 7.7:1' },
 
-  // P154 = «T-Bank RU logo.svg», надпись 95×34 из шести контуров. Нужен щит без надписи.
-  tbank: { q: 'Т-Банк', lang: 'ru', file: 'T-Bank group logo.svg', why: 'P154 — надпись из шести контуров' },
-
-  // P154 = «Yandex logo 2021 Russian.svg» (367×106). Квадратная иконка «Я» лежит отдельно.
-  yandex: { q: 'Яндекс', lang: 'ru', file: 'Yandex icon.svg', why: 'P154 — надпись 3.5:1' },
+  // P154 = «Yandex logo 2021 Russian.svg» (367×106), а квадратная иконка «Я» на Commons — это
+  // белая буква ПОВЕРХ красного круга, то есть два цвета.
+  yandex: { q: 'Яндекс', lang: 'ru', file: 'Cib-yandex (CoreUI Icons v1.0.0).svg', why: 'P154 — надпись 3.5:1, иконка «Я» — два цвета' },
 
   // У сущности МегаФона P154 не заполнен вовсе; эмблема без надписи есть отдельным файлом.
   megafon: { q: 'МегаФон', lang: 'ru', file: 'MegaFon logo without text.svg', why: 'P154 пуст' },
 
-  // P154 отдаёт три файла, первый — надпись 4:1. Квадратный знак 2023 года лежит третьим,
-  // и полагаться на порядок в списке нельзя: он меняется при любой правке карточки в Wikidata.
-  mts: { q: 'МТС', lang: 'ru', file: 'Logo МТС (2023).svg', why: 'P154 отдаёт список, порядок в нём не гарантирован' },
-
-  // У сущности Ozon P154 не заполнен.
+  // У сущности Ozon P154 не заполнен. Надпись 2.3:1 — на грани, но читается.
   ozon: { q: 'Ozon', lang: 'en', file: 'OZONnew.svg', why: 'P154 пуст' },
 
-  // P154 указывает на PNG («Bybit-logo (cropped).png»), а растр здесь не годится: знак должен
-  // краситься цветом текста и не мылиться при масштабе.
+  // ── Проверено, свободного пригодного файла нет ───────────────────────────────────────────
+  // Записи оставлены НАМЕРЕННО: каждый прогон печатает, обо что именно спотыкается бренд, и
+  // следующий человек не начинает поиск с нуля. Убрать их — значит через месяц снова обойти
+  // Wikidata и Commons, чтобы прийти к тем же выводам. Если у кого-то из них на Commons
+  // появится одноцветная эмблема, достаточно вписать `file` — код менять не нужно.
+
+  // Официальный логотип — надпись 400×80 на градиентах. Латинский вариант со знаком нарисован
+  // в Inkscape через вложенные transform: контуры сами по себе неверны.
+  sberbank: { q: 'Сбербанк', lang: 'ru', file: 'Sberbank Logo latin.svg', why: 'P154 — надпись 5:1 на градиентах' },
+
+  // Щит без надписи есть, но он двухцветный: тёмная «Т» вырезана поверх жёлтого щита, и в
+  // монохроме буква сливается с основанием — остаётся пустой щит.
+  tbank: { q: 'Т-Банк', lang: 'ru', file: 'T-Bank group logo.svg', why: 'P154 — надпись из шести контуров' },
+
+  // Квадратный знак 2023 года: белые буквы вырезаны поверх красного квадрата, а сам квадрат —
+  // <rect>, то есть не контур. В монохроме от знака остался бы только квадрат.
+  mts: { q: 'МТС', lang: 'ru', file: 'Logo МТС (2023).svg', why: 'P154 отдаёт список, порядок в нём не гарантирован' },
+
+  // P154 указывает на PNG. Единственный свободный SVG нарисован в CorelDRAW и держит часть
+  // знака в <polygon> — при переносе в контуры она исчезнет.
   bybit: { q: 'Bybit', lang: 'en', file: 'Bybit Logo.svg', why: 'P154 — растр' },
 
-  // P154 указывает на PNG. Свободного SVG у ЮMoney на Commons нет — оставлено в списке,
-  // чтобы следующий не искал заново и увидел причину в отчёте прогона.
+  // P154 указывает на PNG, свободного SVG у ЮMoney на Commons нет вовсе.
   yoomoney: { q: 'ЮMoney', lang: 'ru' },
 
-  // У Wildberries P154 = «Wildberries 2023 Pink.svg», надпись 500×75. Эмблемы на Commons нет.
+  // P154 = «Wildberries 2023 Pink.svg», надпись 500×75 (6.7:1). Эмблемы на Commons нет.
   wildberries: { q: 'Wildberries', lang: 'en' },
 
-  // Билайн: свободного файла со знаком на Commons найти не удалось — поиск по названию отдаёт
-  // одноимённые компании (Brussels Airlines, Beeline Software). Пусть падает честно.
+  // P154 указывает на PNG; поиск по названию отдаёт одноимённые компании (Brussels Airlines,
+  // Beeline Software), и брать оттуда «похожий» файл было бы хуже отсутствия знака.
   beeline: { q: 'Билайн', lang: 'ru' },
 
-  // Kraken: у биржи в Wikidata P154 пуст, а поиск по Commons отдаёт кракенов из игр и ром.
-  kraken: { q: 'Kraken', lang: 'en' },
-
-  // Набор CoreUI Icons целиком залит на Commons под CC BY 4.0 — это готовые ОДНОЦВЕТНЫЕ знаки
-  // 32×32, ровно тот формат, который здесь нужен. У Oracle P154 — надпись 512×66.
-  oracle: { q: 'Oracle Corporation', lang: 'en', file: 'Cib-oracle (CoreUI Icons v1.0.0).svg', why: 'P154 — надпись 7.7:1' }
+  // У биржи в Wikidata P154 пуст, а поиск по Commons отдаёт кракенов из игр и ром.
+  kraken: { q: 'Kraken', lang: 'en' }
 }
 
 // Одна форма адреса, без вариантов: `/<slug>` отдаёт SVG с фирменным цветом внутри. Форма
@@ -149,7 +160,7 @@ const UA = 'argus-brand-catalog/2.0 (Argus personal command center; local build 
  *  с явным сообщением, а не тихо.
  */
 const FREE_LICENSE = /^(pd|public domain|cc0|cc[- ]by[- ]\d|attribution|apache|mit|bsd)/i
-const SHARE_ALIKE = /(sa|share[- ]alike)/i
+const SHARE_ALIKE = /(^|[-\s])(sa|share[- ]?alike)([-\s]|$)/i
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -233,18 +244,28 @@ async function license(file) {
   const code = meta.License?.value
   if (!short && !code) throw new Error(`у «${file}» не указана лицензия — считаем несвободной`)
   const name = short ?? code
-  if (SHARE_ALIKE.test(code ?? '') || /share.?alike|\bSA\b/i.test(short ?? ''))
+  if (SHARE_ALIKE.test(code ?? '') || SHARE_ALIKE.test(short ?? ''))
     throw new Error(`лицензия «${name}» требует share-alike — на исходники приложения не берём`)
   if (!FREE_LICENSE.test(code ?? '') && !FREE_LICENSE.test(short ?? ''))
     throw new Error(`лицензия «${name}» не свободная`)
   return name
 }
 
+/** Значение атрибута, записанного хоть двойными кавычками, хоть одинарными: файлы на Commons
+ *  приходят из Illustrator, Inkscape и CorelDRAW, и каждый пишет по-своему. Разбор, знающий
+ *  только двойные кавычки, молча объявлял «нет viewBox» у совершенно исправного файла. */
+const attr = (source, name) =>
+  new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"|\\b${name}\\s*=\\s*'([^']*)'`, 'i')
+    .exec(source)
+    ?.slice(1)
+    .find((v) => v !== undefined)
+
 /** Достать из SVG контуры и фирменный цвет.
  *
  *  Разбор намеренно строгий: молча принять чужую разметку и вставить её в приложение — ровно то,
- *  чего этот формат и избегает. Каждая проверка ниже — про то, что знак рисуется ОДНИМ цветом
- *  из viewBox и списка `d`, и всё, что в эту форму не влезает, при переносе потеряется молча.
+ *  чего этот формат и избегает. Каждая проверка ниже — про одно и то же: знак рисуется ОДНИМ
+ *  цветом из viewBox и списка `d`, и всё, что в эту форму не влезает, при переносе исчезает
+ *  молча — на экране оказывается не «чуть хуже», а пятно, в котором компанию не узнать.
  */
 function parse(svg, { maxPaths = 3, maxRatio = 3 } = {}) {
   // Комментарии и метаданные Inkscape/Illustrator выкидываем до проверок: в них попадают и
@@ -260,20 +281,22 @@ function parse(svg, { maxPaths = 3, maxRatio = 3 } = {}) {
   if (shape) throw new Error(`есть <${shape[1]}> — при переносе в контуры эта часть знака исчезнет`)
   // Градиент значит многоцветный знак: в монохроме он схлопывается в силуэт без внутренних границ.
   if (/<(linear|radial)Gradient\b/i.test(body)) throw new Error('знак на градиентах — в монохроме станет пятном')
-  // CSS решает, что залито, а что нет; мы заливаем всё подряд, поэтому служебные контуры вылезут.
-  if (/<style\b/i.test(body)) throw new Error('заливка задана в <style> — без неё лишние контуры станут видимыми')
-  if (/\bfill\s*[:=]\s*"?none/i.test(body)) throw new Error('есть контуры с fill:none — в монохроме они станут видимыми')
-  if (/\bstroke\s*[:=]/i.test(body)) throw new Error('знак нарисован обводкой, а не заливкой')
+  // Обрезка по маске задаёт видимую часть снаружи контура — унести можно только сам контур.
+  if (/\bclip-path\s*=/i.test(body)) throw new Error('видимая часть задана обрезкой (clip-path), а не контуром')
+  // Обводка — не заливка. `stroke="none"` при этом обычное дело и ничего не значит.
+  const stroke = /\bstroke\s*[:=]\s*"?'?([^;"'\s>]+)/i.exec(body)?.[1]
+  if (stroke && stroke.toLowerCase() !== 'none') throw new Error('знак нарисован обводкой, а не заливкой')
   // Смещения и повороты живут в атрибуте, а не в данных контура: перенесём `d` — получим кашу.
   if (/\btransform\s*=/i.test(body)) throw new Error('геометрия вынесена в transform — контуры сами по себе неверны')
 
-  let vb = /viewBox="([^"]+)"/.exec(body)?.[1]
+  let vb = attr(body, 'viewBox')
   if (!vb) {
-    // Часть файлов на Commons задаёт размер только через width/height (иногда в «px»).
+    // Часть файлов на Commons задаёт размер только через width/height (иногда в «px» или «mm»).
     // Это не повод отказываться: viewBox из них выводится однозначно.
-    const w = /<svg[^>]*\bwidth="([\d.]+)/.exec(body)?.[1]
-    const h = /<svg[^>]*\bheight="([\d.]+)/.exec(body)?.[1]
-    if (!w || !h) throw new Error('нет ни viewBox, ни размеров')
+    const svgTag = /<svg\b[^>]*>/i.exec(body)?.[0] ?? ''
+    const w = parseFloat(attr(svgTag, 'width') ?? '')
+    const h = parseFloat(attr(svgTag, 'height') ?? '')
+    if (!(w > 0 && h > 0)) throw new Error('нет ни viewBox, ни размеров')
     vb = `0 0 ${w} ${h}`
   }
   const [, , vw, vh] = vb.trim().split(/[\s,]+/).map(Number)
@@ -285,25 +308,60 @@ function parse(svg, { maxPaths = 3, maxRatio = 3 } = {}) {
   if (ratio > maxRatio || ratio < 1 / maxRatio)
     throw new Error(`пропорции ${ratio.toFixed(1)}:1 — в квадратной ячейке это полоска, а не знак`)
 
-  const paths = [...body.matchAll(/<path\b[^>]*?\bd="([^"]+)"[^>]*>/g)].map((m) => {
-    const attrs = m[0]
-    const path = { d: m[1] }
+  // Цвет контура может лежать в трёх местах: на самом контуре, в классе из <style> и на
+  // родительской группе. Нам не нужен сам цвет — нужно знать, СКОЛЬКО их: см. проверку ниже.
+  const byClass = {}
+  for (const rule of body.matchAll(/\.([\w-]+)\s*\{([^}]*)\}/g)) {
+    const f = /fill\s*:\s*([^;}\s]+)/i.exec(rule[2])?.[1]
+    if (f) byClass[rule[1]] = f
+  }
+  // `fill="none"` на <svg> или <g> — это «у самой группы заливки нет», обычная строчка
+  // экспорта из Figma. К контурам она отношения не имеет, поэтому в наследование не идёт.
+  const groups = [...body.matchAll(/<(?:svg|g)\b[^>]*>/gi)].map((m) => m[0])
+  const inherited = groups.map((g) => attr(g, 'fill')).find((f) => f && f.toLowerCase() !== 'none')
+  const groupAttrs = groups.join(' ')
+
+  const paths = [...body.matchAll(/<path\b[^>]*?\bd\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/g)].map((m) => {
+    const tag = m[0]
+    const path = { d: m[1] ?? m[2] }
     // Правило заливки решает, будут ли дырки внутри буквы дырками. Потерять его — залить букву «О».
-    const fillRule = /fill-rule\s*[:=]\s*"?(evenodd|nonzero)/i.exec(attrs)?.[1]
+    // Оно же часто стоит на группе, а не на контуре, — тогда берём её.
+    const rule = (name) => {
+      const re = new RegExp(`${name}\\s*[:=]\\s*"?'?(evenodd|nonzero)`, 'i')
+      return re.exec(tag)?.[1] ?? re.exec(groupAttrs)?.[1]
+    }
+    const fillRule = rule('fill-rule')
     if (fillRule) path.fillRule = fillRule.toLowerCase()
-    const clipRule = /clip-rule\s*[:=]\s*"?(evenodd|nonzero)/i.exec(attrs)?.[1]
+    const clipRule = rule('clip-rule')
     if (clipRule) path.clipRule = clipRule.toLowerCase()
+    const own = attr(tag, 'fill') ?? /fill\s*:\s*([^;"'\s]+)/i.exec(tag)?.[1]
+    const cls = attr(tag, 'class')
+    path.fill = own ?? (cls ? byClass[cls.trim().split(/\s+/)[0]] : undefined) ?? inherited
     return path
   })
   if (!paths.length) throw new Error('нет контуров')
-  // Много контуров у одноцветного знака почти всегда значит «это надпись побуквенно» либо
-  // «части разного цвета»: и то и другое в монохроме нечитаемо.
+  if (paths.some((p) => (p.fill ?? '').toLowerCase() === 'none'))
+    throw new Error('есть контуры с fill:none — в монохроме они станут видимыми')
+
+  // Главная проверка. Знак красится ОДНИМ цветом, поэтому второй цвет в исходнике почти всегда
+  // означает вырезанную деталь: белая «Я» поверх красного круга у Яндекса, тёмная «Т» поверх
+  // жёлтого щита у Т-Банка. Сведи их в один цвет — и деталь сольётся с основанием, останется
+  // силуэт, в котором компанию не узнать. Такие файлы пропускаем целиком: монограмма из двух
+  // букв честнее пятна. Исключений «эти два цвета лежат рядом, а не друг на друге» не делаем —
+  // отличить одно от другого можно только нарисовав.
+  const colors = [...new Set(paths.map((p) => (p.fill ?? '').toLowerCase()).filter(Boolean))]
+  if (colors.length > 1) throw new Error(`знак из ${colors.length} цветов (${colors.join(', ')}) — в монохроме детали сольются`)
+
+  // Много контуров у одноцветного знака почти всегда значит «это надпись побуквенно»:
+  // в ячейке 16 px такая надпись нечитаема.
   if (paths.length > maxPaths)
-    throw new Error(`${paths.length} контуров — столько бывает у надписи или у многоцветного знака`)
+    throw new Error(`${paths.length} контуров — столько бывает у надписи, разобранной на буквы`)
 
   // Фирменный цвет нужен ровно одному месту (крупный знак в панели деталей ИИ); если в файле
   // цвета нет — знак и так рисуется цветом текста, а сюда кладём нейтральный.
-  const tint = /fill\s*[:=]\s*"?(#[0-9a-fA-F]{3,8})/.exec(body)?.[1] ?? '#94a3b8'
+  const tint = /^#[0-9a-fA-F]{3,8}$/.test(colors[0] ?? '') ? colors[0] : '#94a3b8'
+  // Сам цвет из контуров убираем: знак наследует цвет текста, и вшитая заливка это ломала бы.
+  for (const p of paths) delete p.fill
   return { vb, tint, paths }
 }
 

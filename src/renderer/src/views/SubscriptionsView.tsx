@@ -12,6 +12,7 @@ import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
 import { markFor } from '@/assets/providers/marks'
 import { findDuplicateSpend } from '../../../shared/duplicate-spend'
+import { initialsOf } from '../../../shared/brands'
 
 interface Row {
   id: string
@@ -191,8 +192,20 @@ function BrandDot({
   category: string
 }): React.JSX.Element {
   const mark = markFor(`${provider ?? ''} ${name}`)
+  // Знака нет — вместо безликой точки ставим буквы названия. Точка одного цвета на всю
+  // категорию не отличает Boosty от Spotify, а буква отличает: в списке из двадцати строк
+  // взгляд цепляется за неё так же, как за логотип.
   if (!mark)
-    return <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: catColor(category) }} />
+    return (
+      <span
+        aria-hidden
+        title={name}
+        className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-slate-700/60 text-[8px] font-semibold uppercase leading-none text-slate-300"
+        style={{ borderBottom: `2px solid ${catColor(category)}` }}
+      >
+        {initialsOf(name)}
+      </span>
+    )
   return (
     <svg
       viewBox={mark.vb}
@@ -200,8 +213,7 @@ function BrandDot({
       height={16}
       fill="currentColor"
       aria-hidden
-      className="shrink-0"
-      style={{ color: mark.tint }}
+      className="shrink-0 text-slate-400"
     >
       {mark.paths.map((path, i) => (
         <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
@@ -427,46 +439,51 @@ export function SubscriptionsView(): React.JSX.Element {
               const days = daysUntil(x.renews)
               const stored = x.userId ? subs.find((sub) => sub.id === x.userId) : undefined
               return (
-                <div key={x.id} className="group flex items-center gap-3 py-2.5 text-sm">
+                // Строка — СЕТКА, а не череда элементов подряд. Раньше бейджи («из парка»,
+                // «продлять руками», срок продления) стояли между названием и суммой обычным
+                // потоком, и каждая строка получала свою ширину: категория и цена гуляли по
+                // горизонтали, взгляду не за что было зацепиться. Теперь колонок три —
+                // название, срок, деньги, — и они выстроены у всех строк одинаково, а
+                // подробности переехали под название, где им не приходится ни с чем спорить.
+                <div
+                  key={x.id}
+                  className="group grid grid-cols-[auto_minmax(0,1fr)_auto_7rem_auto] items-center gap-3 py-2.5 text-sm"
+                >
                   {/* Знак компании узнаётся быстрее строки: в списке из двадцати подписок глаз
-                      находит Spotify по зелёному кружку раньше, чем прочитает название. Цвет
-                      категории остаётся запасным вариантом — для тех, чьего знака нет. */}
+                      находит Spotify по знаку раньше, чем прочитает название. */}
                   <BrandDot name={x.name} provider={x.provider} category={x.category} />
-                  <span className="min-w-0 flex-1">
+                  <span className="min-w-0">
                     <span className="block truncate text-slate-200">{x.name}</span>
-                    {stored && <span className="block truncate text-[10px] text-slate-500">{stored.provider || 'провайдер не указан'}</span>}
+                    <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
+                      <span className="shrink-0">{catLabel(x.category)}</span>
+                      {stored?.provider && <span className="truncate">· {stored.provider}</span>}
+                      <SourceBadge kind={x.source} />
+                      {stored?.manualRenewal && (
+                        <span
+                          className="shrink-0 rounded bg-amber-500/10 px-1 text-[10px] text-amber-400"
+                          title="Автосписания нет — продление надо оплатить самому"
+                        >
+                          продлять руками
+                        </span>
+                      )}
+                    </span>
                   </span>
-                  {days != null && days <= 14 && (
+                  {days != null && days <= 14 ? (
                     <span
                       className={cn(
-                        'hidden shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium sm:inline',
+                        'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
                         days < 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-amber-500/15 text-amber-400'
                       )}
                     >
                       {renewalLabel(days)}
                     </span>
-                  )}
-                  {/* Категория уступает место названию и появляется только на широком экране.
-                      Раньше она занимала 96 пикселей всегда — и названия вроде «VPS Германия —
-                      мастер-панель HubVPN» обрывались на середине, хотя вид траты и так виден
-                      по знаку компании слева. Само слово тоже сокращено: «Инфраструктура» в эту
-                      ширину не влезала и обрезалась у каждой строки парка. */}
-                  <span className="hidden w-24 truncate text-xs text-slate-500 xl:inline" title={catLabel(x.category)}>
-                    {x.category === 'Infra' ? 'Инфра' : catLabel(x.category)}
-                  </span>
-                  <SourceBadge kind={x.source} />
-                  {stored?.manualRenewal && (
-                    <span
-                      className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline"
-                      title="Автосписания нет — продление надо оплатить самому"
-                    >
-                      продлять руками
-                    </span>
+                  ) : (
+                    <span />
                   )}
                   {/* Ноль в денежной колонке читается как «бесплатно», а у подписки, купленной на
                       стороне, цена бывает просто не внесена. Это разные вещи, и путать их нельзя:
                       из-за нуля подписка молча выпадает из месячного итога, выглядя оплаченной. */}
-                  <span className="w-24 text-right tabular-nums text-slate-300">
+                  <span className="text-right tabular-nums text-slate-300">
                     {x.amount > 0 ? (
                       <>
                         {money(x.amount, x.currency)}

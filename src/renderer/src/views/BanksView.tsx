@@ -49,7 +49,7 @@ function WalletForm({
           <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать кошелёк' : 'Добавить кошелёк'}</h3>
           <Hint>Баланс читается публичным RPC. Нужен только адрес.</Hint>
         </div>
-        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200">
+        <button onClick={onClose} className="rounded p-1.5 text-slate-400 hover:text-slate-200">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -144,7 +144,7 @@ function AccountForm({
           <h3 className="text-sm font-semibold text-white">Добавить счёт</h3>
           <Hint>Банк, брокер, биржа, кошелёк или наличные. Остаток можно вписать позже.</Hint>
         </div>
-        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200" aria-label="Закрыть">
+        <button onClick={onClose} className="rounded p-1.5 text-slate-400 hover:text-slate-200" aria-label="Закрыть">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -437,7 +437,7 @@ export function BanksView(): React.JSX.Element {
                         setEditing(w)
                         setAdding(false)
                       }}
-                      className="rounded p-1 text-slate-500 hover:text-accent"
+                      className="rounded p-1.5 text-slate-500 hover:text-accent"
                       title="Редактировать"
                       aria-label={`Редактировать кошелёк ${w.label}`}
                     >
@@ -445,7 +445,7 @@ export function BanksView(): React.JSX.Element {
                     </button>
                     <button
                       onClick={() => void remove(w.id)}
-                      className="rounded p-1 text-slate-500 hover:text-rose-400"
+                      className="rounded p-1.5 text-slate-500 hover:text-rose-400"
                       title="Удалить"
                       aria-label={`Удалить кошелёк ${w.label}`}
                     >

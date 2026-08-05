@@ -119,10 +119,10 @@ export function Sidebar(): React.JSX.Element {
           </div>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-sm font-medium text-white">
-              {locked ? 'Хранилище закрыто' : 'Хранилище открыто'}
+              {locked ? 'Закрыто' : 'Открыто'}
             </div>
             <div className="truncate text-[11px] text-slate-400">
-              {locked ? 'секреты недоступны' : 'ключи и пароли доступны'}
+              {locked ? 'секреты недоступны' : 'секреты доступны'}
             </div>
           </div>
           {/* Шестерёнки здесь больше нет: «Настройки» — обычный пункт списка выше, и вторая

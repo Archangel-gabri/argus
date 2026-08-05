@@ -24,11 +24,13 @@ interface BrandMatch {
 // намеренно узкие: лучше не показать знак, чем показать чужой — «Яндекс Плюс» это не облако.
 const MATCHES: BrandMatch[] = [
   // Хостеры и облака
-  // Только облако: «Яндекс Плюс» в подписках и «Яндекс Пэй» в счетах — другие компании внутри
-  // одной, и знак облака на них был бы неправдой. Отдельного знака «Яндекс» в каталоге нет,
-  // поэтому им честнее остаться без логотипа.
+  // Облако — отдельно от остального Яндекса: у него свой знак, и ставить его «Яндекс Плюсу»
+  // было бы неправдой. Общий знак Яндекса теперь в каталоге есть (см. ниже), поэтому соседние
+  // продукты получают ЕГО, а не облачный, — правило узкого написания решает, кто из двух.
   { key: 'yandex-cloud', test: /yandex\s*cloud|яндекс\s*облако|yandexcloud/i },
   { key: 'google-cloud', test: /google cloud|gcp/i },
+  { key: 'aws', test: /\baws\b|amazon\s*web\s*services/i },
+  { key: 'oracle', test: /oracle|оракл/i },
   { key: 'hetzner', test: /hetzner|хетцнер/i },
   { key: 'ovh', test: /\bovh/i },
   { key: 'digitalocean', test: /digital\s?ocean/i },
@@ -61,6 +63,11 @@ const MATCHES: BrandMatch[] = [
   { key: 'boosty', test: /boosty|бусти/i },
   { key: 'steam', test: /steam/i },
   { key: 'vk', test: /\bvk\b|вконтакте/i },
+  { key: 'ozon', test: /\bozon\b|озон/i },
+  { key: 'megafon', test: /megafon|мегафон/i },
+  // Общий Яндекс идёт ПОСЛЕ облака: узкое написание должно побеждать, иначе «Яндекс Облако»
+  // получит корпоративный знак вместо облачного. Порядок здесь проверяется тестом.
+  { key: 'yandex', test: /yandex|яндекс/i },
 
   // ИИ — знаки лежат в assets/providers/marks.ts, ключи те же
   { key: 'anthropic', test: /anthropic|claude/i },
@@ -86,4 +93,28 @@ export function brandOf(...parts: Array<string | null | undefined>): BrandKey | 
   const haystack = parts.filter(Boolean).join(' ')
   if (!haystack.trim()) return null
   return MATCHES.find((m) => m.test.test(haystack))?.key ?? null
+}
+
+/**
+ * Буквы для записи без логотипа.
+ *
+ * Знак есть не у всех: у половины подписок и у российских банков свободного вектора не
+ * существует вовсе. Ставить им одинаковый значок — значит вернуть тот же безликий список, из-за
+ * которого логотипы и понадобились. Две буквы названия различают строки не хуже.
+ *
+ * Общие слова в начале пропускаются: «VPS Германия» и «VPS Финляндия» дали бы одинаковое «VP»,
+ * а это ровно те две строки, которые владельцу и надо различать.
+ */
+const GENERIC = /^(vps|vds|сервер|облако|хостинг|подписка|тариф|счёт|счет|карта|банк|the)$/i
+
+export function initialsOf(name: string): string {
+  const words = (name.match(/[\p{L}\p{N}]+/gu) ?? []).filter((w) => !GENERIC.test(w))
+  const first = words[0]
+  if (!first) return '?'
+  // По первой букве двух слов — только если второе слово тоже имя собственное («Deep Code» →
+  // «DC»). Иначе берём две буквы первого: «Финляндия узел» дало бы «ФУ» — сочетание, которое
+  // в списке читается совсем не как сокращение.
+  const second = words[1]
+  const compound = second && second[0] === second[0].toUpperCase() && second[0] !== second[0].toLowerCase()
+  return (compound ? first[0] + second[0] : first.slice(0, 2)).toUpperCase()
 }

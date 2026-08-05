@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money, pct } from '@/lib/format'
-import { providerHex, providerGlyph } from '@/lib/providers'
+import { providerGlyph } from '@/lib/providers'
 import { providerLogo } from '@/lib/providerLogos'
 import { markFor } from '@/assets/providers/marks'
 import { deviceIllustration } from '@/lib/illustrations'
@@ -108,18 +108,21 @@ export function ProviderBadge({
     )
   }
   if (bundled && !bundledFailed) {
+    // Плашка та же, что у векторного знака, и белой она больше не бывает: цветной логотип на
+    // белом в тёмном окне светился ярче самой карточки и тянул взгляд на хостера вместо
+    // состояния машины. Сами файлы приведены к одной краске заранее — tools/monochrome-logo.mjs
+    // вычитает фон и оставляет силуэт (CSS-фильтром это не делается: у четырёх файлов из пяти
+    // фон непрозрачный, и invert дал бы белый квадрат).
     return (
-      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white ring-1 ring-black/5', box)}>
+      <div className={cn('flex shrink-0 items-center justify-center overflow-hidden bg-white/[0.04]', box)}>
         <img src={bundled} alt={provider} className={cn('object-contain', img)} onError={() => setBundledFailed(true)} draggable={false} />
       </div>
     )
   }
-  const hex = providerHex(provider)
+  // Последний ярус — буквы. Раньше они красились в фирменный цвет хостера, и в сетке парка это
+  // читалось как состояние: янтарная плашка рядом с янтарной кнопкой SSH и красным «Выключен».
   return (
-    <div
-      className={cn('flex shrink-0 items-center justify-center text-[12px] font-bold', box)}
-      style={{ backgroundColor: `${hex}1a`, color: hex, boxShadow: `inset 0 0 0 1px ${hex}33` }}
-    >
+    <div className={cn('flex shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-[12px] font-bold text-slate-400', box)}>
       {providerGlyph(provider)}
     </div>
   )

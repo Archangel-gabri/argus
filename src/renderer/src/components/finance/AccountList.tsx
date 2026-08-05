@@ -7,6 +7,7 @@ import { useAccounts } from '@/store/accounts'
 import type { FinanceAccount, FinanceKind } from '@/types'
 import { bankOf, type BankId } from '../../../../shared/banks'
 import { markFor } from '@/assets/providers/marks'
+import { initialsOf } from '../../../../shared/brands'
 
 const ICON: Record<FinanceKind, typeof Landmark> = {
   bank: Landmark,
@@ -88,7 +89,17 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             ))}
           </svg>
         ) : (
-          <Icon className="h-4 w-4" />
+          // Свободного вектора нет ни у Сбера, ни у Т-Банка, ни у ЮMoney — их знаки либо
+          // двухцветные (в монохроме буква сливается с фоном), либо надписи, из которых в
+          // квадрате 16 пикселей получается полоска. Одинаковая иконка «банк» у каждой строки
+          // не отличает Сбер от Т-Банка вовсе, поэтому вместо неё — буквы учреждения, а сам
+          // вид счёта показывает мелкий значок в углу.
+          <span className="relative flex h-full w-full items-center justify-center">
+            <span className="text-[11px] font-semibold uppercase leading-none text-slate-300">
+              {initialsOf(account.institution || account.name)}
+            </span>
+            <Icon className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-slate-500" />
+          </span>
         )}
       </span>
 
@@ -133,14 +144,14 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             <button
               onClick={() => void save()}
               disabled={busy}
-              className="rounded p-1 text-emerald-400 hover:bg-white/5"
+              className="rounded p-1.5 text-emerald-400 hover:bg-white/5"
               aria-label="Сохранить остаток"
             >
               <Check className="h-3.5 w-3.5" />
             </button>
             <button
               onClick={() => setEditing(false)}
-              className="rounded p-1 text-slate-500 hover:text-slate-300"
+              className="rounded p-1.5 text-slate-500 hover:text-slate-300"
               aria-label="Отменить"
             >
               <X className="h-3.5 w-3.5" />
@@ -212,7 +223,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
         {(account.kind === 'exchange' || account.kind === 'broker') && (
           <button
             onClick={() => setKeys((v) => !v)}
-            className={cn('rounded p-1 hover:text-accent', account.hasCreds ? 'text-emerald-400/80' : 'text-slate-500')}
+            className={cn('rounded p-1.5 hover:text-accent', account.hasCreds ? 'text-emerald-400/80' : 'text-slate-500')}
             aria-label={`Ключи ${account.name}`}
             title={account.hasCreds ? 'Ключи заведены — остаток обновляется сам' : 'Завести ключ только на чтение'}
           >
@@ -224,7 +235,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             setDraft(account.balance == null ? '' : String(account.balance))
             setEditing(true)
           }}
-          className="rounded p-1 text-slate-500 hover:text-accent"
+          className="rounded p-1.5 text-slate-500 hover:text-accent"
           aria-label={`Изменить остаток ${account.name}`}
         >
           <Pencil className="h-3.5 w-3.5" />
@@ -235,7 +246,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             if (window.confirm(`Удалить счёт «${account.name}»? Отменить будет нельзя.`))
               void remove(account.id)
           }}
-          className="rounded p-1 text-slate-500 hover:text-rose-400"
+          className="rounded p-1.5 text-slate-500 hover:text-rose-400"
           aria-label={`Удалить счёт ${account.name}`}
         >
           <Trash2 className="h-3.5 w-3.5" />
