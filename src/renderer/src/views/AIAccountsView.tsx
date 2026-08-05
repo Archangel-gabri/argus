@@ -190,7 +190,7 @@ export function AIAccountsView(): React.JSX.Element {
               monthly.map(([cur, sum], i) => (
                 <span key={cur} className="tabular-nums text-slate-200">
                   {i > 0 && <span className="text-slate-400"> + </span>}
-                  {money(Math.round(sum * 100) / 100, cur)}
+                  {money(sum, cur)}
                 </span>
               ))
             )}
@@ -201,7 +201,7 @@ export function AIAccountsView(): React.JSX.Element {
             {/* Сослагательное наклонение не случайно: «сожжено» читается как списанные деньги,
                 а по подписке это лишь оценка того, во что обошёлся бы тот же объём. */}
             За 30 дней сжёг бы{' '}
-            <span className="tabular-nums text-slate-200">{burned > 0 ? `≈${money(Math.round(burned))}` : '—'}</span>
+            <span className="tabular-nums text-slate-200">{burned > 0 ? `≈${money(burned)}` : '—'}</span>
             <span className="text-slate-400"> по ценам API</span>
           </span>
 

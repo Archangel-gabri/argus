@@ -85,7 +85,10 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
               <div className="mt-0.5 text-[22px] font-semibold leading-none tabular-nums text-white">
                 {/* Знак приблизительности не украшение: сумма считается по каталожным ценам,
                     а у подписки она вообще не является списанными деньгами. */}
-                ≈{money(Math.round(totals.costUsd))}
+                {/* Без внешнего округления: `money` сам убирает копейки от тысячи, а ниже
+                    оставляет — модель, потратившая $0,40, показывалась как «$0» и читалась
+                    как бесплатная. */}
+                ≈{money(totals.costUsd)}
               </div>
             </div>
             <div>
@@ -130,7 +133,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
                   </td>
                   <td className="py-1 text-right tabular-nums text-slate-400">{tokens(m.tokens)}</td>
                   <td className="py-1 text-right tabular-nums text-slate-400">{m.requests}</td>
-                  <td className="py-1 text-right tabular-nums text-slate-200">{money(Math.round(m.costUsd))}</td>
+                  <td className="py-1 text-right tabular-nums text-slate-200">{money(m.costUsd)}</td>
                 </tr>
               ))}
             </tbody>

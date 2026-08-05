@@ -7,8 +7,9 @@ import { CREDIT_WARNING_USD } from '../../../../shared/ai-thresholds'
 import type { AiAccess, AiCheck, AiQuotaSlice, AiUsageBlock, AiUsageDay } from '@/types'
 
 function tokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1000) return `${Math.round(n / 1000)}k`
+  // По-русски: «4.9M» и «20k» в остальном русском интерфейсе читаются как чужие.
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`
+  if (n >= 1000) return `${Math.round(n / 1000)} тыс.`
   return String(n)
 }
 
@@ -16,7 +17,7 @@ function tokens(n: number): string {
 const STALE_MS = 24 * 60 * 60 * 1000
 
 function amount(value: number, unit: string): string {
-  if (unit === '$') return money(Math.round(value * 100) / 100)
+  if (unit === '$') return money(value)
   if (unit === 'токенов') return tokens(value)
   return value.toLocaleString('ru-RU')
 }
@@ -196,7 +197,7 @@ function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
       </div>
       <div className="mt-2 flex items-baseline justify-between gap-2 text-[11px] text-slate-500">
         <span>{low ? 'почти исчерпан' : 'осталось'}</span>
-        <span className="tabular-nums">потрачено {money(Math.round(spent * 100) / 100)}</span>
+        <span className="tabular-nums">потрачено {money(spent)}</span>
       </div>
     </div>
   )

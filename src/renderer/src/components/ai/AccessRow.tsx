@@ -55,7 +55,7 @@ function moneyCell(access: AiAccess, sub: Subscription | undefined, check: AiChe
         {money(sub.amount, sub.currency)}
         <span className="text-slate-400">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
         {sub.period === 'yr' && monthly != null && (
-          <span className="ml-1 text-[10px] text-slate-400">≈{money(Math.round(monthly), sub.currency)}/мес</span>
+          <span className="ml-1 text-[10px] text-slate-400">≈{money(monthly, sub.currency)}/мес</span>
         )}
       </span>
     )
@@ -140,7 +140,7 @@ export function AccessRow({
 
       <span className="flex w-[120px] items-center justify-end gap-2">
         {series.length > 0 && spent > 0 && (
-          <UsageBars data={series} width={100} height={18} title={`Расход за период: ${money(Math.round(spent))}`} />
+          <UsageBars data={series} width={100} height={18} title={`Расход за период: ${money(spent)}`} />
         )}
         <StatusDot tone={state.tone} title={state.title} />
       </span>
