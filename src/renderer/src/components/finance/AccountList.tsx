@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Building2, Check, KeyRound, Landmark, LineChart, LogIn, Pencil, Trash2, Wallet, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
 import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import type { FinanceAccount, FinanceKind } from '@/types'
-import { bankOf } from '../../../../shared/banks'
+import { bankOf, type BankId } from '../../../../shared/banks'
 import { markFor } from '@/assets/providers/marks'
 
 const ICON: Record<FinanceKind, typeof Landmark> = {
@@ -28,6 +28,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const remove = useAccounts((s) => s.remove)
   const setCreds = useAccounts((s) => s.setCreds)
   const bankLogin = useAccounts((s) => s.bankLogin)
+  const bankSessions = useAccounts((s) => s.bankSessions)
   const [editing, setEditing] = useState(false)
   const [keys, setKeys] = useState(false)
   const [draft, setDraft] = useState('')
@@ -183,17 +184,31 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
         )}
       </div>
 
+      {/* Вход в кабинет — единственный способ обновить остаток у российского банка, и прятать
+          его до наведения значит прятать саму возможность: владелец не подозревал, что она есть.
+          Кнопка видна всегда, а её вид говорит, вошли уже или нет. */}
+      {bank && (
+        <button
+          onClick={() => void bankLogin(bank)}
+          className={cn(
+            'mr-1 flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium',
+            bankSessions[bank]
+              ? 'text-emerald-400/80 hover:bg-emerald-500/10'
+              : 'bg-slate-800/60 text-slate-300 hover:bg-slate-700/60'
+          )}
+          aria-label={bankSessions[bank] ? `Обновить остаток ${account.name}` : `Войти в ${account.name}`}
+          title={
+            bankSessions[bank]
+              ? 'Вход в кабинет есть — остаток читается из сессии'
+              : 'Войти в кабинет банка — окно откроется внутри Argus'
+          }
+        >
+          <LogIn className="h-3.5 w-3.5" />
+          {bankSessions[bank] ? 'вход есть' : 'войти'}
+        </button>
+      )}
+
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-        {bank && (
-          <button
-            onClick={() => void bankLogin(bank)}
-            className="rounded p-1 text-slate-500 hover:text-accent"
-            aria-label={`Войти в ${account.name}`}
-            title="Войти в кабинет банка — окно откроется внутри Argus"
-          >
-            <LogIn className="h-3.5 w-3.5" />
-          </button>
-        )}
         {(account.kind === 'exchange' || account.kind === 'broker') && (
           <button
             onClick={() => setKeys((v) => !v)}
@@ -319,6 +334,17 @@ export function AccountList({
   now?: number
 }): React.JSX.Element | null {
   const groups = groupByKind(accounts)
+  const checkBankSessions = useAccounts((s) => s.checkBankSessions)
+  // Спрашиваем один раз на состав списка: проверка читает свою же куку и в сеть не ходит,
+  // а знание «вход есть» меняет подпись кнопки у каждой строки банка.
+  const bankIds = accounts
+    .map((a) => (a.source === 'api' ? bankOf(a) : null))
+    .filter((b): b is BankId => Boolean(b))
+  const bankKey = bankIds.join(',')
+  useEffect(() => {
+    if (bankKey) void checkBankSessions(bankKey.split(','))
+  }, [bankKey, checkBankSessions])
+
   if (groups.length === 0) return null
 
   return (

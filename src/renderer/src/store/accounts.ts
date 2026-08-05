@@ -15,6 +15,9 @@ interface AccountsStore {
   setCreds: (id: string, creds: { apiKey: string; secret: string; passphrase?: string }) => Promise<boolean>
   refresh: () => Promise<void>
   bankLogin: (bank: string) => Promise<void>
+  /** Есть ли живой вход в кабинет банка. Ключ — идентификатор банка. */
+  bankSessions: Record<string, boolean>
+  checkBankSessions: (banks: string[]) => Promise<void>
 }
 
 const messageOf = (error: unknown): string =>
@@ -86,12 +89,32 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
     }
   },
 
+  bankSessions: {},
+
   bankLogin: async (bank) => {
     if (!api) return
     try {
       await api.accounts.bankLogin(bank)
+      // После окна входа состояние меняется, и спросить надо СРАЗУ: иначе кнопка ещё долго
+      // предлагает войти туда, где уже вошли.
+      await get().checkBankSessions([bank])
     } catch (error) {
       set({ error: messageOf(error) })
+    }
+  },
+
+  // Проверка дешёвая — читается своя кука, в сеть никто не ходит. Поэтому спрашиваем при
+  // открытии экрана: без этого приложение предлагало «войти в Сбер» тому, кто уже вошёл, и
+  // единственным способом узнать правду было нажать и посмотреть.
+  checkBankSessions: async (banks) => {
+    if (!api || banks.length === 0) return
+    try {
+      const pairs = await Promise.all(
+        banks.map(async (b) => [b, (await api.accounts.bankSession(b)).logged] as const)
+      )
+      set((s) => ({ bankSessions: { ...s.bankSessions, ...Object.fromEntries(pairs) } }))
+    } catch {
+      /* состояние входа неизвестно — кнопка останется в виде «войти», это безопасный исход */
     }
   },
 

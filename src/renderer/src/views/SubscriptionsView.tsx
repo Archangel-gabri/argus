@@ -258,6 +258,18 @@ export function SubscriptionsView(): React.JSX.Element {
     devices.map((d) => ({ id: d.id, name: d.name, provider: d.provider, cost: d.cost })),
     subs
   )
+  // Связать пару: цена остаётся у подписки, сервер перестаёт добавлять её к расходу второй раз.
+  // Одной кнопкой — потому что пар обычно несколько, и чинить их по одной значит согласиться,
+  // что месячный расход какое-то время будет врать.
+  const link = async (d: (typeof duplicates)[number]): Promise<void> => {
+    const stored = subs.find((x) => x.id === d.subscriptionId)
+    if (stored) await updateSub(stored.id, { ...stored, deviceId: d.deviceId })
+  }
+  const linkAll = async (): Promise<void> => {
+    // Последовательно: каждая правка перечитывает список, и параллельные записи затирают друг друга.
+    for (const d of duplicates) await link(d)
+  }
+
   const deviceName = new Map(devices.map((d) => [d.id, d.name]))
   const userRows: Row[] = subs.map((s) => ({
     id: s.id,
@@ -369,9 +381,19 @@ export function SubscriptionsView(): React.JSX.Element {
 
       {duplicates.length > 0 && !adding && !editing && (
         <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-3">
-          <p className="text-xs font-medium text-amber-300">
-            {duplicates.length === 1 ? 'Похоже, одна трата посчитана дважды' : `Похоже, ${duplicates.length} траты посчитаны дважды`}
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-amber-300">
+              {duplicates.length === 1 ? 'Похоже, одна трата посчитана дважды' : `Похоже, ${duplicates.length} траты посчитаны дважды`}
+            </p>
+            {duplicates.length > 1 && (
+              <button
+                onClick={() => void linkAll()}
+                className="rounded-md bg-amber-500/20 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/30"
+              >
+                Связать все ({duplicates.length})
+              </button>
+            )}
+          </div>
           <ul className="mt-2 space-y-1.5">
             {duplicates.map((d) => (
               <li key={d.deviceId} className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
@@ -380,10 +402,7 @@ export function SubscriptionsView(): React.JSX.Element {
                 <span className="text-slate-400">{d.subscriptionName}</span>
                 <span className="text-[11px] text-slate-500">— {d.reason}</span>
                 <button
-                  onClick={() => {
-                    const stored = subs.find((x) => x.id === d.subscriptionId)
-                    if (stored) void updateSub(stored.id, { ...stored, deviceId: d.deviceId })
-                  }}
+                  onClick={() => void link(d)}
                   className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 hover:bg-amber-500/25"
                 >
                   Это одна трата
