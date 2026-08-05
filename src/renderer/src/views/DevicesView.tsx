@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { plural } from '@/lib/format'
 import { useDevices } from '@/store/devices'
 import { useUI } from '@/store/ui'
 import { ServerCard } from '@/components/ServerCard'
@@ -60,7 +61,7 @@ export function DevicesView(): React.JSX.Element {
           <div>
             <h1 className="text-2xl font-semibold text-white">Парк</h1>
             <p className="mt-1 text-sm text-slate-500">
-              {devices.length} устройств · {onlineCount} на связи
+              {devices.length} {plural(devices.length, 'устройство', 'устройства', 'устройств')} · {onlineCount} на связи
             </p>
           </div>
           <div className="flex items-center gap-2">

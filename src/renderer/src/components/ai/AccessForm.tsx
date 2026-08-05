@@ -68,7 +68,7 @@ function Field({
     <label className={span ? 'col-span-2 block' : 'block'}>
       <span className={labelCls}>{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[11px] text-slate-600">{hint}</span>}
+      {hint && <span className="mt-1 block text-[11px] text-slate-400">{hint}</span>}
     </label>
   )
 }
@@ -318,7 +318,7 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
               <button
                 type="button"
                 onClick={() => setAccounts(accounts.filter((_, j) => j !== i))}
-                className="shrink-0 rounded p-2 text-slate-600 hover:bg-rose-500/10 hover:text-rose-400"
+                className="shrink-0 rounded p-2 text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
                 title="Убрать аккаунт"
               >
                 <X className="h-3.5 w-3.5" />
@@ -332,7 +332,7 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
           >
             + аккаунт
           </button>
-          <span className="mt-1 block text-[11px] text-slate-600">
+          <span className="mt-1 block text-[11px] text-slate-400">
             Тариф у каждого свой — так видно, на какой почте лежит платная подписка.
           </span>
         </div>

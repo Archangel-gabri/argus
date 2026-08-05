@@ -32,6 +32,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const [keys, setKeys] = useState(false)
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [invalid, setInvalid] = useState<string | null>(null)
 
   const Icon = ICON[account.kind] ?? Landmark
   // Знак самой компании узнаётся быстрее общей иконки «банк»: в списке из десяти счетов только
@@ -47,11 +48,20 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const save = async (): Promise<void> => {
     const raw = draft.trim().replace(/\s/g, '').replace(',', '.')
     const value = raw === '' ? null : Number(raw)
-    if (value !== null && (!Number.isFinite(value) || value < 0)) return
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      // Раньше здесь стоял голый `return`: ни сообщения, ни подсветки — Enter будто ничего не
+      // делает, и человек не понимает, что не так с введённым.
+      setInvalid(`Не понимаю «${draft.trim()}» — нужно неотрицательное число`)
+      return
+    }
+    setInvalid(null)
     setBusy(true)
     try {
       // Время замера ставит хранилище — и только когда цифра действительно изменилась.
-      if (await update(account.id, { name: account.name, balance: value })) setEditing(false)
+      // Ручная правка снимает признак «обновляется само»: цифру внёс человек, и подписывать
+      // её «по сессии кабинета» было бы неправдой.
+      if (await update(account.id, { name: account.name, balance: value, source: 'manual' }))
+        setEditing(false)
     } finally {
       setBusy(false)
     }
@@ -59,6 +69,11 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
 
   return (
     <>
+    {invalid && (
+      <p role="alert" className="pl-11 text-[11px] text-rose-400">
+        {invalid}
+      </p>
+    )}
     <div className="group flex items-center gap-3 py-2.5 text-sm">
       <span
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400"
@@ -147,7 +162,7 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
             <div
               className={cn(
                 'text-[11px] tabular-nums',
-                age?.level === 'stale' ? 'text-amber-400/80' : 'text-slate-600'
+                age?.level === 'stale' ? 'text-amber-400/80' : 'text-slate-400'
               )}
             >
               {/* Возраст показывается только когда он что-то значит: свежая цифра молчит. */}
@@ -199,7 +214,11 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
           <Pencil className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={() => void remove(account.id)}
+          onClick={() => {
+            // Счёт заводится руками и восстановлению не подлежит — спрашиваем, как и везде.
+            if (window.confirm(`Удалить счёт «${account.name}»? Отменить будет нельзя.`))
+              void remove(account.id)
+          }}
           className="rounded p-1 text-slate-500 hover:text-rose-400"
           aria-label={`Удалить счёт ${account.name}`}
         >
@@ -305,7 +324,7 @@ export function AccountList({
     <div className="space-y-4">
       {groups.map((g) => (
         <section key={g.kind}>
-          <h3 className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
+          <h3 className="mb-1 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400">
             {KIND_LABEL[g.kind]}
           </h3>
           <div className="divide-y divide-border">

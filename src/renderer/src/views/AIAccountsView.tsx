@@ -172,10 +172,10 @@ export function AIAccountsView(): React.JSX.Element {
                 </>
               )}
               {mainWindow.resetsInMs != null && mainWindow.resetsInMs > 0 && (
-                <span className="text-slate-600">сброс {formatResetIn(mainWindow.resetsInMs)}</span>
+                <span className="text-slate-400">сброс {formatResetIn(mainWindow.resetsInMs)}</span>
               )}
               {mainWindow.week != null && (
-                <span className="text-slate-600">
+                <span className="text-slate-400">
                   · неделя <span className="tabular-nums text-slate-400">{Math.round(mainWindow.week * 100)}%</span>
                 </span>
               )}
@@ -189,12 +189,12 @@ export function AIAccountsView(): React.JSX.Element {
             ) : (
               monthly.map(([cur, sum], i) => (
                 <span key={cur} className="tabular-nums text-slate-200">
-                  {i > 0 && <span className="text-slate-600"> + </span>}
+                  {i > 0 && <span className="text-slate-400"> + </span>}
                   {money(Math.round(sum * 100) / 100, cur)}
                 </span>
               ))
             )}
-            <span className="text-slate-600"> в месяц</span>
+            <span className="text-slate-400"> в месяц</span>
           </span>
 
           <span className="text-slate-500">
@@ -202,12 +202,12 @@ export function AIAccountsView(): React.JSX.Element {
                 а по подписке это лишь оценка того, во что обошёлся бы тот же объём. */}
             За 30 дней сжёг бы{' '}
             <span className="tabular-nums text-slate-200">{burned > 0 ? `≈${money(Math.round(burned))}` : '—'}</span>
-            <span className="text-slate-600"> по ценам API</span>
+            <span className="text-slate-400"> по ценам API</span>
           </span>
 
           <span className="text-slate-500">
             <span className="tabular-nums text-slate-200">{loaded ? owned.length : '—'}</span> доступов
-            {available > 0 && <span className="text-slate-600"> · {available} можно взять</span>}
+            {available > 0 && <span className="text-slate-400"> · {available} можно взять</span>}
           </span>
 
         </div>
@@ -240,13 +240,13 @@ export function AIAccountsView(): React.JSX.Element {
             </button>
           ))}
           {attention.length > 4 && (
-            <span className="text-[11px] text-slate-600">и ещё {attention.length - 4}</span>
+            <span className="text-[11px] text-slate-400">и ещё {attention.length - 4}</span>
           )}
         </div>
       )}
 
       {!api && (
-        <p className="border-b border-border bg-surface/60 px-6 py-2 text-[11px] text-slate-600">
+        <p className="border-b border-border bg-surface/60 px-6 py-2 text-[11px] text-slate-400">
           Доступно только в приложении.
         </p>
       )}
@@ -278,20 +278,20 @@ export function AIAccountsView(): React.JSX.Element {
       <div className="flex min-h-0 flex-1">
         <div className="w-[22rem] shrink-0 overflow-y-auto border-r border-border py-2">
           {!loaded || loading ? (
-            <p className="flex items-center justify-center gap-2 py-16 text-[12px] text-slate-600">
+            <p className="flex items-center justify-center gap-2 py-16 text-[12px] text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin" /> Загружаю доступы…
             </p>
           ) : access.length === 0 ? (
             <button
               onClick={() => setAdding(true)}
-              className="mx-6 my-8 block w-[calc(100%-3rem)] rounded border border-dashed border-border py-14 text-center text-[12px] text-slate-600 transition-colors hover:border-accent/40 hover:text-slate-400"
+              className="mx-6 my-8 block w-[calc(100%-3rem)] rounded border border-dashed border-border py-14 text-center text-[12px] text-slate-400 transition-colors hover:border-accent/40 hover:text-slate-400"
             >
               Доступов нет — добавь первый
             </button>
           ) : (
             groups.map((group) => (
               <section key={group.group} className="mb-1">
-                <h2 className="flex items-baseline justify-between gap-2 px-6 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-600">
+                <h2 className="flex items-baseline justify-between gap-2 px-6 pb-1 pt-3 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400">
                   <span>{MONEY_GROUP_LABEL[group.group]}</span>
                 </h2>
                 {group.items.map((a) => {
@@ -328,7 +328,7 @@ export function AIAccountsView(): React.JSX.Element {
               }}
             />
           ) : (
-            <p className="px-6 py-8 text-[12px] text-slate-600">Выбери доступ слева.</p>
+            <p className="px-6 py-8 text-[12px] text-slate-400">Выбери доступ слева.</p>
           )}
         </aside>
       </div>

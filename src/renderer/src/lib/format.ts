@@ -6,11 +6,26 @@ const SYMBOL: Record<string, string> = {
 // Валюты с символом ПОСЛЕ суммы (5 000 ₽).
 const TRAILING = new Set(['RUB', 'PLN', 'UAH', 'KZT', 'SEK', 'NOK', 'CHF'])
 
-/** Format money with a leading symbol ($1,234) or trailing (5 000 ₽). */
+/**
+ * Деньги: символ спереди ($1 234) или сзади (5 000 ₽).
+ *
+ * Знаков после запятой либо два, либо ноль — и решает это ВЕЛИЧИНА, а не то, целое ли число.
+ * Прежнее правило («целое — ноль знаков, иначе два») давало на одном экране «$481.52» рядом с
+ * «$5,778.2»: у второго один знак, потому что до сотых там ноль, и он молча отбрасывался.
+ * Колонки денег переставали выравниваться по разряду, ради чего в них и стоит `tabular-nums`.
+ *
+ * От тысячи копейки не нужны — они добавляют шум и ломают ширину колонки, а ниже тысячи, наоборот,
+ * важны: подписка за 4,50 € и за 4 € — разные подписки.
+ *
+ * Разделитель разрядов — узкий неразрывный пробел, как принято в русской типографике; запятая
+ * между тысячами («125,000 ₽») в рублях читается как дробная часть.
+ */
 export function money(amount: number, currency = 'USD'): string {
   const sym = SYMBOL[currency] ?? ''
-  const n = new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: Number.isInteger(amount) ? 0 : 2
+  const digits = Math.abs(amount) >= 1000 ? 0 : 2
+  const n = new Intl.NumberFormat('ru-RU', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
   }).format(amount)
   return TRAILING.has(currency) ? `${n} ${sym}` : `${sym}${n}`
 }
@@ -19,3 +34,18 @@ export function pct(n: number): string {
   return `${Math.round(n)}%`
 }
 
+
+/**
+ * Русское склонение существительного при числе: 1 устройство, 2 устройства, 5 устройств.
+ *
+ * Нужно везде, где число подставляется в текст: «1 устройств» в шапке главного экрана читается
+ * как недоделанность, даже если всё остальное безупречно.
+ */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(n) % 100
+  const last = abs % 10
+  if (abs > 10 && abs < 20) return many
+  if (last > 1 && last < 5) return few
+  if (last === 1) return one
+  return many
+}

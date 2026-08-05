@@ -53,7 +53,7 @@ export function blocksFor(access: AiAccess): Block[] {
 function HeadFact({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-[0.12em] text-slate-600">{label}</div>
+      <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">{label}</div>
       <div className="mt-0.5 truncate text-[12px] text-slate-300">{children}</div>
     </div>
   )
@@ -114,7 +114,7 @@ export function AccessDetail({
                   · аккаунт подтверждён
                 </span>
               ) : (
-                <span className="text-slate-600" title="Ни входа, ни ответа ключа">
+                <span className="text-slate-400" title="Ни входа, ни ответа ключа">
                   · не подтверждён
                 </span>
               )}
@@ -124,14 +124,14 @@ export function AccessDetail({
             <button
               onClick={onEdit}
               title="Изменить"
-              className="rounded p-1.5 text-slate-600 transition-colors hover:bg-white/5 hover:text-slate-200"
+              className="rounded p-1.5 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
             >
               <Pencil className="h-4 w-4" />
             </button>
             <button
               onClick={onDelete}
               title="Удалить"
-              className="rounded p-1.5 text-slate-600 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
+              className="rounded p-1.5 text-slate-400 transition-colors hover:bg-rose-500/10 hover:text-rose-400"
             >
               <Trash2 className="h-4 w-4" />
             </button>
@@ -142,14 +142,14 @@ export function AccessDetail({
           {/* Деньги одной строкой: цена, способ оплаты, продление и окупаемость — это один
               ответ на вопрос «во что обходится», а не четыре равновеликих факта. */}
           <div className="col-span-2 min-w-0 sm:col-span-2">
-            <div className="text-[10px] uppercase tracking-[0.12em] text-slate-600">Оплата</div>
+            <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Оплата</div>
             <div className="mt-0.5 truncate text-[12px] text-slate-300">
               {sub ? (
                 <>
                   {money(sub.amount, sub.currency)}
-                  <span className="text-slate-600">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
-                  <span className="text-slate-600"> · {PAYMENT_LABEL[access.payment]}</span>
-                  {sub.nextRenewal && <span className="text-slate-600"> · продление {sub.nextRenewal}</span>}
+                  <span className="text-slate-400">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
+                  <span className="text-slate-400"> · {PAYMENT_LABEL[access.payment]}</span>
+                  {sub.nextRenewal && <span className="text-slate-400"> · продление {sub.nextRenewal}</span>}
                   {roi != null && (
                     // Ниже единицы подписка не окупается, и красить это победным зелёным —
                     // значит поздравлять с переплатой.
@@ -164,7 +164,7 @@ export function AccessDetail({
               ) : access.payment === 'free' ? (
                 'бесплатно'
               ) : (
-                <span className="text-slate-600">подписка не привязана · {PAYMENT_LABEL[access.payment]}</span>
+                <span className="text-slate-400">подписка не привязана · {PAYMENT_LABEL[access.payment]}</span>
               )}
             </div>
           </div>
@@ -172,7 +172,7 @@ export function AccessDetail({
           {fallback && (
             <HeadFact label="Если умрёт">
               <span className="inline-flex items-center gap-1">
-                <ArrowUpRight className="h-3 w-3 text-slate-600" />
+                <ArrowUpRight className="h-3 w-3 text-slate-400" />
                 {fallback.label}
               </span>
             </HeadFact>
@@ -226,7 +226,7 @@ export function AccessDetail({
         })}
 
         {(access.keyRef || access.notes) && (
-          <section className="space-y-2 border-t border-border/60 pt-4 text-[11px] text-slate-600">
+          <section className="space-y-2 border-t border-border/60 pt-4 text-[11px] text-slate-400">
             {access.keyRef && (
               <p>
                 Ключ хранится: <code className="text-slate-500">{access.keyRef}</code>
@@ -238,7 +238,7 @@ export function AccessDetail({
                 href={access.baseUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-slate-600 hover:text-slate-400"
+                className="inline-flex items-center gap-1 text-slate-400 hover:text-slate-400"
               >
                 <ExternalLink className="h-3 w-3" /> открыть адрес доступа
               </a>

@@ -7,11 +7,13 @@ import { money } from '@/lib/format'
 import { toUsd } from '@/data/subscriptions'
 import { cn } from '@/lib/cn'
 import { KIND_COLOR } from '@/data/finance'
+import { FX_IS_APPROXIMATE } from '../../../shared/fx'
 import { AccountList } from '@/components/finance/AccountList'
 import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import { useWallets } from '@/store/wallets'
-import type { FinanceKind, Wallet, WalletInput } from '@/types'
+import type { Currency, FinanceAccountInput, FinanceKind, Wallet, WalletInput } from '@/types'
+import { CURRENCY_CODES } from '@/types'
 
 const CHAINS = ['ETH', 'BTC', 'TON']
 const inputCls =
@@ -80,6 +82,121 @@ function WalletForm({
   )
 }
 
+
+/**
+ * Форма счёта.
+ *
+ * Появилась не от хорошей жизни: завести счёт из приложения было НЕЛЬЗЯ вовсе — метод в сторе
+ * существовал, но ни одна кнопка его не звала, и счета попадали в хранилище только из локального
+ * файла засева. При этом удалить счёт кнопка позволяла. То есть основной сценарий раздела
+ * («веду свои счета») работал в одну сторону.
+ */
+function AccountForm({
+  onSubmit,
+  onClose,
+  error
+}: {
+  onSubmit: (i: FinanceAccountInput) => Promise<boolean>
+  onClose: () => void
+  error: string | null
+}): React.JSX.Element {
+  const [kind, setKind] = useState<FinanceKind>('bank')
+  const [name, setName] = useState('')
+  const [institution, setInstitution] = useState('')
+  const [currency, setCurrency] = useState<Currency>('RUB')
+  const [balance, setBalance] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [validation, setValidation] = useState<string | null>(null)
+
+  const submit = async (): Promise<void> => {
+    if (busy) return
+    if (!name.trim()) {
+      setValidation('Укажи название счёта')
+      return
+    }
+    // Пробелы-разделители и запятая — обычный ввод остатка («125 000», «1250,50»).
+    const raw = balance.trim().replace(/\s/g, '').replace(',', '.')
+    const value = raw === '' ? null : Number(raw)
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      setValidation(`Не понимаю остаток «${balance.trim()}» — нужно неотрицательное число`)
+      return
+    }
+    setValidation(null)
+    setBusy(true)
+    try {
+      const ok = await onSubmit({
+        kind,
+        name: name.trim(),
+        institution: institution.trim(),
+        currency,
+        balance: value,
+        source: 'manual'
+      })
+      if (ok) onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="mb-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-white">Добавить счёт</h3>
+          <Hint>Банк, брокер, биржа, кошелёк или наличные. Остаток можно вписать позже.</Hint>
+        </div>
+        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200" aria-label="Закрыть">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+        <select className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as FinanceKind)} aria-label="Тип счёта">
+          {(Object.keys(KIND_LABEL) as FinanceKind[]).map((k) => (
+            <option key={k} value={k}>
+              {KIND_LABEL[k]}
+            </option>
+          ))}
+        </select>
+        <input className={inputCls} placeholder="Название" value={name} onChange={(e) => setName(e.target.value)} aria-label="Название счёта" />
+        <input
+          className={inputCls}
+          placeholder="Банк / биржа"
+          value={institution}
+          onChange={(e) => setInstitution(e.target.value)}
+          aria-label="Учреждение"
+        />
+        <select className={inputCls} value={currency} onChange={(e) => setCurrency(e.target.value as Currency)} aria-label="Валюта">
+          {CURRENCY_CODES.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <input
+          className={inputCls}
+          inputMode="decimal"
+          placeholder="Остаток"
+          value={balance}
+          onChange={(e) => setBalance(e.target.value)}
+          aria-label="Остаток"
+        />
+      </div>
+      {(validation || error) && (
+        <p role="alert" className="mt-2 text-xs text-rose-400">
+          {validation || error}
+        </p>
+      )}
+      <button
+        onClick={() => void submit()}
+        disabled={busy || !name.trim()}
+        className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? 'Сохраняю…' : 'Добавить'}
+      </button>
+    </Card>
+  )
+}
+
 export function BanksView(): React.JSX.Element {
   const accounts = useAccounts((s) => s.accounts)
   const accountsLoaded = useAccounts((s) => s.loaded)
@@ -98,6 +215,11 @@ export function BanksView(): React.JSX.Element {
   const refresh = useWallets((s) => s.refresh)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Wallet | null>(null)
+  const [addingAccount, setAddingAccount] = useState(false)
+  const addAccount = useAccounts((s) => s.add)
+  // Стор счетов складывал ошибку в восьми местах, и её не показывал никто: неудачная правка
+  // остатка выглядела как «кнопка не работает».
+  const accountsError = useAccounts((s) => s.error)
 
   useEffect(() => {
     if (!loaded) load()
@@ -109,6 +231,10 @@ export function BanksView(): React.JSX.Element {
   const accountSums = accountTotals(accounts, Date.now())
   const liveUsd = wallets.reduce((s, w) => s + (balances[w.id]?.usd ?? 0), 0)
   const net = liveUsd + accountSums.usd
+  // Итог сводит рубли, евро и доллары по ВШИТОМУ справочному курсу. Без пометки цифра читается
+  // как посчитанные деньги — на соседнем экране подписок то же решение принято явно.
+  const mixedCurrencies =
+    FX_IS_APPROXIMATE && new Set([...accounts.filter((a) => a.balance != null).map((a) => a.currency), ...(liveUsd > 0 ? ['USD'] : [])]).size > 1
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   // Группируем по ТИПУ счёта, а подпись и цвет берём от него же. Раньше ключом группы служила
@@ -148,6 +274,17 @@ export function BanksView(): React.JSX.Element {
             </button>
             <button
               onClick={() => {
+                setAdding(false)
+                setEditing(null)
+                setAddingAccount((v) => !v)
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
+            >
+              <Plus className="h-4 w-4" /> Счёт
+            </button>
+            <button
+              onClick={() => {
+                setAddingAccount(false)
                 setEditing(null)
                 setAdding((v) => !v)
               }}
@@ -162,6 +299,18 @@ export function BanksView(): React.JSX.Element {
           карандаш у B» не перемонтирует компонент: React видит тот же элемент,
           useState сохраняет значения формы A, а «Сохранить» отправляет их с
           идентификатором B — то есть молча подменяет чужую запись. */}
+      {addingAccount && (
+        <AccountForm
+          error={accountsError}
+          onClose={() => setAddingAccount(false)}
+          onSubmit={(input) => addAccount(input)}
+        />
+      )}
+      {accountsError && !addingAccount && (
+        <p role="alert" className="mb-3 text-xs text-rose-400">
+          Счета: {accountsError}
+        </p>
+      )}
       {(adding || editing) && (
         <WalletForm
           key={editing?.id ?? 'new'}
@@ -187,7 +336,7 @@ export function BanksView(): React.JSX.Element {
             описывает не состояние владельца, а ту его часть, которую мы правда знаем. */}
         <StatTile
           label="Известно"
-          value={money(net)}
+          value={mixedCurrencies ? `≈ ${money(net)}` : money(net)}
           hint={`по ${accountSums.known + wallets.length} источникам из ${accounts.length + wallets.length}`}
         />
         <StatTile
@@ -283,7 +432,7 @@ export function BanksView(): React.JSX.Element {
 
         <Card>
           <h2 className="mb-3 text-sm font-semibold text-white">Аллокация</h2>
-          <Donut data={byKind} center={money(net)} sub="net" />
+          <Donut data={byKind} center={mixedCurrencies ? `≈ ${money(net)}` : money(net)} sub="всего" />
         </Card>
       </div>
     </Page>

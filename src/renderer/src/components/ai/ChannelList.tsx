@@ -45,12 +45,12 @@ export function ChannelList({ access }: { access: AiAccess }): React.JSX.Element
               <div className="flex items-center gap-2">
                 <Icon className="h-3.5 w-3.5 shrink-0 text-slate-500" />
                 <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-slate-200">{ch.label}</span>
-                <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-600">
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-400">
                   {KIND_LABEL[ch.kind] ?? ch.kind}
                 </span>
               </div>
 
-              <div className="mt-1.5 space-y-1 text-[11px] text-slate-600">
+              <div className="mt-1.5 space-y-1 text-[11px] text-slate-400">
                 {ch.tool && ch.tool !== ch.label && <div>инструмент: {ch.tool}</div>}
                 {ch.baseUrl && <div className="break-all">{ch.baseUrl}</div>}
                 {ch.hasKey && <div>ключ сохранён{ch.keyRef ? ` · ${ch.keyRef}` : ''}</div>}

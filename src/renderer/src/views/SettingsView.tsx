@@ -69,7 +69,7 @@ function ChangePassword(): React.JSX.Element {
       <input className={inputCls} type="password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="Новый пароль" disabled={!api} />
       <input className={inputCls} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Ещё раз" disabled={!api} />
       <div className="col-span-3 flex items-center justify-between">
-        <span className={msg ? (msg.ok ? 'text-xs text-emerald-400' : 'text-xs text-rose-400') : 'text-[11px] text-slate-600'}>
+        <span className={msg ? (msg.ok ? 'text-xs text-emerald-400' : 'text-xs text-rose-400') : 'text-[11px] text-slate-400'}>
           {msg ? msg.text : api ? 'Перешифрует базу новым ключом.' : 'Только в десктоп-приложении.'}
         </span>
         <button

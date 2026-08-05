@@ -33,6 +33,20 @@
     @apply bg-bg text-slate-300 font-sans antialiased;
   }
 
+  /* Кольцо фокуса — одно на всё приложение.
+   *
+   * Своё кольцо было описано только у полей ввода, поэтому при обходе с клавиатуры кнопки,
+   * строки списков и карточки подсвечивались системным кольцом Chromium — оно чужое этой
+   * палитре, а на карточке парка (role="button") не видно вовсе: пройти по парку можно, а
+   * понять, где стоишь, нельзя.
+   *
+   * `focus-visible`, а не `focus`: иначе кольцо загорается и от клика мышью, из-за чего в
+   * интерфейсе постоянно горит «активный» элемент, которым никто не пользуется. */
+  :where(button, a, [role='button'], [tabindex]:not([tabindex='-1'])):focus-visible {
+    outline: none;
+    @apply ring-2 ring-accent/50 ring-offset-2 ring-offset-bg;
+  }
+
   /* dark, slim scrollbars to match the shell */
   ::-webkit-scrollbar {
     width: 10px;

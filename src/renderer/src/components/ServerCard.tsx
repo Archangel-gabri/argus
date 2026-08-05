@@ -299,7 +299,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
             <ExternalLink className="h-3.5 w-3.5" /> Панель
           </a>
         ) : (
-          <span className="flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-xs text-slate-600 ring-1 ring-border/50">
+          <span className="flex flex-1 items-center justify-center rounded-lg px-3 py-2 text-xs text-slate-400 ring-1 ring-border/50">
             Нет панели
           </span>
         )}

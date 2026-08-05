@@ -526,7 +526,7 @@ function HardwareSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
       {err && !hw ? (
         <p className="py-1 text-center text-xs text-slate-500">{err}</p>
       ) : !hw ? (
-        <p className="py-2 text-center text-xs text-slate-600">{loading ? 'Собираю сводку…' : 'Нет данных.'}</p>
+        <p className="py-2 text-center text-xs text-slate-400">{loading ? 'Собираю сводку…' : 'Нет данных.'}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-2">
@@ -720,7 +720,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             <ExternalLink className="h-3.5 w-3.5" /> {ssh ? 'Панель хостера' : 'Открыть панель'}
           </a>
         ) : (
-          <span className="text-xs text-slate-600">Без панели</span>
+          <span className="text-xs text-slate-400">Без панели</span>
         )}
         {d.cost.amount > 0 && (
           <span className="text-xs font-medium tabular-nums text-slate-300">

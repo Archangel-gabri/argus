@@ -82,7 +82,7 @@ function AccountCard({
           <div className="truncate text-[12px] font-medium text-slate-200" title={account.email}>
             {account.email}
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-slate-600">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-slate-400">
             {account.primary && <span className="text-accent">основной</span>}
             {account.via && <span>вход через {account.via}</span>}
             {account.lastUsedAt && <span>вход {ago(account.lastUsedAt)}</span>}
@@ -107,7 +107,7 @@ function AccountCard({
         <span
           className={cn(
             'inline-flex items-center gap-1 text-[11px]',
-            authorized ? 'text-emerald-400/80' : 'text-slate-600'
+            authorized ? 'text-emerald-400/80' : 'text-slate-400'
           )}
         >
           {authorized ? <ShieldCheck className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />}
@@ -125,7 +125,7 @@ function AccountCard({
             <button
               onClick={() => void onCopy()}
               title="Скопировать пароль"
-              className="rounded p-1 text-slate-600 transition-colors hover:bg-white/5 hover:text-slate-200"
+              className="rounded p-1 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
             >
               {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
             </button>
@@ -138,7 +138,7 @@ function AccountCard({
               }}
               disabled={checking}
               title="Проверить ключ этого аккаунта"
-              className="rounded p-1 text-slate-600 transition-colors hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
+              className="rounded p-1 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200 disabled:opacity-50"
             >
               {checking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             </button>
@@ -149,7 +149,7 @@ function AccountCard({
               target="_blank"
               rel="noreferrer"
               title="Открыть страницу входа"
-              className="rounded p-1 text-slate-600 transition-colors hover:bg-white/5 hover:text-slate-200"
+              className="rounded p-1 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-200"
             >
               <ExternalLink className="h-3.5 w-3.5" />
             </a>
@@ -157,7 +157,7 @@ function AccountCard({
         </span>
       </div>
 
-      {account.note && <p className="mt-2 text-[11px] leading-snug text-slate-600">{account.note}</p>}
+      {account.note && <p className="mt-2 text-[11px] leading-snug text-slate-400">{account.note}</p>}
     </div>
   )
 }
@@ -192,7 +192,7 @@ export function AccountCards({ access }: { access: AiAccess }): React.JSX.Elemen
         <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">
           Аккаунты · {rows.length}
         </span>
-        <span className="text-[11px] text-slate-600">
+        <span className="text-[11px] text-slate-400">
           {confirmed === rows.length ? 'все действующие' : `действующих ${confirmed} из ${rows.length}`}
           {authorized < rows.length && ` · с паролем ${authorized}`}
         </span>

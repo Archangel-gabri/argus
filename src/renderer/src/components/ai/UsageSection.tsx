@@ -14,8 +14,9 @@ const SPANS = [
 ]
 
 function tokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1000) return `${Math.round(n / 1000)}k`
+  // Сокращения по-русски: «4.9M» и «20k» в остальном русском интерфейсе читаются как чужие.
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)} млн`
+  if (n >= 1000) return `${Math.round(n / 1000)} тыс.`
   return String(n)
 }
 
@@ -78,7 +79,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex gap-8">
             <div>
-              <div className="text-[11px] text-slate-600">
+              <div className="text-[11px] text-slate-400">
                 {access.kind === 'subscription' ? 'Эквивалент по ценам API' : 'Потрачено'}
               </div>
               <div className="mt-0.5 text-[22px] font-semibold leading-none tabular-nums text-white">
@@ -88,13 +89,13 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
               </div>
             </div>
             <div>
-              <div className="text-[11px] text-slate-600">Токенов</div>
+              <div className="text-[11px] text-slate-400">Токенов</div>
               <div className="mt-0.5 text-[22px] font-semibold leading-none tabular-nums text-white">
                 {tokens(totalTokens(totals.usage))}
               </div>
             </div>
             <div>
-              <div className="text-[11px] text-slate-600">Запросов</div>
+              <div className="text-[11px] text-slate-400">Запросов</div>
               <div className="mt-0.5 text-[22px] font-semibold leading-none tabular-nums text-white">
                 {totals.requests}
               </div>
@@ -112,7 +113,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
 
         {models.length > 0 && (
           <table className="mt-4 w-full text-left text-[11px]">
-            <thead className="text-slate-600">
+            <thead className="text-slate-400">
               <tr>
                 <th className="py-1 font-normal">Модель</th>
                 <th className="py-1 text-right font-normal">Токенов</th>
@@ -128,7 +129,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
                     {unpriced.includes(m.model) && <span className="ml-1.5 text-[10px] text-amber-500">цены нет</span>}
                   </td>
                   <td className="py-1 text-right tabular-nums text-slate-400">{tokens(m.tokens)}</td>
-                  <td className="py-1 text-right tabular-nums text-slate-600">{m.requests}</td>
+                  <td className="py-1 text-right tabular-nums text-slate-400">{m.requests}</td>
                   <td className="py-1 text-right tabular-nums text-slate-200">{money(Math.round(m.costUsd))}</td>
                 </tr>
               ))}
@@ -137,7 +138,7 @@ export function UsageSection({ access, source }: { access: AiAccess; source: str
         )}
 
         {totals.requests === 0 && (
-          <p className="mt-3 text-[12px] text-slate-600">За выбранный период запросов не было.</p>
+          <p className="mt-3 text-[12px] text-slate-400">За выбранный период запросов не было.</p>
         )}
       </div>
     </section>

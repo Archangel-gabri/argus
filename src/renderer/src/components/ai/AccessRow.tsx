@@ -53,9 +53,9 @@ function moneyCell(access: AiAccess, sub: Subscription | undefined, check: AiChe
     return (
       <span className="tabular-nums text-slate-200">
         {money(sub.amount, sub.currency)}
-        <span className="text-slate-600">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
+        <span className="text-slate-400">/{sub.period === 'yr' ? 'год' : 'мес'}</span>
         {sub.period === 'yr' && monthly != null && (
-          <span className="ml-1 text-[10px] text-slate-600">≈{money(Math.round(monthly), sub.currency)}/мес</span>
+          <span className="ml-1 text-[10px] text-slate-400">≈{money(Math.round(monthly), sub.currency)}/мес</span>
         )}
       </span>
     )
@@ -63,11 +63,11 @@ function moneyCell(access: AiAccess, sub: Subscription | undefined, check: AiChe
   if (typeof check?.remaining === 'number')
     return (
       <span className={cn('tabular-nums', check.remaining <= 5 ? 'text-amber-400' : 'text-slate-300')}>
-        {money(check.remaining)} <span className="text-[10px] text-slate-600">остаток</span>
+        {money(check.remaining)} <span className="text-[10px] text-slate-400">остаток</span>
       </span>
     )
-  if (access.payment === 'free') return <span className="text-slate-600">бесплатно</span>
-  if (access.status === 'planned') return <span className="text-slate-600">не оформлен</span>
+  if (access.payment === 'free') return <span className="text-slate-400">бесплатно</span>
+  if (access.status === 'planned') return <span className="text-slate-400">не оформлен</span>
   return null
 }
 
@@ -128,7 +128,7 @@ export function AccessRow({
             </span>
           )}
         </span>
-        <span className="mt-0.5 block truncate text-[11px] text-slate-600">
+        <span className="mt-0.5 block truncate text-[11px] text-slate-400">
           {/* Каналы вместо повтора имени: строка отвечает «чем я на этом аккаунте работаю». */}
           {access.channels.length > 0
             ? access.channels.map((c) => c.label).join(' · ')

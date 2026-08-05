@@ -129,7 +129,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   return (
     <div className="h-full space-y-3 overflow-y-auto pr-1">
       <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-bg/40 px-4 py-7 text-center">
-        <MonitorPlay className="h-9 w-9 text-slate-600" />
+        <MonitorPlay className="h-9 w-9 text-slate-400" />
         <div className="text-sm font-medium text-slate-300">Экран откроется в отдельном окне</div>
       </div>
 
@@ -242,7 +242,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
           </button>
         </div>
         {!pf ? (
-          <p className="py-2 text-center text-xs text-slate-600">{pfLoading ? 'Проверяю ПК…' : '—'}</p>
+          <p className="py-2 text-center text-xs text-slate-400">{pfLoading ? 'Проверяю ПК…' : '—'}</p>
         ) : pf.error ? (
           <p className="py-1 text-center text-xs text-rose-400">{pf.error}</p>
         ) : (

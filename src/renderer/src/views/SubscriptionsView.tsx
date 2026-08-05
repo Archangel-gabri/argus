@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { CalendarClock, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
-import { money } from '@/lib/format'
+import { money, plural } from '@/lib/format'
 import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
@@ -241,15 +241,22 @@ export function SubscriptionsView(): React.JSX.Element {
     .map(([key, value]) => ({ label: catLabel(key), value, color: catColor(key) }))
     .sort((a, b) => b.value - a.value)
 
-  const upcoming = all
+  const dated = all
     .map((x) => ({ ...x, days: daysUntil(x.renews) }))
     .filter((x): x is Row & { days: number } => x.days != null)
-    .sort((a, b) => a.days - b.days)
-    .slice(0, 6)
+  // Просрочка идёт ОТДЕЛЬНО от предстоящего. Раньше всё лежало в одном списке, отсортированном
+  // по возрастанию, и панель «Ближайшие продления» забивалась самыми древними датами: заголовок
+  // обещает будущее, а первой строкой шло «просрочено 216 дн.». Шести старых записей хватало,
+  // чтобы ближайший реальный платёж не показался вовсе.
+  const overdue = dated.filter((x) => x.days < 0).sort((a, b) => a.days - b.days).slice(0, 3)
+  const upcoming = dated.filter((x) => x.days >= 0).sort((a, b) => a.days - b.days).slice(0, 6)
 
   return (
     <Page>
-      <PageHeader title="Подписки" subtitle={`${all.length} активных · в месяц`} />
+      <PageHeader
+        title="Подписки"
+        subtitle={`${all.length} ${plural(all.length, 'активная', 'активные', 'активных')}`}
+      />
 
       <div className="mb-4 flex justify-end">
         <button
@@ -341,7 +348,12 @@ export function SubscriptionsView(): React.JSX.Element {
                   </span>
                   <SourceBadge kind={x.source} />
                   {stored?.manualRenewal && (
-                    <span className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline">вручную</span>
+                    <span
+                      className="hidden rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-400 lg:inline"
+                      title="Автосписания нет — продление надо оплатить самому"
+                    >
+                      продлять руками
+                    </span>
                   )}
                   {/* Ноль в денежной колонке читается как «бесплатно», а у подписки, купленной на
                       стороне, цена бывает просто не внесена. Это разные вещи, и путать их нельзя:
@@ -431,15 +443,25 @@ export function SubscriptionsView(): React.JSX.Element {
               <CalendarClock className="h-4 w-4 text-accent" /> Ближайшие продления
             </h2>
             <ul className="space-y-2">
+              {/* Просроченное — красным и сверху: это уже случилось, а не «скоро». Тем же цветом,
+                  что и в списке слева: один факт не должен выглядеть двумя разными. */}
+              {overdue.map((x) => (
+                <li key={x.id} className="flex items-center justify-between text-xs">
+                  <span className="truncate text-slate-300">{x.name}</span>
+                  <span className="tabular-nums text-rose-400">{renewalLabel(x.days)}</span>
+                </li>
+              ))}
               {upcoming.map((x) => (
                 <li key={x.id} className="flex items-center justify-between text-xs">
                   <span className="truncate text-slate-300">{x.name}</span>
-                  <span className={cn('tabular-nums', x.days <= 14 ? 'text-amber-400' : 'text-slate-500')}>
+                  <span className={cn('tabular-nums', x.days <= 14 ? 'text-amber-400' : 'text-slate-400')}>
                     {renewalLabel(x.days)}
                   </span>
                 </li>
               ))}
-              {upcoming.length === 0 && <li className="text-xs text-slate-500">нет дат продления</li>}
+              {overdue.length === 0 && upcoming.length === 0 && (
+                <li className="text-xs text-slate-400">Дат продления пока нет</li>
+              )}
             </ul>
           </Card>
         </div>

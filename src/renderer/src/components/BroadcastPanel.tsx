@@ -128,7 +128,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
                     </button>
                     <button
                       onClick={() => delSnippet(s.id)}
-                      className="text-slate-600 opacity-0 hover:text-rose-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                      className="text-slate-400 opacity-0 hover:text-rose-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                       aria-label={`Удалить сниппет «${s.name}»`}
                     >
                       <Trash2 className="h-3 w-3" />

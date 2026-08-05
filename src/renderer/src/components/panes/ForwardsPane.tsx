@@ -114,7 +114,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
         {portsErr ? (
           <p className="py-2 text-center text-xs text-slate-500">{portsErr}</p>
         ) : ports.length === 0 ? (
-          <p className="py-2 text-center text-xs text-slate-600">{portsLoading ? 'Сканирую…' : 'Портов не найдено.'}</p>
+          <p className="py-2 text-center text-xs text-slate-400">{portsLoading ? 'Сканирую…' : 'Портов не найдено.'}</p>
         ) : (
           <ul className="divide-y divide-border/50">
             {ports.map((p) => {
@@ -157,7 +157,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
       <div className="rounded-lg border border-border bg-surface/40 p-3">
         <div className="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Активные туннели</div>
         {list.length === 0 ? (
-          <p className="py-1 text-center text-xs text-slate-600">Нет активных туннелей.</p>
+          <p className="py-1 text-center text-xs text-slate-400">Нет активных туннелей.</p>
         ) : (
           <ul className="space-y-1">
             {list.map((f) => {
@@ -166,7 +166,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
                 <li key={f.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-white/5">
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
                   <span className="flex-1 truncate font-mono text-xs text-slate-300">
-                    localhost:{f.localPort} <span className="text-slate-600">→</span> {f.remoteHost}:{f.remotePort}
+                    localhost:{f.localPort} <span className="text-slate-400">→</span> {f.remoteHost}:{f.remotePort}
                   </span>
                   {browserUrl && (
                     <a

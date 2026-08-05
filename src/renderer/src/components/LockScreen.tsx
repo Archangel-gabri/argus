@@ -126,7 +126,7 @@ export function LockScreen(): React.JSX.Element {
                   </div>
                   <div className="mt-1 flex items-center justify-between text-[11px]">
                     <span className={STRENGTH[score].text}>{STRENGTH[score].label}</span>
-                    <span className="text-slate-600">
+                    <span className="text-slate-400">
                       взлом ≈ {formatCrackTime(strength.crackTimes.offlineSlowHashingXPerSecond.seconds)}
                     </span>
                   </div>
@@ -169,7 +169,7 @@ export function LockScreen(): React.JSX.Element {
           {setup ? 'Создать' : 'Войти'}
         </button>
 
-        <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-600">
+        <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
           <ShieldCheck className="h-3.5 w-3.5" /> Локально · шифрование SQLCipher
         </div>
         {keyringBackend === 'basic_text' && (

@@ -142,7 +142,7 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
       ) : (
         <div className="mt-3 max-h-[22rem] overflow-y-auto rounded-lg border border-border bg-card/40 px-3">
           <table className="w-full text-left text-[11px]">
-            <thead className="sticky top-0 bg-surface text-slate-600">
+            <thead className="sticky top-0 bg-surface text-slate-400">
               <tr>
                 <th className="py-1 font-normal">Модель</th>
                 <th className="py-1 text-right font-normal">Вход / 1M</th>
@@ -160,7 +160,7 @@ export function ModelsSection({ access }: { access: AiAccess }): React.JSX.Eleme
                   </td>
                   <td className="py-1 text-right tabular-nums text-slate-400">{priceLabel(price?.input ?? null)}</td>
                   <td className="py-1 text-right tabular-nums text-slate-400">{priceLabel(price?.output ?? null)}</td>
-                  <td className="py-1 text-right tabular-nums text-slate-600">
+                  <td className="py-1 text-right tabular-nums text-slate-400">
                     {(() => {
                       const ctx = m.contextTokens ?? price?.contextTokens ?? null
                       return ctx ? `${Math.round(ctx / 1000)}k` : '—'

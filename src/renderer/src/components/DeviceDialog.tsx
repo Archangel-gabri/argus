@@ -657,7 +657,7 @@ export function DeviceDialog(): React.JSX.Element | null {
                         {/* Без обрезки: обрезался ровно путь загрузчика, а он тут единственное,
                             по чему записи вообще можно различить. */}
                         <span className="block break-all">{b.label}</span>
-                        <span className="block break-all font-mono text-[10px] text-slate-600">{b.id}</span>
+                        <span className="block break-all font-mono text-[10px] text-slate-400">{b.id}</span>
                       </button>
                     ))}
                   </div>
