@@ -11,7 +11,6 @@ import { Field } from '@/components/device/Field'
 import { IconPicker } from '@/components/device/IconPicker'
 import { EMPTY, fieldsOf, inputCls, type FormFields } from '@/components/device/form-fields'
 import { useAlive } from '@/components/device/useAlive'
-import { AssistPanel } from '@/components/device/AssistPanel'
 import { GeoLookup } from '@/components/device/GeoLookup'
 import { SshProbe } from '@/components/device/SshProbe'
 import { BootEntries } from '@/components/device/BootEntries'
@@ -93,7 +92,6 @@ function DeviceForm({
   // и после удаления индексы съезжают.
   const [bootTarget, setBootTarget] = useState<BootTarget>('primary')
   // Набран ли текст в блоке ИИ-заполнения — сам текст живёт там же, форме нужен только факт.
-  const [assistDraft, setAssistDraft] = useState(false)
   const keyFileRef = useRef<HTMLInputElement>(null)
   const alive = useAlive()
 
@@ -111,7 +109,7 @@ function DeviceForm({
     }
   }
 
-  const dirty = JSON.stringify(f) !== baseline || assistDraft
+  const dirty = JSON.stringify(f) !== baseline
 
   const set =
     (k: keyof FormFields) =>
@@ -205,7 +203,6 @@ function DeviceForm({
         </div>
 
         <form onSubmit={submit} className="max-h-[70vh] overflow-y-auto px-5 py-4">
-          {api && !editing && <AssistPanel onFill={setF} onDraft={setAssistDraft} />}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Имя" full hint="Как называть в списке.">
               <input ref={nameRef} className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" />

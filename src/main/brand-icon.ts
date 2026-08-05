@@ -64,8 +64,44 @@ export function publicHttpsUrl(raw: string): string | null {
   return url.href
 }
 
+/**
+ * Достать PNG из файла `.ico`.
+ *
+ * У половины сайтов значок объявлен только как `favicon.ico`, и пропускать их значит остаться
+ * без знака там, где он есть. Разбирать сам формат не нужно: начиная с Vista кадр внутри ICO
+ * хранят готовым PNG — берём самый крупный такой кадр. Если внутри старый BMP, отступаем:
+ * распаковывать его ради значка не стоит, буквы названия честнее наполовину собранной картинки.
+ */
+export function pngInsideIco(buf: Buffer): Buffer | null {
+  if (buf.length < 22 || buf.readUInt32LE(0) !== 0x00010000) return null
+  const count = buf.readUInt16LE(4)
+  let best: { size: number; data: Buffer } | null = null
+  for (let i = 0; i < count; i++) {
+    const entry = 6 + i * 16
+    if (entry + 16 > buf.length) break
+    const width = buf[entry] || 256
+    const bytes = buf.readUInt32LE(entry + 8)
+    const offset = buf.readUInt32LE(entry + 12)
+    if (offset + bytes > buf.length) continue
+    const frame = buf.subarray(offset, offset + bytes)
+    if (frame.length < 8 || frame.readUInt32BE(0) !== 0x89504e47) continue
+    if (!best || width > best.size) best = { size: width, data: frame }
+  }
+  return best?.data ?? null
+}
+
+/** Заголовок обычного браузера — иначе часть сайтов отвечает отказом или урезанной страницей. */
+const BROWSER_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+
 /** Куда смотрим, если сайт не сказал сам. Порядок — от крупного к мелкому: 180×180 лучше 16×16. */
-const GUESSES = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/favicon-192.png', '/favicon.png']
+const GUESSES = [
+  '/apple-touch-icon.png',
+  '/apple-touch-icon-precomposed.png',
+  '/favicon-192.png',
+  '/favicon.png',
+  '/favicon.ico'
+]
 
 /**
  * Где значок лежит на самом деле — спрашиваем у страницы.
@@ -83,7 +119,7 @@ export function iconLinksFrom(html: string, pageUrl: string): string[] {
     const href = /href=["']([^"']+)["']/i.exec(tag)?.[1]
     if (!href) continue
     // PNG предпочтителен: SVG нечем растеризовать, ICO — свой формат, до него дело не дошло.
-    if (!/\.png(\?|$)/i.test(href)) continue
+    if (!/\.(png|ico)(\?|$)/i.test(href)) continue
     const size = Number(/sizes=["']?(\d+)/i.exec(tag)?.[1] ?? 0)
     let abs: string
     try {
@@ -131,6 +167,10 @@ function download(url: string, timeoutMs = 6000): Promise<Buffer | null> {
       // Редиректы разбираем сами: без этого сайт отдаёт 302 на `http://127.0.0.1:4822` и все
       // проверки адреса оказываются бесполезны — запрос всё равно уходит на петлю.
       const req = net.request({ method: 'GET', url, redirect: 'manual' })
+      // Обычный браузерный заголовок: часть сайтов отдаёт разметку только «настоящему»
+      // посетителю, а нам нужна ровно та же страница, что видит человек.
+      req.setHeader('user-agent', BROWSER_UA)
+      req.setHeader('accept', '*/*')
       let hops = 0
       req.on('redirect', (_status, _method, redirectUrl) => {
         if (hops++ >= 3 || !publicHttpsUrl(redirectUrl)) {
@@ -204,9 +244,22 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
 
   // Сначала спрашиваем страницу, потом гадаем. Второе почти никогда не срабатывает, но стоит
   // одного запроса и выручает сайты, которые отдают разметку не сразу.
-  const page = await download(`https://${domain}/`, 9000)
+  //
+  // Форм адреса две: голый домен и `www`. Половина сайтов живёт на второй и с первой отвечает
+  // редиректом — и хотя редиректы мы разбираем, проверка показала, что до разметки так доходят
+  // не все (Сбер и Kraken отдавали ссылки на значок только по `www`). Лишний запрос дешевле
+  // молчаливо пустого результата.
+  let page: Buffer | null = null
+  let pageUrl = `https://${domain}/`
+  for (const candidate of [`https://${domain}/`, `https://www.${domain}/`]) {
+    page = await download(candidate, 12000)
+    if (page && /<link/i.test(page.toString('utf8').slice(0, 200_000))) {
+      pageUrl = candidate
+      break
+    }
+  }
   const candidates = [
-    ...(page ? iconLinksFrom(page.toString('utf8').slice(0, 200_000), `https://${domain}/`) : []),
+    ...(page ? iconLinksFrom(page.toString('utf8').slice(0, 200_000), pageUrl) : []),
     ...GUESSES.map((g) => `https://${domain}${g}`)
   ]
 
@@ -214,7 +267,10 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
     const raw = await download(url)
     if (!raw || raw.length < 100) continue
     try {
-      const img = decodePng(raw)
+      // Сайт отдаёт либо PNG, либо ICO — во втором случае внутри чаще всего лежит тот же PNG.
+      const source = raw.readUInt32BE(0) === 0x89504e47 ? raw : pngInsideIco(raw)
+      if (!source) continue
+      const img = decodePng(source)
       const mono = monochrome(img)
       // Пустой или сплошной силуэт значит, что фон определился неверно. Класть такое в список
       // нельзя: серый квадрат на месте логотипа хуже букв, потому что выглядит как знак.
@@ -224,7 +280,7 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
       writeFileSync(file, png)
       return { ok: true, dataUrl: `data:image/png;base64,${png.toString('base64')}` }
     } catch {
-      // Не PNG (часто отдают ICO под именем .png) — пробуем следующий адрес.
+      // Формат не тот (бывает SVG или BMP внутри ICO) — пробуем следующий адрес.
       continue
     }
   }

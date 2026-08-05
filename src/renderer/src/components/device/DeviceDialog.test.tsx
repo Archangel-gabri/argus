@@ -144,15 +144,15 @@ describe('форма устройства — кнопки-помощники', 
   beforeEach(() => vi.resetModules())
   afterEach(() => vi.restoreAllMocks())
 
-  it('ИИ раскладывает вставленный текст по полям и отчитывается, сколько заполнил', async () => {
-    const user = userEvent.setup()
-    const { api } = await mount('new')
-    await user.type(screen.getByLabelText(/Текст для локального заполнения/), 'ssh admin@198.51.100.7 -p 2222')
-    await user.click(screen.getByRole('button', { name: /Заполнить/ }))
-    await waitFor(() => expect(api.assist.parseDevice).toHaveBeenCalledWith('ssh admin@198.51.100.7 -p 2222'))
-    expect(field(/^Имя$/).value).toBe('Osaka')
-    expect(field(/^Порт$/).value).toBe('2222')
-    expect(await screen.findByText(/заполнено полей: 4 · qwen2.5/)).toBeInTheDocument()
+  it('все поля устройства заполняются руками — помощника с ИИ в форме нет', async () => {
+    // Панель «заполнить по тексту» требовала Ollama на localhost:11434, то есть отдельно
+    // установленный сервис. Приложение ставится одним файлом и работает без ИИ — значит и в
+    // форме его быть не должно: у того, кто Ollama не ставил, кнопка просто врала.
+    await mount('new')
+    expect(screen.queryByLabelText(/Текст для локального заполнения/)).toBeNull()
+    expect(field(/^Имя$/)).toBeInTheDocument()
+    expect(field(/^Адрес$/)).toBeInTheDocument()
+    expect(field(/^Порт$/)).toBeInTheDocument()
   })
 
   it('гео по IP заполняет страну, флаг и пустого хостера', async () => {

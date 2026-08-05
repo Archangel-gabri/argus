@@ -276,9 +276,6 @@ export interface ArgusApi {
     read: () => Promise<string>
     write: (text: string) => void
   }
-  assist: {
-    parseDevice: (text: string) => Promise<AssistResult>
-  }
   brand: {
     icon: (domain: string, refetch?: boolean) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
   },

@@ -131,7 +131,8 @@ export function initialsOf(name: string): string {
  */
 const SITES: Array<{ test: RegExp; domain: string }> = [
   { test: /т-?банк|тинькофф|tinkoff|tbank/i, domain: 'tbank.ru' },
-  { test: /сбер|sberbank/i, domain: 'sberbank.ru' },
+  // Не `sberbank.ru`: этот домен не отвечает вовсе (проверено), сайт живёт на `sber.ru`.
+  { test: /сбер|sberbank/i, domain: 'sber.ru' },
   { test: /альфа-?банк|alfabank/i, domain: 'alfabank.ru' },
   { test: /втб\b|vtb/i, domain: 'vtb.ru' },
   { test: /озон\s*банк|ozon\s*bank/i, domain: 'ozon.ru' },

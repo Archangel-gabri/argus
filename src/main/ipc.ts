@@ -34,7 +34,6 @@ import {
   type BankId
 } from './bank-session'
 import { collectUsage } from './ai-usage'
-import { parseDevice as ollamaParseDevice } from './ollama'
 import * as pc from './pc'
 import * as ports from './ports'
 import * as watchdog from './watchdog'
@@ -859,8 +858,6 @@ export function registerIpc(): void {
   })
 
   // Локальный ИИ-ассистент: извлечение полей устройства из текста (Ollama, приватно)
-  ipcMain.handle('assist:parseDevice', (_e, text: unknown) => ollamaParseDevice(asString(text)))
-
   // IP → страна/флаг/хостер (авто-подстановка при добавлении устройства)
   ipcMain.handle('net:ipLookup', (_e, ip: unknown) => ipLookup(asString(ip)))
 
