@@ -18,13 +18,7 @@ const api = {
     pickIcon: () => ipcRenderer.invoke('devices:pickIcon'),
     create: (input: unknown) => ipcRenderer.invoke('devices:create', input),
     update: (id: string, input: unknown) => ipcRenderer.invoke('devices:update', id, input),
-    remove: (id: string, opts?: { force?: boolean }) => ipcRenderer.invoke('devices:delete', id, opts),
-    // Событие фоновой гео-подстановки: main прислал обновлённое устройство (страна/флаг/хостер).
-    onGeo: (cb: (p: { device: unknown }) => void) => {
-      const h = (_e: IpcRendererEvent, p: { device: unknown }): void => cb(p)
-      ipcRenderer.on('devices:geo', h)
-      return () => ipcRenderer.removeListener('devices:geo', h)
-    }
+    remove: (id: string, opts?: { force?: boolean }) => ipcRenderer.invoke('devices:delete', id, opts)
   },
   ssh: {
     open: (deviceId: string, cols: number, rows: number) =>

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -183,5 +184,65 @@ func TestCodecFromSPS(t *testing.T) {
 	}
 	if got := codecFromSPS(nil); got != "" {
 		t.Errorf("пустой кадр: получено %q", got)
+	}
+}
+
+// Заголовки декодера обязаны лежать в ТОМ ЖЕ access unit, что и ключевой кадр.
+//
+// Живой поток идёт так: `[слайсы P-кадра][SPS][PPS][слайсы IDR]` — GStreamer с
+// `config-interval=-1` и `repeat-sequence-header=true` вставляет параметры перед каждым
+// ключевым кадром, а разделитель access unit (NAL 9) ни nvh264enc, ни x264enc по умолчанию не
+// ставят. По спецификации (7.4.1.2.3) SPS/PPS/SEI после последнего VCL-NAL начинают НОВЫЙ
+// access unit — если этого не знать, заголовки достаются предыдущему кадру, а вместе с ними
+// уезжает и признак «ключевой»: P-кадр объявляется ключевым, а настоящий IDR приходит без
+// параметров. Клиент, подключившийся позже или восстанавливающийся после потери, ждёт
+// ключевой кадр, получает P-слайсы без IDR и не настраивает декодер.
+//
+// Прежний тест этого не ловил структурно: он проверял SPS/PPS только у ПЕРВОГО кадра —
+// единственного, который получался верным (перед ним нет VCL-NAL, и граница срабатывала).
+func TestSplitAnnexBKeepsHeadersWithTheirKeyframe(t *testing.T) {
+	nal := func(header byte, payload ...byte) []byte {
+		return append([]byte{0x00, 0x00, 0x00, 0x01, header}, payload...)
+	}
+	// Старший бит первого байта после заголовка = first_mb_in_slice == 0, то есть начало кадра.
+	sps := func() []byte { return nal(0x67, 0x42, 0xc0, 0x1e, 0x8c, 0x8d, 0x40) }
+	pps := func() []byte { return nal(0x68, 0xce, 0x3c, 0x80) }
+	idr := func() []byte { return nal(0x65, 0x88, 0x84, 0x00, 0x21) }
+	inter := func() []byte { return nal(0x41, 0x9a, 0x24, 0x6c, 0x41) }
+
+	var stream []byte
+	// Два ключевых кадра, между ними обычные: второй ключевой и есть предмет проверки.
+	for _, part := range [][]byte{
+		sps(), pps(), idr(), inter(), inter(),
+		sps(), pps(), idr(), inter(), inter(),
+	} {
+		stream = append(stream, part...)
+	}
+
+	var aus []AU
+	if err := splitAnnexB(bytes.NewReader(stream), func(au AU) { aus = append(aus, au) }); err != io.EOF {
+		t.Fatalf("разбор завершился ошибкой %v", err)
+	}
+	if len(aus) != 6 {
+		t.Fatalf("ожидалось 6 access unit'ов, получено %d", len(aus))
+	}
+
+	keys := 0
+	for i, au := range aus {
+		hasIDR := hasNAL(au.Data, 5)
+		if au.IsKey {
+			keys++
+			if !hasIDR {
+				t.Errorf("кадр %d помечен ключевым, но IDR в нём нет — клиент восстановится по мусору", i)
+			}
+			if !hasNAL(au.Data, 7) || !hasNAL(au.Data, 8) {
+				t.Errorf("ключевой кадр %d пришёл без SPS/PPS — декодер не настроится", i)
+			}
+		} else if hasIDR {
+			t.Errorf("кадр %d содержит IDR, но ключевым не помечен", i)
+		}
+	}
+	if keys != 2 {
+		t.Errorf("ключевых кадров должно быть 2, найдено %d", keys)
 	}
 }

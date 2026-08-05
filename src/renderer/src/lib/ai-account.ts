@@ -9,6 +9,7 @@ import {
   KEY_EXPIRY_CRITICAL_DAYS,
   KEY_EXPIRY_WARNING_DAYS
 } from '../../../shared/ai-thresholds'
+import { daysUntilCalendar } from '../../../shared/billing'
 
 export interface AiSummary {
   /** null = ещё нет достаточных данных, строка = подтверждённые / проверенные ключи. */
@@ -310,17 +311,17 @@ export function subscriptionRoi(equivalentUsd: number, monthlyUsd: number | null
 
 // --- Ключи -------------------------------------------------------------------------------------
 
-/** Через сколько дней истекает ключ. null — даты нет или она не разбирается. */
+/**
+ * Через сколько дней истекает ключ. null — даты нет или она не разбирается.
+ *
+ * Считает та же функция, что и у сторожа. Своя реализация здесь расходилась с ней на день в
+ * поясах западнее UTC: `Date.parse('2026-08-20')` даёт UTC-полночь, а `setHours(0,0,0,0)`
+ * откатывает её на предыдущий локальный день. В Нью-Йорке экран показывал 14 дней там, где
+ * сторож видел 15, — ровно на пороге предупреждения. Обе цифры выглядят осмысленно, и именно
+ * поэтому расхождение опасно: уведомление уже горит, а экран ещё говорит «всё в порядке».
+ */
 export function daysUntilExpiry(iso: string | null, now = Date.now()): number | null {
-  if (!iso) return null
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return null
-  const day = 24 * 60 * 60 * 1000
-  const startOfToday = new Date(now)
-  startOfToday.setHours(0, 0, 0, 0)
-  const target = new Date(t)
-  target.setHours(0, 0, 0, 0)
-  return Math.round((target.getTime() - startOfToday.getTime()) / day)
+  return iso ? daysUntilCalendar(iso, now) : null
 }
 
 export interface Attention {

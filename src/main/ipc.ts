@@ -56,7 +56,6 @@ import { resolvePowerAction, describeRejectedAction } from './power-action'
 import { disposeDevice } from './device-disposal'
 import { revokePendingAccess } from './access-epoch'
 
-import { trackedReach } from './reach-memory'
 import { masterPasswordPolicyError } from '../shared/password-strength'
 import { parseSubscriptionInput, parseWalletInput } from './finance-validation'
 
@@ -83,10 +82,20 @@ function state(): VaultState {
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
-/** Сколько раз подряд не удалось опросить устройство. Один промах ещё ничего не значит. */
-
 /** Список моделей у провайдеров меняется небыстро — чаще раза в сутки спрашивать незачем. */
 const MODELS_TTL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Вход в банк состоялся — сразу спросить остаток.
+ *
+ * Иначе владелец, только что вошедший в кабинет, видит в приложении прежнюю цифру и не понимает,
+ * сработало ли: сессия живёт минуты, и потратить их на поиск кнопки «обновить» — обидно.
+ */
+setLoginListener(() => {
+  void refreshExchangeBalances().then((r) => {
+    if (r.updated > 0) announceAiUpdated('accounts-balance')
+  })
+})
 
 /**
  * Что делается сразу после открытия хранилища.
@@ -100,18 +109,6 @@ const MODELS_TTL_MS = 24 * 60 * 60 * 1000
  * браузера, опрос провайдеров) уходит в фон, чтобы не задерживать открытие окна, и по
  * завершении присылает событие — интерфейс перечитывает данные сам.
  */
-/**
- * Вход в банк состоялся — сразу спросить остаток.
- *
- * Иначе владелец, только что вошедший в кабинет, видит в приложении прежнюю цифру и не понимает,
- * сработало ли: сессия живёт минуты, и потратить их на поиск кнопки «обновить» — обидно.
- */
-setLoginListener(() => {
-  void refreshExchangeBalances().then((r) => {
-    if (r.updated > 0) announceAiUpdated('accounts-balance')
-  })
-})
-
 function afterUnlock(): void {
   try {
     seedPricesIfEmpty()
@@ -508,7 +505,10 @@ export function registerIpc(): void {
   ipcMain.on('ssh:attach', (_e, sessionId: unknown) => ssh.attachShell(asString(sessionId)))
   ipcMain.handle('ssh:probe', async (_e, deviceId: unknown) => {
     const id = asString(deviceId)
-    const r = await ssh.probe(id)
+    // Вердикт с поправкой на серию промахов приходит уже из ssh.probe: считать его надо на
+    // РЕАЛЬНЫЙ опрос, а сюда одно и то же наблюдение может прийти дважды — одновременные
+    // запросы склеиваются в один.
+    //
     // Успех — пишем полный снапшот. Провал — пишем ТОЛЬКО статус, без cpu/ram: график истории
     // получает честный пропуск (не ровные 0%), а кэш последнего состояния перестаёт врать.
     // Раньше провалы не писались вовсе, и выключенный сервер после перезагрузки списка
@@ -518,16 +518,12 @@ export function registerIpc(): void {
     // так, что на одном проходе падает одна нода, а через пять секунд она отвечает и падает
     // другая. Отметить такую машину выключенной означает соврать. Первый промах = «не знаю»
     // (снимок не трогаем, старый остаётся), выключенной считаем со второго подряд.
-    // Тот же принцип уже работает у быстрой проверки живости — здесь он просто был не доделан.
-    const status = trackedReach('probe', id, r.ok ? 'online' : 'offline')
-    if (status === 'online') {
-      if (vault.isUnlocked()) vault.recordSnapshot(id, r)
-      return { ...r, status }
+    const r = await ssh.probe(id)
+    if (vault.isUnlocked()) {
+      if (r.status === 'online') vault.recordSnapshot(id, r)
+      else if (r.status === 'offline') vault.recordSnapshot(id, { status: 'offline' })
     }
-    if (status === 'offline') {
-      if (vault.isUnlocked()) vault.recordSnapshot(id, { status: 'offline' })
-    }
-    return { ...r, status }
+    return r
   })
   ipcMain.handle('metrics:history', (_e, deviceId: unknown, limit: unknown) =>
     vault.isUnlocked() ? vault.getSnapshots(asString(deviceId), Number(limit) || 30) : []
@@ -838,15 +834,16 @@ export function registerIpc(): void {
   ipcMain.handle('pc:bootEntries', (_e, id: unknown) => pc.bootEntries(asString(id)))
   ipcMain.handle('pc:metrics', async (_e, id: unknown) => {
     const deviceId = asString(id)
+    // Вердикт считается внутри pc.metrics, на реальный опрос: сюда одно наблюдение приходит
+    // дважды, потому что запросы карточки и определения живой ОС склеиваются в один.
     const r = await pc.metrics(deviceId)
-    const status = trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online')
     // Пишем историю ПК в снапшоты (чтобы вкладка «Метрики» работала как у серверов).
     // Выключенный ПК записываем ТОЖЕ, только статусом: иначе кэш последнего состояния воскрешал
     // его как «online» после перезапуска приложения, а в истории не оставалось провала.
-    if (vault.isUnlocked() && status !== 'unknown') {
+    if (vault.isUnlocked() && r.status && r.status !== 'unknown') {
       vault.recordSnapshot(
         deviceId,
-        status === 'offline'
+        r.status === 'offline'
           ? { status: 'off' }
           : {
               cpu: r.cpu,
@@ -857,7 +854,7 @@ export function registerIpc(): void {
             }
       )
     }
-    return { ...r, status }
+    return r
   })
   ipcMain.handle('pc:boot', (_e, id: unknown, target: unknown) => pc.boot(asString(id), asString(target)))
   ipcMain.handle('pc:power', (_e, id: unknown, action: unknown) => {

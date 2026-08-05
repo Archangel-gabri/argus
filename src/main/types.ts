@@ -299,6 +299,10 @@ export interface LiveMetrics {
   diskW: number // байт/с
   /** false = платформа/счётчик не поддерживает замер; diskR=0 тогда не является измерением. */
   diskIoAvailable?: boolean
+  /** false = счётчик загрузки не ответил; cpu=0 тогда не является измерением. */
+  cpuAvailable?: boolean
+  /** false = счётчики сети не ответили; netRx/netTx=0 тогда не являются измерением. */
+  netAvailable?: boolean
   disk?: number // % корня
   uptime?: number // сек
   tempCpu?: number // °C

@@ -13,6 +13,12 @@ export function describeValue(v: unknown): string {
   if (typeof v === 'string') return v.slice(0, 40)
   if (v === null) return 'null'
   if (typeof v === 'object') return Array.isArray(v) ? 'список' : 'объект'
+  if (typeof v === 'function') return 'функция'
+  if (typeof v === 'symbol') return v.toString().slice(0, 40)
+  // Дошли только число, булево, bigint и undefined — у них String() даёт осмысленный текст,
+  // а не «[object Object]», ради которого и написана вся функция. Правило это сужение через
+  // цепочку typeof не отслеживает и продолжает видеть исходный unknown.
+  // eslint-disable-next-line @typescript-eslint/no-base-to-string
   return String(v).slice(0, 40)
 }
 

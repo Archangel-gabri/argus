@@ -198,6 +198,36 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     vault.deleteDevice(created.id)
   })
 
+  it('подтверждённость аккаунтов переживает цикл блокировки — уборка их не выкашивает', async () => {
+    await vault.unlock(PASSWORD)
+    // Регрессия: parseAccounts терял verified/via/lastUsedAt/loginUrl при чтении, из-за чего
+    // pruneUnverifiedAccounts на следующем анлоке удалял ВСЕ аккаунты и стирал их секреты.
+    const access = vault.createAiAccess({
+      provider: 'openai',
+      accounts: [
+        { email: 'owner@example.com', verified: true, via: 'google', lastUsedAt: 1234, loginUrl: 'https://chat.example' },
+        { email: 'draft@example.com' }
+      ]
+    })
+
+    vault.lock()
+    await vault.unlock(PASSWORD)
+
+    const reread = vault.listAiAccess().find((a) => a.id === access.id)
+    expect(reread?.accounts).toEqual([
+      { email: 'owner@example.com', verified: true, via: 'google', lastUsedAt: 1234, loginUrl: 'https://chat.example' },
+      { email: 'draft@example.com', verified: undefined, via: undefined, lastUsedAt: undefined, loginUrl: undefined }
+    ])
+
+    const { pruneUnverifiedAccounts } = await import('./ai-accounts-prune')
+    const pruned = pruneUnverifiedAccounts()
+    expect(pruned.removed).toBe(1)
+    const after = vault.listAiAccess().find((a) => a.id === access.id)
+    expect(after?.accounts.map((a) => a.email)).toEqual(['owner@example.com'])
+
+    vault.deleteAiAccess(access.id)
+  })
+
   it('смена мастер-пароля перешифровывает базу: старый больше не подходит', async () => {
     await vault.changePassword(PASSWORD, NEXT_PASSWORD)
     vault.lock()

@@ -311,8 +311,9 @@ export async function ensureScreenUnlocked(deviceId: string): Promise<ScreenAcce
   if (!target.locked) return { state: 'already', sessionId: target.id }
 
   // Снятие замка вынесено во ВТОРОЙ вызов намеренно: выбор сеанса — это логика, которую надо
-  // проверять тестами, а не прятать в строку для удалённой оболочки. Соединение SSH к этому
-  // моменту уже установлено и переиспользуется, так что второй вызов стоит недорого.
+  // проверять тестами, а не прятать в строку для удалённой оболочки. Плата известна и принята:
+  // пула соединений в проекте нет, каждый execOnce — это отдельное рукопожатие. Не считать её
+  // бесплатной: остальной код зоны собирает по одной команде на задачу именно поэтому.
   const un = await execOnce(deviceId, unlockCmd(target.id))
   const verdict = interpretUnlockResult(un)
   if (!verdict.ok) {

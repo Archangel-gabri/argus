@@ -6,7 +6,7 @@ import { certPinMatches } from './agent'
 import { startWatchdog, stopWatchdog } from './watchdog'
 import { lockApplication } from './lockdown'
 
-app.whenReady().then(() => {
+void app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.argus.app')
 
   // Strict CSP in production only (dev stays relaxed so Vite HMR works).

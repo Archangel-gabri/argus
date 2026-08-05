@@ -111,6 +111,7 @@ export function sftpList(
         const entries: SftpEntry[] = list
           .map((e) => ({
             name: e.filename,
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- без него тернарник выводится как string
             type: (e.longname.startsWith('d') ? 'd' : e.longname.startsWith('l') ? 'l' : 'f') as SftpEntry['type'],
             size: e.attrs.size,
             mtime: e.attrs.mtime

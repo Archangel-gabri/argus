@@ -19,6 +19,3 @@ export function pct(n: number): string {
   return `${Math.round(n)}%`
 }
 
-export function gb(n: number): string {
-  return `${n % 1 === 0 ? n : n.toFixed(1)} GB`
-}

@@ -244,7 +244,15 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
       {live ? (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <StatCard icon={Cpu} label="CPU" value={`${live.cpu}%`} pct={live.cpu} spark={cpuBuf.current} sparkColor="#f59e0b" />
+            {/* «—» вместо нуля, когда счётчик не ответил: ноль в полосе читается как «простаивает». */}
+            <StatCard
+              icon={Cpu}
+              label="CPU"
+              value={live.cpuAvailable === false ? '—' : `${live.cpu}%`}
+              pct={live.cpuAvailable === false ? undefined : live.cpu}
+              spark={cpuBuf.current}
+              sparkColor="#f59e0b"
+            />
             <StatCard
               icon={MemoryStick}
               label="RAM"
@@ -257,8 +265,8 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
             <StatCard
               icon={ArrowDownUp}
               label="Сеть"
-              value={`↓ ${fmtBps(live.netRx)}`}
-              sub={`↑ ${fmtBps(live.netTx)}`}
+              value={live.netAvailable === false ? '—' : `↓ ${fmtBps(live.netRx)}`}
+              sub={live.netAvailable === false ? 'счётчики не ответили' : `↑ ${fmtBps(live.netTx)}`}
               spark={rxBuf.current}
               sparkColor="#10b981"
             />

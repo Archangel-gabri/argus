@@ -66,7 +66,7 @@ describe('поверхность секретов', () => {
     deviceId = d.id
     vault.setScreenPassword(deviceId, SECRETS.screenPassword)
     vault.setAgentToken(deviceId, SECRETS.agentToken)
-    vault.createAiAccess({ provider: 'openrouter', label: 'тест', apiKey: SECRETS.aiKey } as never)
+    vault.createAiAccess({ provider: 'openrouter', label: 'тест', apiKey: SECRETS.aiKey })
   })
 
   describe('НЕ должно пересекать границу main → renderer', () => {
@@ -93,7 +93,7 @@ describe('поверхность секретов', () => {
     })
 
     it('снимки метрик секретов не содержат', () => {
-      vault.recordSnapshot(deviceId, { cpu: 10, ramUsed: 1, ramTotal: 2, status: 'online' } as never)
+      vault.recordSnapshot(deviceId, { cpu: 10, ramUsed: 1, ramTotal: 2, status: 'online' })
       expect(contains(vault.getSnapshots(deviceId), SECRETS.devicePassword)).toBe(false)
     })
   })

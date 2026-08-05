@@ -3,6 +3,7 @@ import { money } from '@/lib/format'
 import { daysAgoDate, totalsFor } from '@/lib/ai-account'
 import { DEFAULT_WINDOW_HOURS, formatResetIn, mergeBlocks, windowState } from '../../../../shared/ai-blocks'
 import { totalTokens } from '../../../../shared/ai-pricing'
+import { CREDIT_WARNING_USD } from '../../../../shared/ai-thresholds'
 import type { AiAccess, AiCheck, AiQuotaSlice, AiUsageBlock, AiUsageDay } from '@/types'
 
 function tokens(n: number): string {
@@ -175,7 +176,9 @@ function BalanceCard({ check }: { check: AiCheck }): React.JSX.Element {
   const spent = check.usage ?? 0
   const total = remaining + spent
   const left = total > 0 ? remaining / total : 0
-  const low = remaining <= 5
+  // Порог общий со сторожем: пока он стоял здесь числом, жёлтая полоса и уведомление могли
+  // разъехаться, и обе цифры выглядели бы осмысленно.
+  const low = remaining <= CREDIT_WARNING_USD
 
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3.5">

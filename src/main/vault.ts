@@ -445,13 +445,10 @@ function migrate(d: Database.Database): void {
     last_ok_at INTEGER
   )`)
 
-  // Кэш IP-геолокации (страна/флаг/хостер/ASN) — привязан к IP, а не к устройству. Живёт в
-  // зашифрованном vault (IP+инфраструктура приватны). Питает авто-подстановку при добавлении/показе.
-  d.exec(`CREATE TABLE IF NOT EXISTS ip_geo (
-    ip TEXT PRIMARY KEY,
-    json TEXT NOT NULL,
-    checked_at INTEGER NOT NULL
-  )`)
+  // Кэш ip_geo обслуживал авто-гео, снятое по приватности (IP уходит наружу только по явной
+  // кнопке — см. net:ipLookup). Явный путь кэшем не пользуется, поэтому таблица — мёртвые
+  // приватные данные в базе, и её убираем так же, как ai_quota ниже.
+  d.exec('DROP TABLE IF EXISTS ip_geo')
 
   // Кэш сводки комплектующих (железо меняется редко — собираем раз, обновляем по кнопке).
   d.exec(`CREATE TABLE IF NOT EXISTS device_hardware (
@@ -520,7 +517,7 @@ function loadLocalFleet(): DeviceRow[] | null {
       }
     }
     const amount = d.costAmount ?? 0
-    const currency = (d.costCurrency ?? 'USD') as Currency
+    const currency = (d.costCurrency ?? 'USD')
     return {
       id: randomUUID(),
       name: d.name,
@@ -1039,7 +1036,7 @@ export function updateDevice(id: string, input: DeviceInput): DeviceDTO {
   // приходится чаще, чем заводить сервер.
   const cost = input.cost
     ? parseDeviceCost(input.cost)
-    : { amount: cur.cost_amount, currency: cur.cost_currency as Currency }
+    : { amount: cur.cost_amount, currency: cur.cost_currency }
   const authType: AuthType =
     input.authType ?? (input.privateKey ? 'key' : input.password ? 'password' : cur.auth_type)
   // Секреты по ВЫБРАННОМУ методу: пустое поле на правке = оставить текущий секрет ЭТОГО метода,
@@ -1360,6 +1357,10 @@ export function deleteSubscription(id: string): boolean {
   const d = requireDb()
   return d.transaction((entityId: string): boolean => {
     d.prepare('DELETE FROM links WHERE from_id = ? OR to_id = ?').run(entityId, entityId)
+    // AI-запись ссылалась на эту подписку — ссылку обнуляем. Иначе запись продолжает считать
+    // себя оплаченной строкой, которой уже нет: экран ищет её по id и не находит, а сама
+    // связь остаётся невидимой причиной расхождений.
+    d.prepare('UPDATE ai_accounts SET subscription_id = NULL WHERE subscription_id = ?').run(entityId)
     return d.prepare('DELETE FROM subscriptions WHERE id = ?').run(entityId).changes > 0
   })(id)
 }
@@ -1441,61 +1442,6 @@ export function getSnapshots(deviceId: string, limit = 30): MetricSnapshot[] {
   return rows.reverse()
 }
 
-// ── IP-геолокация: кэш + авто-подстановка страны/флага/хостера ────────────────────────
-const GEO_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 дней
-
-/** Гео из кэша, если не старше TTL (иначе null → нужен свежий запрос). */
-export function getIpGeo(ip: string): Record<string, unknown> | null {
-  if (!isUnlocked()) return null
-  const row = requireDb().prepare('SELECT json, checked_at FROM ip_geo WHERE ip = ?').get(ip) as
-    | { json: string; checked_at: number }
-    | undefined
-  if (!row || Date.now() - row.checked_at > GEO_TTL_MS) return null
-  try {
-    return JSON.parse(row.json) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-/** Записать гео IP в кэш (upsert). */
-export function setIpGeo(ip: string, data: Record<string, unknown>): void {
-  if (!isUnlocked()) return
-  requireDb()
-    .prepare(
-      `INSERT INTO ip_geo (ip, json, checked_at) VALUES (?, ?, ?)
-       ON CONFLICT(ip) DO UPDATE SET json=excluded.json, checked_at=excluded.checked_at`
-    )
-    .run(ip, JSON.stringify(data), Date.now())
-}
-
-/** Заполнить ПУСТЫЕ country/flag/provider устройства из гео. Введённое руками не трогаем
- *  (реселлеры: провайдер владельца важнее ASN-владельца). Возвращает обновлённый DTO или null. */
-export function applyGeoToDevice(
-  id: string,
-  geo: { country?: string; flag?: string; provider?: string }
-): DeviceDTO | null {
-  if (!isUnlocked()) return null
-  const d = requireDb()
-  const cur = d.prepare('SELECT * FROM devices WHERE id = ?').get(id) as DeviceRow | undefined
-  if (!cur) return null
-  const hasCountry = Boolean(cur.country?.trim())
-  const hasFlag = Boolean(cur.flag && cur.flag !== '🖥️')
-  const hasProvider = Boolean(cur.provider && !['Custom', 'SSH', ''].includes(cur.provider))
-  const country = hasCountry ? cur.country : geo.country?.trim() || cur.country
-  const flag = hasFlag ? cur.flag : geo.flag || cur.flag
-  const provider = hasProvider ? cur.provider : geo.provider?.trim() || cur.provider
-  if (country === cur.country && flag === cur.flag && provider === cur.provider) return null
-  d.prepare('UPDATE devices SET country=?, flag=?, provider=?, updated_at=? WHERE id=?').run(
-    country,
-    flag,
-    provider,
-    Date.now(),
-    id
-  )
-  return toDTO({ ...cur, country, flag, provider })
-}
-
 /** Кэш сводки железа устройства (или null). */
 export function getDeviceHardware(id: string): { info: Record<string, unknown>; collectedAt: number } | null {
   if (!isUnlocked()) return null
@@ -1564,7 +1510,13 @@ function parseUsedBy(raw: string | null): string[] {
   }
 }
 
-/** Разбор списка аккаунтов. Битый JSON = «списка нет», а не падение экрана. */
+/** Разбор списка аккаунтов. Битый JSON = «списка нет», а не падение экрана.
+ *
+ *  Перечислены ВСЕ сохраняемые поля AiAccountEntry. Когда здесь оставались только четыре
+ *  первых, `verified` терялся при каждом чтении — и уборка неподтверждённых аккаунтов на
+ *  следующем анлоке стирала секреты и удаляла ВСЕ аккаунты, включая заведённые руками.
+ *  (hasPassword/hasKey/checkStatus/checkedAt сюда не входят: они вычисляются из таблицы
+ *  секретов в listAiAccess, а не хранятся в JSON.) */
 function parseAccounts(raw: string | null): AiAccountEntry[] {
   if (!raw) return []
   try {
@@ -1572,7 +1524,16 @@ function parseAccounts(raw: string | null): AiAccountEntry[] {
     if (!Array.isArray(parsed)) return []
     return parsed
       .filter((v): v is AiAccountEntry => Boolean(v) && typeof v === 'object' && typeof (v as AiAccountEntry).email === 'string')
-      .map((v) => ({ email: v.email, plan: v.plan, note: v.note, primary: v.primary }))
+      .map((v) => ({
+        email: v.email,
+        plan: v.plan,
+        note: v.note,
+        primary: v.primary,
+        loginUrl: v.loginUrl,
+        via: v.via,
+        lastUsedAt: v.lastUsedAt,
+        verified: v.verified
+      }))
   } catch {
     return []
   }
@@ -1596,7 +1557,7 @@ function parseLimits(raw: string | null): AiLimits {
   if (!raw) return {}
   try {
     const parsed: unknown = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? (parsed as AiLimits) : {}
+    return parsed && typeof parsed === 'object' ? (parsed) : {}
   } catch {
     return {}
   }
@@ -1743,6 +1704,11 @@ export function deleteAiAccess(id: string): void {
   // (идентификаторы случайные, но чужие строки в базе — всё равно мусор).
   d.prepare('DELETE FROM ai_access_models WHERE access_id = ?').run(id)
   deleteAccountSecrets(id)
+  // Квоты и вердикты проверок тоже принадлежат записи. Оставаясь, они копились под
+  // идентификаторами, которых больше нет: на экран не попадают, но растут и мешают понять,
+  // почему срезов квоты вдвое больше, чем доступов.
+  d.prepare('DELETE FROM ai_quota_slice WHERE access_id = ?').run(id)
+  d.prepare('DELETE FROM ai_key_checks WHERE access_id = ?').run(id)
   // Ссылка «чем заменить» указывала на удалённую запись — обнуляем, иначе интерфейс покажет
   // фолбэк, которого нет.
   d.prepare('UPDATE ai_accounts SET fallback_id = NULL WHERE fallback_id = ?').run(id)
@@ -1978,6 +1944,22 @@ export function setUsageCursor(c: UsageCursor): void {
     .run(c.path, c.size, c.mtime, c.offset, Date.now())
 }
 
+/**
+ * Выполнить несколько записей как одно целое.
+ *
+ * Нужно там, где половина результата хуже, чем ничего. Пример, ради которого это и появилось:
+ * `filterUnseenUsage` не фильтрует, а ПОМЕЧАЕТ ответы учтёнными, и делает это своей
+ * транзакцией. Если запись дневных итогов следом упадёт, идентификаторы останутся
+ * помеченными, курсор не сдвинется — и на следующем проходе те же строки будут отброшены
+ * как дубли. Расход теряется навсегда и молча: счётчик дублей отрапортует, что всё в порядке.
+ *
+ * Вложенные транзакции better-sqlite3 становятся savepoint'ами, поэтому внутрь можно звать
+ * обычные функции этого модуля. Функция обязана быть синхронной.
+ */
+export function atomically<T>(fn: () => T): T {
+  return requireDb().transaction(fn)()
+}
+
 /** Отсеять уже учтённые ответы и запомнить новые. Возвращает те, которых раньше не видели. */
 export function filterUnseenUsage(ids: string[]): Set<string> {
   const d = requireDb()
@@ -2170,7 +2152,7 @@ function financeRow(input: FinanceAccountInput, current?: FinanceAccount): Omit<
   const balance = input.balance === undefined ? (current?.balance ?? null) : input.balance
   if (balance !== null && (!Number.isFinite(balance) || balance < 0))
     throw new Error('Остаток должен быть конечным неотрицательным числом')
-  const currency = (input.currency ?? current?.currency ?? 'RUB') as Currency
+  const currency = (input.currency ?? current?.currency ?? 'RUB')
   if (!(CURRENCY_CODES as readonly string[]).includes(currency)) throw new Error('Валюта не поддерживается')
 
   return {

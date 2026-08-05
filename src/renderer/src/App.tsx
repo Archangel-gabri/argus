@@ -62,6 +62,9 @@ export default function App(): React.JSX.Element {
         error: null
       })
       useSubs.setState({ subs: [], loaded: false, loading: false, error: null })
+      // Счета — это остатки, учреждения и признак «ключи заведены». Их забыли здесь одними, и
+      // после блокировки экран «Финансы» рисовал деньги ПРОШЛОЙ сессии до первого ответа main.
+      useAccounts.setState({ accounts: [], loaded: false, loading: false, error: null })
       useAi.setState({
         access: [],
         checks: {},

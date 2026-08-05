@@ -22,7 +22,12 @@ export const LINUX_PROBE_V2 = ['export LC_ALL=C',
   `echo @@GPU; command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi --query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits 2>/dev/null`,
   // `--sort` есть только у GNU ps; на BSD и macOS сортировка по CPU это `-r`, а `-e` там
   // значит другое. Пробуем GNU-форму, при неудаче — переносимую.
-  `echo @@TOP; ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null | head -9 || ps -axco pcpu,pmem,comm -r 2>/dev/null | head -9`,
+  //
+  // Выбор ветки обязан стоять ВНУТРИ группы, до конвейера: код возврата конвейера — это код
+  // последней команды, то есть `head`, а он успешен всегда. Пока `||` стоял после `| head -9`,
+  // фолбэк не выполнялся никогда, и на хосте без GNU ps секция приходила пустой — интерфейс
+  // читает это как «процессов нет», хотя правда «не смогли спросить».
+  `echo @@TOP; { ps -eo pcpu,pmem,comm --sort=-pcpu 2>/dev/null || ps -axco pcpu,pmem,comm -r 2>/dev/null; } | head -9`,
   `echo @@END`
 ].join('; ')
 

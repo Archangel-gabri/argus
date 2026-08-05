@@ -266,8 +266,8 @@ describe('разбор состояния сеанса не трактует н�
   it('interpretUnlockResult и interpretWindowsLockProbe тотальны', () => {
     fc.assert(
       fc.property(messyOutput, fc.boolean(), (raw, ok) => {
-        expect(() => interpretUnlockResult({ ok, output: raw } as never)).not.toThrow()
-        expect(() => interpretWindowsLockProbe({ ok, output: raw } as never)).not.toThrow()
+        expect(() => interpretUnlockResult({ ok, output: raw })).not.toThrow()
+        expect(() => interpretWindowsLockProbe({ ok, output: raw })).not.toThrow()
       }),
       { numRuns: 300 }
     )

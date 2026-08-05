@@ -31,10 +31,18 @@ const SPAN_DAYS = 30
  */
 function monthlyByCurrency(access: AiAccess[], subs: Subscription[]): Array<[string, number]> {
   const totals = new Map<string, number>()
+  // Считаем по РАЗЛИЧНЫМ подпискам, а не по записям доступа. Один аккаунт ходит несколькими
+  // каналами («Claude Max» и «Claude Code» — одна оплата), и обе записи законно ссылаются на
+  // одну строку подписки: цикл по записям удваивал главную цифру экрана. Ради этого деньги и
+  // вынесены в subscriptions — здесь инвариант нарушался.
+  // Оформленное отделяем от задуманного: у записи со статусом planned подписка ещё не платится.
+  const counted = new Set<string>()
   for (const a of access) {
+    if (a.status === 'planned' || !a.subscriptionId || counted.has(a.subscriptionId)) continue
     const sub = subs.find((s) => s.id === a.subscriptionId)
     const m = monthlyCost(sub)
     if (m == null || !sub) continue
+    counted.add(sub.id)
     totals.set(sub.currency, (totals.get(sub.currency) ?? 0) + m)
   }
   return [...totals.entries()].sort((x, y) => y[1] - x[1])

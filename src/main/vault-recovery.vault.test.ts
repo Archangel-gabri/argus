@@ -45,7 +45,7 @@ describe('восстановление хранилища после сбоя', 
   beforeAll(async () => {
     vault = await import('./vault')
     await vault.initialize(FIRST)
-    vault.createDevice({ name: 'маркер', provider: 'Custom', ip: '203.0.113.1' } as never)
+    vault.createDevice({ name: 'маркер', provider: 'Custom', ip: '203.0.113.1' })
     vault.lock()
     // Эталон исходного состояния: к нему возвращаемся перед каждым сценарием.
     copyFileSync(DB, BACKUP)

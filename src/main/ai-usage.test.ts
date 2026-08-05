@@ -30,6 +30,9 @@ vi.mock('./vault', () => {
   const blocks = new Map<string, Block>()
   return {
     isUnlocked: (): boolean => true,
+    // Настоящая atomically — транзакция SQLite; здесь важно лишь то, что тело выполняется
+    // целиком и его результат возвращается наверх.
+    atomically: <T,>(fn: () => T): T => fn(),
     getUsageCursor: (path: string): Cursor | null => cursors.get(path) ?? null,
     setUsageCursor: (c: Cursor): void => {
       cursors.set(c.path, c)

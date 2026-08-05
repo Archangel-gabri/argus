@@ -14,6 +14,7 @@ import {
   subscriptionRoi,
   totalsFor
 } from './ai-account'
+import { daysUntilCalendar } from '../../../shared/billing'
 import type { AiAccess, AiCheck, AiPrice, AiUsageDay, Subscription } from '@/types'
 
 const access = (id: string, over: Partial<AiAccess> = {}): AiAccess => ({
@@ -187,6 +188,18 @@ describe('срок жизни ключа', () => {
   it('нет даты или мусор вместо неё — не повод тревожить', () => {
     expect(daysUntilExpiry(null, now)).toBeNull()
     expect(daysUntilExpiry('когда-нибудь', now)).toBeNull()
+  })
+
+  it('экран и сторож считают одинаково в любом часовом поясе', () => {
+    // У экрана была своя реализация: `Date.parse('2026-08-20')` даёт UTC-полночь, а
+    // `setHours(0,0,0,0)` западнее Гринвича откатывает её на предыдущий локальный день. В
+    // Нью-Йорке экран показывал 14 дней там, где сторож видел 15 — ровно на пороге
+    // предупреждения. Обе цифры выглядят осмысленно, поэтому расхождение и опасно.
+    const nyMidday = Date.parse('2026-08-05T12:00:00-04:00')
+    expect(daysUntilExpiry('2026-08-20', nyMidday)).toBe(daysUntilCalendar('2026-08-20', nyMidday))
+    // Токио — то же самое с другой стороны от Гринвича.
+    const tokyoMorning = Date.parse('2026-08-05T09:00:00+09:00')
+    expect(daysUntilExpiry('2026-08-20', tokyoMorning)).toBe(daysUntilCalendar('2026-08-20', tokyoMorning))
   })
 
   it('во «внимание» попадают истёкшие, скоро истекающие и не принятые ключи', () => {

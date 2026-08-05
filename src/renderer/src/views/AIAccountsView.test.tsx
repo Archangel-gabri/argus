@@ -159,6 +159,36 @@ describe('экран AI', () => {
     expect(within(header()).getByText(/112.95/)).toBeInTheDocument()
   })
 
+  it('две записи на одну подписку платятся один раз', async () => {
+    // Один аккаунт ходит несколькими каналами: «Claude Max» в браузере и «Claude Code» в
+    // терминале — это одна оплата. Обе записи законно ссылаются на одну строку подписки, а
+    // цикл по записям складывал её дважды: 112,95 превращались в 225,90. Ради этого деньги и
+    // держат только в subscriptions — цифра выглядела бы достоверной и была бы вдвое неверной.
+    await mount({
+      access: [
+        access('Claude Max 5x', { kind: 'subscription', provider: 'anthropic', subscriptionId: 's1' }),
+        access('Claude Code', { kind: 'cli-agent', provider: 'anthropic', subscriptionId: 's1' })
+      ],
+      subs: [sub()]
+    })
+    expect(within(header()).getByText(/112.95/)).toBeInTheDocument()
+    expect(within(header()).queryByText(/225/)).not.toBeInTheDocument()
+  })
+
+  it('задуманный доступ денег не стоит, даже если подписка к нему привязана', async () => {
+    // Статус planned значит «ещё не оформлен». Его подписка в «плачу» попадать не должна:
+    // соседний счётчик доступов такую запись уже отбрасывает, а сумма — нет.
+    await mount({
+      access: [
+        access('Claude Max 5x', { kind: 'subscription', subscriptionId: 's1' }),
+        access('Задумано', { kind: 'subscription', status: 'planned', hasKey: false, subscriptionId: 's2' })
+      ],
+      subs: [sub(), sub({ id: 's2', name: 'Задумано', amount: 500, currency: 'EUR' })]
+    })
+    expect(within(header()).getByText(/112.95/)).toBeInTheDocument()
+    expect(within(header()).queryByText(/612/)).not.toBeInTheDocument()
+  })
+
   it('годовая подписка приводится к месяцу', async () => {
     await mount({
       access: [access('Годовая', { kind: 'subscription', subscriptionId: 's1' })],

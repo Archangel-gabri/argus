@@ -641,7 +641,14 @@ async function uploadFile(
       )
       if (!mv.ok) return { ok: false, error: mv.error || 'не удалось заменить файл агента' }
     } else {
-      const mv = await execOnce(deviceId, `mv -f "${remote}.new" "${remote}" && chmod 755 "${remote}"`)
+      // Путь построен из $HOME чужой машины, и подставлять его в двойных кавычках нельзя:
+      // внутри них живыми остаются `$`, обратный апостроф и обратная косая — команда
+      // исполняется логин-шеллом. Windows-ветка выше и macOS-ветка ниже экранируют такой же
+      // путь осознанно; POSIX оставалась единственной, где готовый shellQuote не применён.
+      const mv = await execOnce(
+        deviceId,
+        `mv -f ${shellQuote(tmp)} ${shellQuote(remote)} && chmod 755 ${shellQuote(remote)}`
+      )
       if (!mv.ok) return { ok: false, error: mv.error || 'не удалось заменить файл агента' }
     }
     return { ok: true }

@@ -16,6 +16,7 @@ export default tseslint.config(
       'node_modules/**',
       'resources/**',
       'assets/**',
+      'coverage/**',
       'test-results/**',
       'playwright-report/**',
       'agent/**'
@@ -26,7 +27,9 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        // *.mjs (сам конфиг, tools/) не входят ни в один tsconfig — без allowDefaultProject
+        // линтер падал на них ошибкой парсинга вместо проверки.
+        projectService: { allowDefaultProject: ['*.mjs', 'tools/*.mjs'] },
         tsconfigRootDir: import.meta.dirname
       },
       globals: { ...globals.node, ...globals.browser }
@@ -53,7 +56,10 @@ export default tseslint.config(
       '@typescript-eslint/no-empty-function': 'off',
       '@typescript-eslint/restrict-template-expressions': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      '@typescript-eslint/require-await': 'off'
+      '@typescript-eslint/require-await': 'off',
+      // Переменная, которую читает собственное замыкание, обязана объявляться до присваивания —
+      // это не «забыли const», а единственный способ сослаться на самого себя.
+      'prefer-const': ['error', { ignoreReadBeforeAssign: true }]
     }
   },
   {
@@ -64,6 +70,14 @@ export default tseslint.config(
       // старых показаниях, — то есть ту же тихую ложь состояния.
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn'
+    }
+  },
+  {
+    // Ambient-декларации: `import … = require(…)` внутри `declare module` — штатный синтаксис TS,
+    // ESM-импортом его не заменить.
+    files: ['**/*.d.ts'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off'
     }
   },
   {

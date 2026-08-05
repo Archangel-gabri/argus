@@ -67,4 +67,3 @@ export const useToasts = create<ToastState>((set) => ({
 /** Короткие обёртки — чтобы вызов на месте читался одной строкой. */
 export const toastError = (text: string, detail?: string): string => useToasts.getState().push('error', text, detail)
 export const toastSuccess = (text: string): string => useToasts.getState().push('success', text)
-export const toastInfo = (text: string): string => useToasts.getState().push('info', text)

@@ -1,8 +1,7 @@
-# Nexus One — local app state, never committed
+# Argus — local app state, never committed
 node_modules/
 out/
 dist/
-dist-electron/
 *.log
 
 # App data lives in Electron userData (encrypted vault), never in repo — guard anyway
@@ -13,8 +12,11 @@ dist-electron/
 *.sqlite3
 
 # Реальный флот владельца (настоящие IP + пути к ключам) — только локально, НЕ в git.
-# Демо-флот с маскированными IP лежит в src/main/seed.ts как fallback.
+# Загружается в vault.ts при первом засеве; без файла хранилище создаётся пустым.
 fleet.local.json
+
+# Счета владельца (банки, брокер, биржи) — тот же файловый засев, что у подписок.
+finance.local.json
 
 # Реестр AI-доступов владельца (почты, тарифы, указатели на ключи) — только локально.
 # Значений ключей в нём нет: он ссылается на имена переменных в secrets/env/api-keys.env.
@@ -35,4 +37,3 @@ playwright-report/
 
 coverage/
 *.tsbuildinfo
-finance.local.json

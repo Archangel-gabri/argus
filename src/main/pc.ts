@@ -7,6 +7,8 @@ import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from '
 import { execOnConn } from './ssh'
 import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
+import { trackedReach } from './reach-memory'
+import type { Reachability } from '../shared/reachability'
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
 import {
@@ -32,7 +34,7 @@ async function resolveFamily(ep: OsEndpoint): Promise<'linux' | 'windows'> {
   const key = `${ep.conn.host}:${ep.conn.port}`
   const hit = famCache.get(key)
   if (hit) return hit
-  const r = await execOnConn(ep.conn, 'uname -s', 8000)
+  const r = await execOnConn(ep.conn, 'uname -s', 8000, 8000)
   const text = `${r.output}\n${r.error ?? ''}`
   // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
   // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
@@ -72,7 +74,7 @@ const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 
 /** Жив ли эндпоинт: echo работает в обоих шеллах (bash и Windows PowerShell). */
 async function isAlive(conn: DeviceConn): Promise<boolean> {
-  const r = await execOnConn(conn, 'echo argus-ok', 8000)
+  const r = await execOnConn(conn, 'echo argus-ok', 8000, 8000)
   return r.ok && r.output.includes('argus-ok')
 }
 
@@ -135,6 +137,8 @@ async function whichOsNow(deviceId: string): Promise<{ current: string; family: 
 export interface PcMetrics {
   current: string
   family: OsFamily
+  /** Вердикт с поправкой на серию промахов. Проставляется в `metrics()`, внутри склейки. */
+  status?: Reachability
   cpu?: number
   ramUsed?: number
   ramTotal?: number
@@ -228,8 +232,9 @@ interface WinRawV2 {
   top?: ProcInfo[]
 }
 
-/** Ответ богатого Windows-зонда → те же поля, что даёт Linux-ветка, включая полный LiveMetrics. */
-function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }) | null {
+/** Ответ богатого Windows-зонда → те же поля, что даёт Linux-ветка, включая полный LiveMetrics.
+ *  Экспортируется ради тестов: живой Windows под рукой не всегда. */
+export function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }) | null {
   const line = out.split('\n').map((l) => l.trim()).find((l) => l.startsWith('{'))
   if (!line) return null
   let o: WinRawV2
@@ -239,6 +244,11 @@ function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }
     return null
   }
   const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  // PowerShell отдаёт $null там, где счётчика не было, — и приводить это к нулю нельзя.
+  // Признак «не измерено» уже был доведён до конца у диска, а у загрузки и сети терялся:
+  // машина с повреждённым реестром производительности показывала «CPU 0%, сеть 0 Б/с» как
+  // факт, и эти нули уезжали в историю метрик.
+  const measured = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v)
   const metrics: LiveMetrics = {
     cpu: n(o.cpu),
     cores: Array.isArray(o.cores) ? o.cores.map(n) : [],
@@ -253,9 +263,9 @@ function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }
     netTx: n(o.netTx),
     diskR: n(o.diskR),
     diskW: n(o.diskW),
-    diskIoAvailable:
-      typeof o.diskR === 'number' && Number.isFinite(o.diskR) &&
-      typeof o.diskW === 'number' && Number.isFinite(o.diskW),
+    diskIoAvailable: measured(o.diskR) && measured(o.diskW),
+    cpuAvailable: measured(o.cpu),
+    netAvailable: measured(o.netRx) && measured(o.netTx),
     disk: o.diskPct ?? undefined,
     uptime: n(o.uptimeSec),
     tempCpu: o.tempCpu ?? undefined,
@@ -264,13 +274,14 @@ function parseWinV2(out: string): (Partial<PcMetrics> & { metrics: LiveMetrics }
     top: Array.isArray(o.top) ? o.top : []
   }
   return {
-    cpu: metrics.cpu,
+    // Наружу неизмеренное уходит как «нет значения»: карточка и история отличают его от нуля.
+    cpu: metrics.cpuAvailable ? metrics.cpu : undefined,
     ramUsed: metrics.ramUsed,
     ramTotal: metrics.ramTotal,
     disk: metrics.disk,
-    uptime: metrics.uptime,
-    netRx: metrics.netRx,
-    netTx: metrics.netTx,
+    uptime: measured(o.uptimeSec) ? metrics.uptime : undefined,
+    netRx: metrics.netAvailable ? metrics.netRx : undefined,
+    netTx: metrics.netAvailable ? metrics.netTx : undefined,
     swapUsed: metrics.swapUsed,
     swapTotal: metrics.swapTotal,
     tempCpu: metrics.tempCpu,
@@ -294,9 +305,18 @@ function parseWinMetrics(out: string): { cpu?: number; ramUsed?: number; ramTota
   }
 }
 
-/** Метрики живой ОС (OS-aware). */
+/**
+ * Метрики живой ОС (OS-aware).
+ *
+ * Серия промахов считается внутри склейки — по той же причине, что и у `ssh.probe`: при
+ * открытой карточке `pc.metrics` спрашивают двое (обновление карточки и определение живой ОС),
+ * их запросы склеиваются в один реальный опрос, и учитывать его нужно тоже один раз.
+ */
 export function metrics(deviceId: string): Promise<PcMetrics> {
-  return singleFlight(`pcMetrics:${deviceId}`, () => metricsNow(deviceId))
+  return singleFlight(`pcMetrics:${deviceId}`, async () => {
+    const r = await metricsNow(deviceId)
+    return { ...r, status: trackedReach('pc', deviceId, r.family === 'off' ? 'offline' : 'online') }
+  })
 }
 
 async function metricsNow(deviceId: string): Promise<PcMetrics> {
@@ -304,14 +324,14 @@ async function metricsNow(deviceId: string): Promise<PcMetrics> {
   if (!ep) return { current: '', family: 'off' }
   const label = ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux')
   if (ep.family === 'windows') {
-    const r = await execOnConn(ep.conn, WIN_METRICS_V2, 15000)
+    const r = await execOnConn(ep.conn, WIN_METRICS_V2, 15000, 30000)
     const rich = r.ok ? parseWinV2(r.output) : null
     if (rich) return { current: label, family: 'windows', ...rich }
     // Фолбэк на старый короткий сборщик: лучше цифры на карточке, чем ничего.
-    const f = await execOnConn(ep.conn, WIN_METRICS, 12000)
+    const f = await execOnConn(ep.conn, WIN_METRICS, 12000, 30000)
     return { current: label, family: 'windows', ...(f.ok ? parseWinMetrics(f.output) : {}) }
   }
-  const r = await execOnConn(ep.conn, UNIVERSAL_PROBE, 15000)
+  const r = await execOnConn(ep.conn, UNIVERSAL_PROBE, 15000, 30000)
   if (!r.ok) return { current: label, family: 'linux' }
   const m = parseAnyProbe(r.output)
   return {
@@ -484,7 +504,9 @@ export async function power(
       error: 'не отвечает ни одна ОС (проверено 3 раза) — устройство выключено или канал недоступен'
     }
   const cmd = CMD[ep.family][action]
-  const r = await execOnConn(ep.conn, cmd, 10000)
+  // Оба таймаута: третий аргумент ограничивает только рукопожатие, и без четвёртого зависшая
+  // команда питания держала бы интерфейс до общего потолка в 90 секунд.
+  const r = await execOnConn(ep.conn, cmd, 10000, 20000)
   const dropped = isDropped(r.error)
 
   // Явный отказ хоста (не разрыв): показать РЕАЛЬНУЮ причину (inhibitor/polkit/нет прав).
@@ -552,7 +574,7 @@ const DIAG_WIN =
 export async function powerDiag(deviceId: string): Promise<PowerDiag> {
   const ep = await liveEndpointRetry(deviceId)
   if (!ep) return { ok: false, os: '', text: 'не отвечает ни одна ОС (проверено 3 раза)' }
-  const r = await execOnConn(ep.conn, ep.family === 'windows' ? DIAG_WIN : DIAG_LINUX, 12000)
+  const r = await execOnConn(ep.conn, ep.family === 'windows' ? DIAG_WIN : DIAG_LINUX, 12000, 30000)
   return { ok: r.ok, os: ep.os, text: (r.output || r.error || 'нет вывода').slice(0, 1500) }
 }
 
@@ -577,11 +599,11 @@ export async function bootEntries(
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { ok: false, os: '', entries: [], error: 'машина не в сети' }
   if (ep.family === 'linux') {
-    const r = await execOnConn(ep.conn, 'efibootmgr -v 2>/dev/null || sudo -n efibootmgr -v 2>/dev/null', 10000)
+    const r = await execOnConn(ep.conn, 'efibootmgr -v 2>/dev/null || sudo -n efibootmgr -v 2>/dev/null', 10000, 20000)
     const result = bootEntryListResult(r.ok, r.output, parseEfibootmgr(r.output), r.error)
     return { ...result, os: ep.os }
   }
-  const r = await execOnConn(ep.conn, BCDEDIT_FIRMWARE_CMD, 15000)
+  const r = await execOnConn(ep.conn, BCDEDIT_FIRMWARE_CMD, 15000, 20000)
   const result = bootEntryListResult(r.ok, r.output, parseBcdedit(r.output), r.error)
   return { ...result, os: ep.os }
 }
@@ -714,7 +736,7 @@ export async function boot(
       `& shutdown.exe /r /t 0`
     cmd = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(ps, 'utf16le').toString('base64')}`
   }
-  const r = await execOnConn(ep.conn, cmd, 10000)
+  const r = await execOnConn(ep.conn, cmd, 10000, 20000)
   if (r.output.includes('ARGUS_BCDEDIT_FAILED'))
     return { ok: false, os: ep.os, output: r.output, error: 'не удалось выставить загрузочную запись — перезагрузка отменена' }
   if (!bootCommandSucceeded(r.ok, r.output, r.error)) {

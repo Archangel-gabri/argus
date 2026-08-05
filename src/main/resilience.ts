@@ -237,8 +237,9 @@ export class CircuitBreaker {
       // и лишать данных все остальные кошельки.
       if (!(error instanceof PermanentHttpError)) {
         this.failures++
-        if (this.failures === this.threshold) this.openedAt = this.now()
-        else if (this.failures > this.threshold) this.openedAt = this.now()
+        // Отсчёт паузы начинается заново с каждым отказом после порога — иначе цепь
+        // размыкалась бы на фиксированное окно от первой неудачи.
+        if (this.failures >= this.threshold) this.openedAt = this.now()
       }
       throw error
     }
@@ -262,14 +263,6 @@ export function resetAllBreakers(): void {
   for (const b of breakers.values()) b.reset()
 }
 
-/** Состояние всех служб — для диагностики и интерфейса. */
-export function breakerStates(): Array<{ service: string; state: BreakerState; failures: number }> {
-  return [...breakers.values()].map((b) => ({
-    service: b.service,
-    state: b.state,
-    failures: b.consecutiveFailures
-  }))
-}
 
 /** Обычная связка: размыкатель снаружи, повторы внутри. */
 export async function resilient<T>(

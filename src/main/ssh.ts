@@ -5,6 +5,7 @@ import { getDeviceConn, getOsEndpoints, checkHostKey, forgetHostKey, type Device
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
+import { trackedReach } from './reach-memory'
 import type { LiveMetrics } from './types'
 import { beginAccess, isAccessCurrent } from './access-epoch'
 import { parseProbeHostOutput } from './ssh-probe'
@@ -74,7 +75,7 @@ export const hasCredential = (c: { password: string | null; privateKey?: string 
 
 /** Жив ли эндпоинт: `echo` работает и в bash, и в Windows PowerShell. */
 async function isConnAlive(conn: DeviceConn): Promise<boolean> {
-  const r = await execOnConn(conn, 'echo argus-ok', 8000)
+  const r = await execOnConn(conn, 'echo argus-ok', 8000, 8000)
   return r.ok && r.output.includes('argus-ok')
 }
 
@@ -367,10 +368,10 @@ export function closeDevice(deviceId: string): number {
 }
 
 function cleanup(id: string): void {
-  const live = sessions.get(id)
-  if (live?.onDestroyed) {
+  const session = sessions.get(id)
+  if (session?.onDestroyed) {
     try {
-      live.wc.removeListener('destroyed', live.onDestroyed)
+      session.wc.removeListener('destroyed', session.onDestroyed)
     } catch {
       /* окно уже уничтожено — снимать нечего */
     }
@@ -378,9 +379,8 @@ function cleanup(id: string): void {
   // Раньше сессия просто выбрасывалась из карты, а само SSH-соединение оставалось жить с
   // keep-alive до конца работы приложения. Каждый `exit` в терминале утекал одним соединением,
   // и закрыть его было уже нечем: по id сессии в карте больше нет.
-  const s = sessions.get(id)
   try {
-    s?.client.end()
+    session?.client.end()
   } catch {
     /* уже закрыт */
   }
@@ -427,46 +427,22 @@ export function liveToProbe(m: LiveMetrics): ProbeResult {
   }
 }
 
-// Agentless, один exec, без агента. CPU% — РЕАЛЬНАЯ утилизация по дельте /proc/stat (два сэмпла с
-// паузой 0.3с), а не load average (прежний load1/cores врал: >100% при I/O-очереди, 0% при коротком
-// всплеске). Далее: loadavg (задел на Stage 2), free -m RAM, df / диск%, /proc/uptime.
-const PROBE_CMD =
-  `awk '/^cpu /{idle=$5+$6;non=$2+$3+$4+$7+$8+$9;print non+idle, idle}' /proc/stat; ` +
-  `sleep 0.3; ` +
-  `awk '/^cpu /{idle=$5+$6;non=$2+$3+$4+$7+$8+$9;print non+idle, idle}' /proc/stat; ` +
-  `cut -d' ' -f1 /proc/loadavg; ` +
-  `free -m | awk '/^Mem:/{print $2, $3}'; ` +
-  `df -P / | awk 'NR==2{gsub(/%/,"",$5);print $5}'; ` +
-  `awk '{print int($1)}' /proc/uptime`
-
-/** Разбор вывода PROBE_CMD в метрики (переиспользуется pc.ts для Linux-эндпоинта).
- *  Строки: 0=«total idle» сэмпл1, 1=«total idle» сэмпл2, 2=load1, 3=«memTotal memUsed», 4=disk%, 5=uptime. */
-export function parseLinuxProbe(out: string): ProbeResult {
-  const lines = out.trim().split('\n')
-  const [t1, i1] = (lines[0] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
-  const [t2, i2] = (lines[1] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
-  const dt = t2 - t1
-  const di = i2 - i1
-  const cpu = dt > 0 ? Math.min(100, Math.max(0, Math.round((100 * (dt - di)) / dt))) : 0
-  const [totalMb, usedMb] = (lines[3] || '').trim().split(/\s+/).map((n) => parseFloat(n) || 0)
-  const disk = parseFloat(lines[4])
-  const uptime = parseInt(lines[5], 10)
-  return {
-    ok: true,
-    status: 'online',
-    cpu,
-    ramTotal: Math.round((totalMb / 1024) * 10) / 10,
-    ramUsed: Math.round((usedMb / 1024) * 10) / 10,
-    disk: Number.isFinite(disk) ? disk : undefined,
-    uptime: Number.isFinite(uptime) ? uptime : undefined
-  }
-}
-
-export const LINUX_PROBE_CMD = PROBE_CMD
-
-// Одновременные опросы одного устройства склеиваются в один — см. single-flight.ts.
+/**
+ * Опросить машину. Одновременные опросы одного устройства склеиваются в один — см. single-flight.ts.
+ *
+ * Серия промахов считается ЗДЕСЬ, внутри склейки, а не у вызывающего. Пока `trackedReach`
+ * стоял в обработчике IPC, склеенный опрос учитывался по разу у КАЖДОГО спрашивающего: при
+ * открытой карточке по устройству независимо работают обновление карточки (раз в 12с) и общий
+ * проход (раз в 30с), их окна регулярно пересекаются — и один-единственный промах давал сразу
+ * два, то есть машина объявлялась выключенной с первой же неудачи. Ровно то, от чего правило
+ * «одна неудача = не знаю» и защищает; ломалось оно молча и охотнее всего на медленном хосте,
+ * потому что долгий опрос пересекается чаще быстрого.
+ */
 export function probe(deviceId: string): Promise<ProbeResult> {
-  return singleFlight(`probe:${deviceId}`, () => probeNow(deviceId))
+  return singleFlight(`probe:${deviceId}`, async () => {
+    const r = await probeNow(deviceId)
+    return { ...r, status: trackedReach('probe', deviceId, r.ok ? 'online' : 'offline') }
+  })
 }
 
 /**
@@ -595,11 +571,12 @@ export function probeHost(opts: {
   return new Promise<ProbeHostResult>((resolve) => {
     const client = new Client()
     let settled = false
-    let deadline: ReturnType<typeof setTimeout> | undefined
+    // Объявлено до `done`, потому что тот его гасит; создаётся ниже, где известен таймаут.
+    let deadline: ReturnType<typeof setTimeout>
     const done = (r: ProbeHostResult): void => {
       if (!settled) {
         settled = true
-        if (deadline) clearTimeout(deadline)
+        clearTimeout(deadline)
         try {
           client.end()
         } catch {
@@ -609,6 +586,7 @@ export function probeHost(opts: {
       }
     }
     deadline = setTimeout(() => done({ ok: false, error: 'SSH-проверка не завершилась за 25 секунд' }), 25000)
+    deadline.unref?.()
     client.on('ready', () => {
       const runProbe = (command: string, fallback?: () => void): void => {
         client.exec(command, (err, stream) => {
@@ -657,10 +635,24 @@ export function probeHost(opts: {
  *
  * Щедрый намеренно: сюда попадают и пользовательские сниппеты, и сбор железа, который на
  * медленной машине идёт десятки секунд. Задача не «уложиться в норматив», а не дать зависшему
- * потоку остановить опрос парка навсегда. Вызывающие, знающие свой бюджет, передают своё
- * значение — питание, например, ждёт всего 10 секунд.
+ * потоку остановить опрос парка навсегда.
+ *
+ * ВНИМАНИЕ: третий аргумент `execOnConn` — это таймаут РУКОПОЖАТИЯ, а не бюджет вызова. Все
+ * вызывающие передают именно его, поэтому потолок выполнения у них остаётся этим. Чтобы
+ * ограничить саму команду, передавать нужно и четвёртый аргумент.
  */
 const EXEC_DEADLINE_MS = 90_000
+
+/**
+ * Потолок на объём вывода одной команды.
+ *
+ * Команду задаёт человек — сниппеты и «выполнить на многих» ходят сюда же, — и без потолка
+ * один `cat` большого журнала или бинарника съедал память main-процесса, а затем то, что
+ * уцелело, ещё и сериализовалось через IPC в интерфейс. У терминала потолок давно есть;
+ * у разовой команды его не было. 8 МБ — заведомо больше любого осмысленного вывода
+ * (самый крупный сборщик инвентаря укладывается в десятки килобайт).
+ */
+const EXEC_OUTPUT_CAP = 8 * 1024 * 1024
 
 /** One-shot exec against an explicit connection bundle (reused by execOnce + pc dual-boot). */
 export function execOnConn(
@@ -709,8 +701,21 @@ export function execOnConn(
           done({ ok: false, output: '', error: err.message })
           return
         }
-        stream.on('data', (d: Buffer) => (out += d.toString()))
-        stream.stderr.on('data', (d: Buffer) => (out += d.toString()))
+        // Обрезаем на потолке и говорим об этом прямо: молча укороченный вывод хуже честно
+        // обрезанного — по нему делают выводы.
+        let truncated = false
+        const collect = (d: Buffer): void => {
+          if (out.length >= EXEC_OUTPUT_CAP) {
+            if (!truncated) {
+              truncated = true
+              out += `\n… вывод обрезан на ${EXEC_OUTPUT_CAP / (1024 * 1024)} МБ`
+            }
+            return
+          }
+          out += d.toString()
+        }
+        stream.on('data', collect)
+        stream.stderr.on('data', collect)
         // Читаем РЕАЛЬНЫЙ код возврата: раньше всегда ok:true, из-за чего упавший
         // `sudo -n systemctl reboot` (нет passwordless sudo, exit 1) рапортовал успех.
         // code===0 → ok. Ненулевой/сигнал → провал с пометкой exit N (без слов

@@ -11,9 +11,16 @@
 import * as vault from './vault'
 import type { AiAccountEntry } from './types'
 
-/** Какие аккаунты записи остаются. Чистая функция — решение видно без хранилища. */
+/**
+ * Какие аккаунты записи остаются. Чистая функция — решение видно без хранилища.
+ *
+ * Сохранённый API-ключ приравнивается к подтверждению. Ключ не берётся из браузера и не
+ * появляется сам: если он лежит в хранилище, его вписал владелец — это ровно то «прямое слово»,
+ * о котором говорит правило. Без этой оговорки уборка, идущая на каждом открытии хранилища,
+ * молча стирала вручную заведённые ключи, восстановить которые неоткуда.
+ */
 export function keepVerified(accounts: AiAccountEntry[]): AiAccountEntry[] {
-  return accounts.filter((a) => a.verified)
+  return accounts.filter((a) => a.verified || a.hasKey)
 }
 
 export interface PruneResult {
@@ -26,8 +33,9 @@ export interface PruneResult {
 /**
  * Убрать неподтверждённые аккаунты из всех записей.
  *
- * Секреты убранных стираются тем же движением: хранить пароль от учётки, которой нет в реестре,
- * незачем, а сам пароль всё равно остаётся в браузере.
+ * Пароль убранного стирается тем же движением: хранить пароль от учётки, которой нет в реестре,
+ * незачем, а сам пароль всё равно остаётся в браузере. Ключ так не стирается никогда — аккаунт
+ * с сохранённым ключом уборка вообще не трогает (см. keepVerified).
  */
 export function pruneUnverifiedAccounts(): PruneResult {
   const result: PruneResult = { removed: 0, touched: 0 }
@@ -38,8 +46,12 @@ export function pruneUnverifiedAccounts(): PruneResult {
     const kept = keepVerified(access.accounts)
     if (kept.length === access.accounts.length) continue
 
-    for (const gone of access.accounts.filter((a) => !a.verified)) {
-      vault.setAccountSecret(access.id, gone.email, { password: '', apiKey: '' })
+    const keptEmails = new Set(kept.map((a) => a.email))
+    for (const gone of access.accounts.filter((a) => !keptEmails.has(a.email))) {
+      // Трогаем хранилище только когда есть что стирать: setAccountSecret — это UPSERT, и на
+      // аккаунте без секретов он СОЗДАВАЛ пустую строку. Уборка идёт на каждом открытии
+      // хранилища, так что этот мусор копился бы бесконечно.
+      if (gone.hasPassword) vault.setAccountSecret(access.id, gone.email, { password: '' })
       result.removed++
     }
     vault.updateAiAccess(access.id, { provider: access.provider, accounts: kept })

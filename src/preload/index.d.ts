@@ -12,8 +12,6 @@ import type {
   AiAccess,
   AiAccessInput,
   AiAccessModel,
-  AiAccountEntry,
-  AiChannel,
   AiCheck,
   AiPrice,
   AiQuotaSlice,
@@ -73,7 +71,6 @@ export interface ArgusApi {
       id: string,
       opts?: { force?: boolean }
     ) => Promise<{ ok: boolean; error?: string; canForce?: boolean }>
-    onGeo: (cb: (p: { device: DeviceDTO }) => void) => () => void
   }
   ssh: {
     open: (deviceId: string, cols: number, rows: number) => Promise<{ ok: boolean; sessionId?: string; error?: string }>

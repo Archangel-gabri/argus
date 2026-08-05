@@ -22,7 +22,7 @@ export function isDuplicateColumnError(e: unknown): boolean {
       : typeof e === 'string'
         ? e
         : e && typeof e === 'object' && 'message' in e
-          ? String((e as { message: unknown }).message)
+          ? String((e).message)
           : ''
   return /duplicate column name/i.test(msg)
 }

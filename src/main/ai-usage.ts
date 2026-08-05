@@ -352,68 +352,88 @@ export async function collectUsage(home = homedir()): Promise<CollectResult> {
       }
 
       if (records.length) {
-        const usable = takeFresh(records, vault.filterUnseenUsage(records.map((r) => r.id)))
-        result.duplicates += records.length - usable.length
-        // Сначала складываем по (день, модель), потом считаем деньги: цена одна на группу.
-        const buckets = new Map<string, { date: string; model: string; usage: TokenUsage; requests: number }>()
-        for (const rec of usable) {
-          const date = localDate(rec.ts || stat.mtimeMs)
-          const key = `${date}|${rec.model}`
-          const b = buckets.get(key) ?? { date, model: rec.model, usage: { ...ZERO_USAGE }, requests: 0 }
-          b.usage = addUsage(b.usage, rec.usage)
-          b.requests++
-          buckets.set(key, b)
-          if (!rateCache.has(rec.model)) rateCache.set(rec.model, vault.findAiPrice(rec.model))
-          const p = rateCache.get(rec.model) ?? null
-          // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
-          // обращения, и по дневным итогам их не восстановить.
-          srcRecords.push({
-            ts: rec.ts || stat.mtimeMs,
-            tokens: totalTokens(rec.usage),
-            costUsd: p
-              ? costOf(rec.usage, {
-                  input: p.input,
-                  output: p.output,
-                  cacheWrite: p.cacheWrite,
-                  cacheWrite1h: p.cacheWrite1h,
-                  cacheRead: p.cacheRead
+        // Пометка «учтено», дневные итоги и курсор кладутся ОДНОЙ транзакцией.
+        //
+        // filterUnseenUsage не фильтрует, а помечает: он вставляет идентификаторы в свою
+        // таблицу и коммитит. Пока итоги писались отдельно и позже, падение между этими шагами
+        // (заперта база, кончился диск) означало, что ответы уже помечены учтёнными, а расход
+        // по ним не записан — и следующий проход выбрасывал их как дубли. Потеря молчаливая:
+        // счётчик дублей при этом честно показывает, что всё в порядке.
+        const applied = vault.atomically(() => {
+          const usable = takeFresh(records, vault.filterUnseenUsage(records.map((r) => r.id)))
+          const pending: BlockInput[] = []
+          // Сначала складываем по (день, модель), потом считаем деньги: цена одна на группу.
+          const buckets = new Map<string, { date: string; model: string; usage: TokenUsage; requests: number }>()
+          for (const rec of usable) {
+            const date = localDate(rec.ts || stat.mtimeMs)
+            const key = `${date}|${rec.model}`
+            const b = buckets.get(key) ?? { date, model: rec.model, usage: { ...ZERO_USAGE }, requests: 0 }
+            b.usage = addUsage(b.usage, rec.usage)
+            b.requests++
+            buckets.set(key, b)
+            if (!rateCache.has(rec.model)) rateCache.set(rec.model, vault.findAiPrice(rec.model))
+            const p = rateCache.get(rec.model) ?? null
+            // Отдельно копятся сами ответы: окна лимита живут не сутками, а часами от первого
+            // обращения, и по дневным итогам их не восстановить. Копятся ЛОКАЛЬНО: при откате
+            // транзакции они не должны осесть в общем списке — окна посчитались бы по расходу,
+            // которого в базе нет.
+            pending.push({
+              ts: rec.ts || stat.mtimeMs,
+              tokens: totalTokens(rec.usage),
+              costUsd: p
+                ? costOf(rec.usage, {
+                    input: p.input,
+                    output: p.output,
+                    cacheWrite: p.cacheWrite,
+                    cacheWrite1h: p.cacheWrite1h,
+                    cacheRead: p.cacheRead
+                  })
+                : 0
+            })
+          }
+
+          const days: AiUsageDay[] = []
+          const missing: string[] = []
+          for (const b of buckets.values()) {
+            if (!rateCache.has(b.model)) rateCache.set(b.model, vault.findAiPrice(b.model))
+            const price = rateCache.get(b.model) ?? null
+            if (!price) missing.push(b.model)
+            const cost = price
+              ? costOf(b.usage, {
+                  input: price.input,
+                  output: price.output,
+                  cacheWrite: price.cacheWrite,
+                  cacheWrite1h: price.cacheWrite1h,
+                  cacheRead: price.cacheRead
                 })
               : 0
-          })
-          result.records++
-        }
+            days.push({
+              date: b.date,
+              source: src.name,
+              model: b.model,
+              input: b.usage.input,
+              output: b.usage.output,
+              cacheWrite: b.usage.cacheWrite,
+              cacheWrite1h: b.usage.cacheWrite1h,
+              cacheRead: b.usage.cacheRead,
+              requests: b.requests,
+              costUsd: cost
+            })
+          }
+          if (days.length) vault.addUsage(days)
+          // Курсор двигается внутри той же транзакции: «прочитано» и «учтено» обязаны
+          // фиксироваться вместе, иначе их снова можно рассогласовать.
+          vault.setUsageCursor({ path, size: stat.size, mtime, offset: from + consumed })
+          return { pending, missing, duplicates: records.length - usable.length }
+        })
 
-        const days: AiUsageDay[] = []
-        for (const b of buckets.values()) {
-          if (!rateCache.has(b.model)) rateCache.set(b.model, vault.findAiPrice(b.model))
-          const price = rateCache.get(b.model) ?? null
-          if (!price) unpriced.add(b.model)
-          const cost = price
-            ? costOf(b.usage, {
-                input: price.input,
-                output: price.output,
-                cacheWrite: price.cacheWrite,
-                cacheWrite1h: price.cacheWrite1h,
-                cacheRead: price.cacheRead
-              })
-            : 0
-          days.push({
-            date: b.date,
-            source: src.name,
-            model: b.model,
-            input: b.usage.input,
-            output: b.usage.output,
-            cacheWrite: b.usage.cacheWrite,
-            cacheWrite1h: b.usage.cacheWrite1h,
-            cacheRead: b.usage.cacheRead,
-            requests: b.requests,
-            costUsd: cost
-          })
-        }
-        if (days.length) vault.addUsage(days)
+        srcRecords.push(...applied.pending)
+        result.records += applied.pending.length
+        result.duplicates += applied.duplicates
+        for (const model of applied.missing) unpriced.add(model)
+      } else {
+        vault.setUsageCursor({ path, size: stat.size, mtime, offset: from + consumed })
       }
-
-      vault.setUsageCursor({ path, size: stat.size, mtime, offset: from + consumed })
     }
 
     if (srcRecords.length) {

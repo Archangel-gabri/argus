@@ -42,7 +42,9 @@ async function fetchJson(url: string, init: RequestInit = {}): Promise<unknown> 
         const failure = classifyResponse(response.status, response.headers?.get('retry-after'))
         if (failure) throw failure
         try {
-          return await response.json()
+          // `json()` типизирован как any — сузить его здесь важнее, чем в месте разбора:
+          // дальше значение уходит в парсеры, ожидающие unknown.
+          return (await response.json()) as unknown
         } catch {
           throw new Error('Ответ RPC не разобран — баланс неизвестен')
         }

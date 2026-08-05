@@ -13,20 +13,32 @@
  * Это именно склейка, а не кэш: ничего не хранится дольше самого запроса. Спросили после
  * ответа — работа выполнится заново, и данные будут свежими.
  */
-const inFlight = new Map<string, Promise<unknown>>()
+/** Работа в полёте. Хранится объектом, чтобы её тело могло сослаться на саму запись. */
+interface Flight {
+  promise: Promise<unknown>
+}
+
+const inFlight = new Map<string, Flight>()
 
 export function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const existing = inFlight.get(key) as Promise<T> | undefined
-  if (existing) return existing
-  const p = (async () => {
+  const existing = inFlight.get(key)
+  if (existing) return existing.promise as Promise<T>
+
+  const flight = {} as Flight
+  flight.promise = (async () => {
     try {
       return await fn()
     } finally {
-      inFlight.delete(key)
+      // Снимаем ТОЛЬКО свою запись. Безусловное удаление стирало чужую: блокировка приложения
+      // зовёт clearInFlight, после разблокировки тот же ключ занимает НОВАЯ работа — и
+      // завершившаяся старая выбрасывала её из карты. Дальше склейка по этому устройству
+      // переставала работать: следующий спрашивающий заводил третье SSH-подключение,
+      // хотя ответ уже готовился.
+      if (inFlight.get(key) === flight) inFlight.delete(key)
     }
   })()
-  inFlight.set(key, p)
-  return p
+  inFlight.set(key, flight)
+  return flight.promise as Promise<T>
 }
 
 /** Сколько работ выполняется прямо сейчас — для диагностики. */

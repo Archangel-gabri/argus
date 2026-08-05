@@ -34,7 +34,7 @@ export interface QuotaSlice {
   model?: string | null
 }
 
-async function getJson(url: string, headers: Record<string, string>): Promise<unknown | null> {
+async function getJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {

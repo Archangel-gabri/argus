@@ -11,7 +11,12 @@ import type { HardwareInfo, DiskInfo } from './types'
 // а на локализованном хосте lscpu печатает «Имя модели:» — и весь инвентарь выходил пустым
 // на совершенно обычных Arch и Ubuntu с русской локалью.
 const LINUX_HW_CMD = ['export LC_ALL=C',
-  `echo @@OS; { . /etc/os-release 2>/dev/null; echo "$PRETTY_NAME"; }; uname -r; uname -m; hostname 2>/dev/null; (systemd-detect-virt 2>/dev/null || echo none)`,
+  // Проверка читаемости перед `.` обязательна: провал специальной встроенной команды завершает
+  // неинтерактивный POSIX-шелл целиком (проверено на dash/sh и `bash --posix`). На хосте без
+  // /etc/os-release — busybox, минимальный образ — не выполнялась НИ ОДНА секция после @@OS,
+  // и сбор железа не работал там никогда. Bash в обычном режиме это прощает, поэтому вживую
+  // дефект не показывался. Та же охрана уже стоит в зонде (ssh.ts).
+  `echo @@OS; [ ! -r /etc/os-release ] || . /etc/os-release; echo "$PRETTY_NAME"; uname -r; uname -m; hostname 2>/dev/null; (systemd-detect-virt 2>/dev/null || echo none)`,
   `echo @@CPU; lscpu 2>/dev/null`,
   `echo @@RAM; grep MemTotal /proc/meminfo`,
   `echo @@DIMM; sudo -n dmidecode -t memory 2>/dev/null | grep -E 'Size:|Speed:|Part Number:'`,
