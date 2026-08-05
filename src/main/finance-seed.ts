@@ -38,9 +38,11 @@ export interface FinanceSeedPlan {
   create: FinanceAccountInput[]
   update: Array<{ id: string; input: FinanceAccountInput }>
   retire: string[]
-  /** Ключи, которые после применения плана надо запомнить как принесённые. */
-  seeded: string[]
+  /** Что после применения плана надо запомнить как принесённое: ключ и, если знаем, запись. */
+  seeded: SeededKey[]
 }
+
+import type { SeededKey } from './subs-seed'
 
 const key = (name: string): string => name.trim().toLowerCase()
 
@@ -56,9 +58,11 @@ const SEED_KIND = 'finance'
 export function planFinanceSeed(
   file: FinanceSeedFile,
   existing: FinanceAccount[],
-  alreadySeeded: ReadonlySet<string> = new Set()
+  alreadySeeded: ReadonlySet<string> = new Set(),
+  seededRecords: ReadonlyMap<string, string> = new Map()
 ): FinanceSeedPlan {
   const byName = new Map(existing.map((a) => [key(a.name), a]))
+  const byId = new Map(existing.map((a) => [a.id, a]))
   const plan: FinanceSeedPlan = { create: [], update: [], retire: [], seeded: [] }
 
   const retire = new Set((file.retire ?? []).map(key))
@@ -66,12 +70,15 @@ export function planFinanceSeed(
 
   for (const item of file.accounts ?? []) {
     if (!item.name?.trim() || retire.has(key(item.name))) continue
-    const current = byName.get(key(item.name))
+    // Сначала по идентификатору, потом по имени: имя владелец переименовывает и в приложении,
+    // и в файле, а по имени такая запись не находилась и заводилась второй.
+    const k = key(item.name)
+    const current = (seededRecords.has(k) ? byId.get(seededRecords.get(k)!) : undefined) ?? byName.get(k)
 
     // Ключ помечается принесённым независимо от того, есть запись в хранилище или нет: иначе
     // у владельца, чьё хранилище уже наполнено, память засева не наполнится вовсе, и первое
     // удаление всё равно воскресит счёт.
-    plan.seeded.push(key(item.name))
+    plan.seeded.push(current ? { key: k, recordId: current.id } : k)
     if (!current) {
       // Заводим ОДИН раз: повторное создание отменяло бы удаление, сделанное владельцем, —
       // и делало бы это молча, на каждом открытии хранилища.
@@ -133,7 +140,12 @@ export function seedFinanceAccounts(): FinanceSeedResult {
     return result
   }
 
-  const plan = planFinanceSeed(file, vault.listFinanceAccounts(), vault.appliedSeedKeys(SEED_KIND))
+  const plan = planFinanceSeed(
+    file,
+    vault.listFinanceAccounts(),
+    vault.appliedSeedKeys(SEED_KIND),
+    vault.appliedSeedRecords(SEED_KIND)
+  )
   // Целиком или никак: одна кривая строка в файле не должна оставлять применёнными удаления и
   // половину созданий.
   vault.atomically(() => {
@@ -142,7 +154,8 @@ export function seedFinanceAccounts(): FinanceSeedResult {
       result.retired++
     }
     for (const input of plan.create) {
-      vault.createFinanceAccount(input)
+      const created = vault.createFinanceAccount(input)
+      plan.seeded.push({ key: key(input.name), recordId: created.id })
       result.created++
     }
     for (const { id, input } of plan.update) {

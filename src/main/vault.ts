@@ -474,6 +474,11 @@ function migrate(d: Database.Database): void {
     applied_at INTEGER NOT NULL,
     PRIMARY KEY (kind, key)
   )`)
+  // Какую именно запись завёл засев. Без этого имя из файла служило идентификатором, а оно
+  // меняется: переименовал запись в приложении (или уточнил название в файле) — совпадение по
+  // имени не находится, и засев заводит ВТОРУЮ. Обе попадают в месячный расход, и заметить это
+  // можно только сверкой глазами.
+  addColumn(exec, 'ALTER TABLE seed_applied ADD COLUMN record_id TEXT')
 }
 
 /** Локальный реальный флот владельца (gitignored `fleet.local.json` рядом с приложением).
@@ -1488,14 +1493,36 @@ export function appliedSeedKeys(kind: string): Set<string> {
   return new Set(rows.map((r) => r.key))
 }
 
-/** Запомнить, что запись из файла заведена. Повторный вызов безвреден. */
-export function rememberSeedKeys(kind: string, keys: string[]): void {
+/** Какую запись завёл засев под этим ключом. Пусто — заводили до появления памяти о записи. */
+export function appliedSeedRecords(kind: string): Map<string, string> {
+  const rows = requireDb()
+    .prepare('SELECT key, record_id FROM seed_applied WHERE kind = ? AND record_id IS NOT NULL')
+    .all(kind) as Array<{ key: string; record_id: string }>
+  return new Map(rows.map((r) => [r.key, r.record_id]))
+}
+
+/**
+ * Запомнить, что запись из файла заведена.
+ *
+ * `recordId` — идентификатор заведённой записи. Он и есть настоящая идентичность: имя, по
+ * которому засев ищет совпадение, владелец волен поменять и в приложении, и в самом файле, а
+ * ссылка на строку переживает оба переименования. Повторный вызов безвреден.
+ */
+export function rememberSeedKeys(kind: string, keys: Array<string | { key: string; recordId?: string }>): void {
   if (!keys.length) return
   const d = requireDb()
-  const stmt = d.prepare('INSERT OR IGNORE INTO seed_applied (kind, key, applied_at) VALUES (?, ?, ?)')
+  const insert = d.prepare('INSERT OR IGNORE INTO seed_applied (kind, key, applied_at, record_id) VALUES (?, ?, ?, ?)')
+  // Идентификатор записи мог быть неизвестен в момент первой пометки (её ставили ещё до
+  // создания) — дописываем, когда узнали.
+  const attach = d.prepare('UPDATE seed_applied SET record_id = ? WHERE kind = ? AND key = ? AND record_id IS NULL')
   const now = Date.now()
-  d.transaction((list: string[]) => {
-    for (const k of list) stmt.run(kind, k, now)
+  d.transaction((list: typeof keys) => {
+    for (const item of list) {
+      const key = typeof item === 'string' ? item : item.key
+      const recordId = typeof item === 'string' ? null : (item.recordId ?? null)
+      insert.run(kind, key, now, recordId)
+      if (recordId) attach.run(recordId, kind, key)
+    }
   })(keys)
 }
 

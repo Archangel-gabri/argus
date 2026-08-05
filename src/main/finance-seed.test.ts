@@ -2,6 +2,7 @@
 // и это хуже — откатит свежий остаток к цифре, записанной в файле полгода назад, причём выглядеть
 // это будет как нормальная работа.
 import { describe, expect, it } from 'vitest'
+import { seededKeyOf } from './subs-seed'
 import { planFinanceSeed, type FinanceSeedFile } from './finance-seed'
 import type { FinanceAccount } from './types'
 
@@ -57,7 +58,7 @@ describe('план засева счетов', () => {
       update: [],
       retire: [],
       // Совпавшая запись тоже попадает в память засева — иначе у полного хранилища она пуста.
-      seeded: ['сбербанк']
+      seeded: [{ key: 'сбербанк', recordId: 'a1' }]
     })
   })
 
@@ -82,9 +83,9 @@ describe('план засева счетов', () => {
     const file: FinanceSeedFile = { accounts: [{ name: 'Т-Банк', kind: 'bank', currency: 'RUB' }] }
     const first = planFinanceSeed(file, [])
     expect(first.create).toHaveLength(1)
-    expect(first.seeded).toEqual(['т-банк'])
+    expect(first.seeded.map(seededKeyOf)).toEqual(['т-банк'])
 
-    const second = planFinanceSeed(file, [], new Set(first.seeded))
+    const second = planFinanceSeed(file, [], new Set(first.seeded.map(seededKeyOf)))
     expect(second.create).toEqual([])
   })
 })

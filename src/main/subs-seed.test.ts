@@ -1,7 +1,7 @@
 // Засев подписок трогает деньги: ошибка здесь либо заводит дубль (и месячный итог врёт вдвое),
 // либо затирает правку, сделанную руками, либо молча оставляет устаревшую сумму.
 import { describe, expect, it } from 'vitest'
-import { planSubsSeed, type SubsSeedFile,
+import { planSubsSeed, seededKeyOf, type SubsSeedFile,
   laterRenewal
 } from './subs-seed'
 import type { Subscription } from './types'
@@ -63,7 +63,7 @@ describe('план засева подписок', () => {
     const plan = planSubsSeed(file, [sub()])
     // seeded наполняется и для совпавших записей: память засева должна знать про них тоже,
     // иначе у полного хранилища она осталась бы пустой навсегда.
-    expect(plan).toEqual({ create: [], update: [], retire: [], seeded: ['boosty — erafox'] })
+    expect(plan).toEqual({ create: [], update: [], retire: [], seeded: [{ key: 'boosty — erafox', recordId: 'id' }] })
   })
 
   it('поле, которого в файле нет, остаётся прежним', () => {
@@ -124,10 +124,10 @@ describe('дата продления против файла', () => {
     const file: SubsSeedFile = { subscriptions: [{ name: 'Boosty — erafox', amount: 499 }] }
     const first = planSubsSeed(file, [])
     expect(first.create).toHaveLength(1)
-    expect(first.seeded).toEqual(['boosty — erafox'])
+    expect(first.seeded.map(seededKeyOf)).toEqual(['boosty — erafox'])
 
     // Второй вход: запись уже приносили, в хранилище её нет — значит владелец её убрал.
-    const second = planSubsSeed(file, [], new Set(first.seeded))
+    const second = planSubsSeed(file, [], new Set(first.seeded.map(seededKeyOf)))
     expect(second.create).toEqual([])
   })
 
@@ -138,11 +138,25 @@ describe('дата продления против файла', () => {
     const file: SubsSeedFile = { subscriptions: [{ name: 'Boosty — erafox', amount: 499 }] }
     const first = planSubsSeed(file, [sub()], new Set())
     expect(first.create).toEqual([])
-    expect(first.seeded).toEqual(['boosty — erafox'])
+    expect(first.seeded.map(seededKeyOf)).toEqual(['boosty — erafox'])
 
     // Владелец удалил запись → следующий вход её НЕ возвращает.
-    const afterDelete = planSubsSeed(file, [], new Set(first.seeded))
+    const afterDelete = planSubsSeed(file, [], new Set(first.seeded.map(seededKeyOf)))
     expect(afterDelete.create).toEqual([])
+  })
+
+  it('переименование НЕ создаёт дубль: свою запись засев узнаёт по идентификатору', () => {
+    // Пока идентичностью служило имя, любое переименование — в приложении или в самом файле —
+    // приводило к дублю: совпадение не находилось, и заводилась вторая запись. Обе попадали в
+    // месячный расход, то есть цифра удваивалась, и заметить это можно было только глазами.
+    const file: SubsSeedFile = { subscriptions: [{ name: 'Claude Max 5x', amount: 100 }] }
+    const stored = sub({ id: 'rec-1', name: 'Claude Max' })
+    const records = new Map([['claude max 5x', 'rec-1']])
+
+    const plan = planSubsSeed(file, [stored], new Set(['claude max 5x']), records)
+    expect(plan.create).toEqual([])
+    // И это НЕ «ничего не делать»: запись наша, значит суммы из файла к ней применяются.
+    expect(plan.update.map((u) => u.id)).toEqual(['rec-1'])
   })
 
   it('переименованная подписка не двоится', () => {
@@ -164,7 +178,7 @@ describe('дата продления против файла', () => {
     }
     const plan = planSubsSeed(file, [], new Set(['boosty — erafox']))
     expect(plan.create.map((c) => c.name)).toEqual(['Новая подписка'])
-    expect(plan.seeded).toEqual(['boosty — erafox', 'новая подписка'])
+    expect(plan.seeded.map(seededKeyOf)).toEqual(['boosty — erafox', 'новая подписка'])
   })
 
   it('какая дата побеждает', () => {

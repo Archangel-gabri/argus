@@ -33,12 +33,18 @@ export interface SubsSeedFile {
   retire?: string[]
 }
 
+/** Что запомнить о применённой записи: сам ключ и, когда известен, идентификатор строки. */
+export type SeededKey = string | { key: string; recordId: string }
+
+/** Ключ памяти засева в строковом виде — им сверяются с `appliedSeedKeys`. */
+export const seededKeyOf = (s: SeededKey): string => (typeof s === 'string' ? s : s.key)
+
 export interface SubsSeedPlan {
   create: SubscriptionInput[]
   update: Array<{ id: string; input: SubscriptionInput }>
   retire: string[]
-  /** Ключи, которые после применения плана надо запомнить как принесённые. */
-  seeded: string[]
+  /** Что после применения плана надо запомнить как принесённое: ключ и, если знаем, запись. */
+  seeded: SeededKey[]
 }
 
 const key = (name: string): string => name.trim().toLowerCase()
@@ -92,9 +98,11 @@ function merge(item: SeedSubscription, current?: Subscription): SubscriptionInpu
 export function planSubsSeed(
   file: SubsSeedFile,
   existing: Subscription[],
-  alreadySeeded: ReadonlySet<string> = new Set()
+  alreadySeeded: ReadonlySet<string> = new Set(),
+  seededRecords: ReadonlyMap<string, string> = new Map()
 ): SubsSeedPlan {
   const byName = new Map(existing.map((s) => [key(s.name), s]))
+  const byId = new Map(existing.map((s) => [s.id, s]))
   const plan: SubsSeedPlan = { create: [], update: [], retire: [], seeded: [] }
 
   const retire = new Set((file.retire ?? []).map(key))
@@ -102,7 +110,12 @@ export function planSubsSeed(
 
   for (const item of file.subscriptions ?? []) {
     if (!item.name?.trim() || retire.has(key(item.name))) continue
-    const current = byName.get(key(item.name))
+    // Свою запись ищем СНАЧАЛА по идентификатору, и только потом по имени. Имя — не
+    // идентичность: владелец переименовывает подписку в приложении, а название уточняют и в
+    // самом файле. По имени такая запись не находилась, и засев заводил вторую — обе попадали
+    // в месячный расход.
+    const k = key(item.name)
+    const current = (seededRecords.has(k) ? byId.get(seededRecords.get(k)!) : undefined) ?? byName.get(k)
     const input = merge(item, current)
     // Ключ помечается принесённым, ЕСТЬ запись в хранилище или нет.
     //
@@ -110,7 +123,7 @@ export function planSubsSeed(
     // запусками: имена совпадают, план идёт в «обновить» или «ничего не делать», ключ не
     // запоминается — и первое же удаление воскрешает запись ровно один раз на каждую. Выглядит
     // это как «иногда возвращается», то есть хуже честной поломки.
-    plan.seeded.push(key(item.name))
+    plan.seeded.push(current ? { key: k, recordId: current.id } : k)
     if (!current) {
       // Запись из файла, которой в хранилище нет. Заводим её ОДИН раз: если этот ключ уже
       // приносили, значит владелец её удалил (или переименовал) — и повторное создание
@@ -158,7 +171,12 @@ export function seedSubscriptions(): SubsSeedResult {
     return result
   }
 
-  const plan = planSubsSeed(file, vault.listSubscriptions(), vault.appliedSeedKeys(SEED_KIND))
+  const plan = planSubsSeed(
+    file,
+    vault.listSubscriptions(),
+    vault.appliedSeedKeys(SEED_KIND),
+    vault.appliedSeedRecords(SEED_KIND)
+  )
   // План применяется целиком или никак. Иначе одна кривая строка в файле (неизвестная валюта,
   // сумма строкой, несуществующая дата) роняла засев в середине — уже с выполненными
   // удалениями и половиной созданных записей, причём молча: выше стоит общий catch.
@@ -168,7 +186,10 @@ export function seedSubscriptions(): SubsSeedResult {
       result.retired++
     }
     for (const input of plan.create) {
-      vault.createSubscription(input)
+      // Идентификатор созданной записи запоминаем сразу: он и есть её идентичность, а имя
+      // может измениться уже завтра.
+      const created = vault.createSubscription(input)
+      plan.seeded.push({ key: key(input.name), recordId: created.id })
       result.created++
     }
     for (const { id, input } of plan.update) {
