@@ -228,6 +228,76 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     vault.deleteAiAccess(access.id)
   })
 
+  it('подписка из прежней версии (без якоря) получает его при первой правке даты', async () => {
+    await vault.unlock(PASSWORD)
+    // Запись, заведённая до появления колонки renewal_day: даты нет, значит и якоря нет.
+    const created = vault.createSubscription({ name: 'Из прошлой версии', amount: 10, currency: 'USD' })
+    expect(created.renewalDay).toBeNull()
+
+    // Владелец вписывает дату — приложение обязано запомнить, какого числа списывают.
+    const dated = vault.updateSubscription(created.id, {
+      name: created.name,
+      amount: created.amount,
+      currency: created.currency,
+      nextRenewal: '2026-01-31'
+    })
+    expect(dated.renewalDay).toBe(31)
+
+    // Правка, не трогающая дату, якорь не переучивает.
+    const renamed = vault.updateSubscription(created.id, {
+      name: 'Переименована',
+      amount: created.amount,
+      currency: created.currency,
+      nextRenewal: '2026-01-31'
+    })
+    expect(renamed.renewalDay).toBe(31)
+
+    // А явная смена даты — переучивает: это единственный случай, когда человек сообщает
+    // приложению новое число списания.
+    const moved = vault.updateSubscription(created.id, {
+      name: 'Переименована',
+      amount: created.amount,
+      currency: created.currency,
+      nextRenewal: '2026-03-15'
+    })
+    expect(moved.renewalDay).toBe(15)
+
+    vault.deleteSubscription(created.id)
+  })
+
+  it('схема переживает повторное открытие: миграция идемпотентна и данные целы', async () => {
+    await vault.unlock(PASSWORD)
+    const sub = vault.createSubscription({ name: 'Живучая', amount: 42, currency: 'EUR' })
+    const account = vault.createFinanceAccount({ name: 'Счёт', kind: 'bank', currency: 'RUB', balance: 100 })
+
+    // Три цикла: migrate() выполняется на каждом открытии, и повторный ALTER не должен ни
+    // падать, ни терять данные.
+    for (let i = 0; i < 3; i++) {
+      vault.lock()
+      await vault.unlock(PASSWORD)
+    }
+
+    expect(vault.listSubscriptions().find((s) => s.id === sub.id)?.amount).toBe(42)
+    expect(vault.listFinanceAccounts().find((a) => a.id === account.id)?.balance).toBe(100)
+
+    vault.deleteSubscription(sub.id)
+    vault.deleteFinanceAccount(account.id)
+  })
+
+  it('удаление счёта уносит и его ключи биржи', async () => {
+    await vault.unlock(PASSWORD)
+    const account = vault.createFinanceAccount({ name: 'Биржа', kind: 'exchange', currency: 'USD' })
+    vault.setAccountCreds(account.id, { apiKey: '__SECRET_EXCHANGE_KEY__', secret: '__SECRET_EXCHANGE_SECRET__' })
+    expect(vault.getAccountCreds(account.id)).not.toBeNull()
+
+    expect(vault.deleteFinanceAccount(account.id)).toBe(true)
+    // Ключ, переживший свой счёт, — это секрет, до которого в приложении больше нет ни одной
+    // двери: ни посмотреть, ни стереть.
+    expect(vault.getAccountCreds(account.id)).toBeNull()
+    // Повторное удаление честно отвечает «не найдено», а не «ок».
+    expect(vault.deleteFinanceAccount(account.id)).toBe(false)
+  })
+
   it('смена мастер-пароля перешифровывает базу: старый больше не подходит', async () => {
     await vault.changePassword(PASSWORD, NEXT_PASSWORD)
     vault.lock()
