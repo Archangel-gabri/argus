@@ -16,7 +16,7 @@ const sub: Subscription = {
   amount: 12,
   currency: 'EUR',
   period: 'mo',
-  nextRenewal: '2026-08-13',
+  nextRenewal: '2026-08-13', renewalDay: 13,
   notes: null,
   manualRenewal: true
 }

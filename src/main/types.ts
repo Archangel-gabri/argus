@@ -168,6 +168,9 @@ export interface Subscription {
   currency: Currency
   period: 'mo' | 'yr'
   nextRenewal: string | null
+  /** День месяца, на который списывается изначально. Короткий месяц зажимает дату (31→28), и
+   *  без отдельной памяти исходное число терялось бы навсегда. */
+  renewalDay: number | null
   notes: string | null
   /** true — платёж надо продлить руками; false — есть автосписание. */
   manualRenewal: boolean
@@ -178,6 +181,8 @@ export interface SubscriptionInput {
   provider?: string
   category?: string
   amount: number
+  /** День-якорь списания. Обычно вычисляется из даты продления, задавать вручную не требуется. */
+  renewalDay?: number | null
   currency?: Currency
   period?: 'mo' | 'yr'
   nextRenewal?: string | null

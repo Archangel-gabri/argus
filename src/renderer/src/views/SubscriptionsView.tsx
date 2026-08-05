@@ -342,7 +342,15 @@ export function SubscriptionsView(): React.JSX.Element {
                       {stored?.nextRenewal && (
                         <button
                           onClick={() => {
-                            const nextRenewal = advanceRenewal(stored.nextRenewal!, stored.period)
+                            // Якорь передаём отдельно: в самой дате после короткого месяца
+                            // уже лежит зажатое число (31 января → 28 февраля), и считать от
+                            // неё значит терять исходный день навсегда.
+                            const nextRenewal = advanceRenewal(
+                              stored.nextRenewal!,
+                              stored.period,
+                              Date.now(),
+                              stored.renewalDay
+                            )
                             if (nextRenewal) void updateSub(stored.id, { ...stored, nextRenewal })
                           }}
                           className="rounded px-1.5 py-1 text-[10px] text-slate-500 hover:text-emerald-400"

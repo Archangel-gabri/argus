@@ -48,10 +48,24 @@ function occurrence(anchor: CalendarDate, months: number): CalendarDate {
   return { year, month: monthZero + 1, day: Math.min(anchor.day, lastDay) }
 }
 
-/** Сдвинуть оплаченное продление к первой следующей дате после сегодня. */
-export function advanceRenewal(iso: string, period: BillingPeriod, now = Date.now()): string | null {
-  const anchor = parseCalendarDate(iso)
-  if (!anchor) return null
+/**
+ * Сдвинуть оплаченное продление к первой следующей дате после сегодня.
+ *
+ * `anchorDay` — день месяца, на который подписка списывается ИЗНАЧАЛЬНО. Он нужен, потому что
+ * короткий месяц зажимает день: 31 января → 28 февраля. Пока результат сохранялся как новый
+ * якорь, число 31 терялось навсегда, и дальше подписка навечно уезжала на 28-е — списание
+ * приходило на три дня позже напоминания, каждый месяц. Передан день — считаем от него.
+ */
+export function advanceRenewal(
+  iso: string,
+  period: BillingPeriod,
+  now = Date.now(),
+  anchorDay?: number | null
+): string | null {
+  const parsed = parseCalendarDate(iso)
+  if (!parsed) return null
+  const anchor =
+    anchorDay && anchorDay >= 1 && anchorDay <= 31 ? { ...parsed, day: anchorDay } : parsed
   const current = new Date(now)
   const today = { year: current.getFullYear(), month: current.getMonth() + 1, day: current.getDate() }
   const step = period === 'yr' ? 12 : 1
@@ -63,4 +77,14 @@ export function advanceRenewal(iso: string, period: BillingPeriod, now = Date.no
     next = occurrence(anchor, count * step)
   }
   return `${next.year}-${pad(next.month)}-${pad(next.day)}`
+}
+
+/**
+ * День месяца, на который подписка списывается изначально.
+ *
+ * Считается один раз — от первой известной даты продления — и дальше живёт в записи. Вычислять
+ * его каждый раз из `nextRenewal` нельзя: после первого же короткого месяца там будет 28-е.
+ */
+export function renewalAnchorDay(iso: string | null): number | null {
+  return parseCalendarDate(iso ?? '')?.day ?? null
 }

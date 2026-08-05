@@ -153,7 +153,7 @@ describe('деньги подписки', () => {
     amount: 200,
     currency: 'USD',
     period: 'mo',
-    nextRenewal: null,
+    nextRenewal: null, renewalDay: null,
     notes: null,
     manualRenewal: false,
     ...over

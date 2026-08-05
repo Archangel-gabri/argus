@@ -16,6 +16,7 @@ import {
   type SnapshotInput
 } from './metric-snapshot'
 import { initialStatus } from '../shared/reachability'
+import { renewalAnchorDay } from '../shared/billing'
 import {
   legacyManualRenewal,
   parseDeviceCost,
@@ -216,6 +217,8 @@ function migrate(d: Database.Database): void {
     manual_renewal INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER
   )`)
+  // День-якорь списания: см. Subscription.renewalDay.
+  addColumn(exec, 'ALTER TABLE subscriptions ADD COLUMN renewal_day INTEGER')
   const addedManualRenewal = addColumn(
     exec,
     'ALTER TABLE subscriptions ADD COLUMN manual_renewal INTEGER NOT NULL DEFAULT 0'
@@ -1312,7 +1315,8 @@ export function listSubscriptions(): Subscription[] {
   const rows = requireDb()
     .prepare(
       `SELECT id, name, provider, category, amount, currency, period,
-              next_renewal as nextRenewal, notes, manual_renewal as manualRenewal
+              next_renewal as nextRenewal, renewal_day as renewalDay, notes,
+              manual_renewal as manualRenewal
          FROM subscriptions ORDER BY name`
     )
     .all() as Array<Omit<Subscription, 'manualRenewal'> & { manualRenewal: number }>
@@ -1330,15 +1334,18 @@ export function createSubscription(input: SubscriptionInput): Subscription {
     currency: valid.currency ?? 'USD',
     period: valid.period ?? 'mo',
     nextRenewal: valid.nextRenewal ?? null,
+    // Якорь берём из первой известной даты и больше не пересчитываем: после короткого месяца
+    // в nextRenewal будет уже зажатое число.
+    renewalDay: valid.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null),
     notes: valid.notes ?? null,
     manualRenewal: valid.manualRenewal ?? false
   }
   requireDb()
     .prepare(
       `INSERT INTO subscriptions
-         (id, name, provider, category, amount, currency, period, next_renewal, notes, manual_renewal, created_at)
+         (id, name, provider, category, amount, currency, period, next_renewal, renewal_day, notes, manual_renewal, created_at)
        VALUES
-         (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @notes, @manual_renewal, @created_at)`
+         (@id, @name, @provider, @category, @amount, @currency, @period, @nextRenewal, @renewalDay, @notes, @manual_renewal, @created_at)`
     )
     .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0, created_at: Date.now() })
   return sub
@@ -1357,14 +1364,17 @@ export function updateSubscription(id: string, input: SubscriptionInput): Subscr
     currency: valid.currency ?? 'USD',
     period: valid.period ?? 'mo',
     nextRenewal: valid.nextRenewal ?? null,
+    // Существующий якорь не трогаем: правка суммы или названия не должна переучивать
+    // приложение тому, какого числа списывают.
+    renewalDay: valid.renewalDay ?? cur.renewalDay ?? renewalAnchorDay(valid.nextRenewal ?? null),
     notes: valid.notes ?? null,
     manualRenewal: valid.manualRenewal ?? false
   }
   requireDb()
     .prepare(
       `UPDATE subscriptions SET name=@name, provider=@provider, category=@category, amount=@amount,
-       currency=@currency, period=@period, next_renewal=@nextRenewal, notes=@notes,
-       manual_renewal=@manual_renewal WHERE id=@id`
+       currency=@currency, period=@period, next_renewal=@nextRenewal, renewal_day=@renewalDay,
+       notes=@notes, manual_renewal=@manual_renewal WHERE id=@id`
     )
     .run({ ...sub, manual_renewal: sub.manualRenewal ? 1 : 0 })
   return sub
