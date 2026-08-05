@@ -7,6 +7,7 @@ import { cn } from '@/lib/cn'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
 import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
+import { FX_IS_APPROXIMATE } from '../../../shared/fx'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
@@ -54,13 +55,18 @@ function SubForm({
   const [busy, setBusy] = useState(false)
   const [validation, setValidation] = useState<string | null>(null)
   const submit = async (): Promise<void> => {
-    const parsedAmount = Number(amount)
+    // Запятая — обычный ввод на русской раскладке, а `inputMode="decimal"` её и предлагает.
+    // Раньше «112,95» превращалось в NaN и отбивалось словами «сумма должна быть
+    // неотрицательным числом» — человек видит неотрицательное число и не понимает претензии.
+    const parsedAmount = Number(amount.trim().replace(',', '.'))
     if (!name.trim()) {
       setValidation('Укажи название')
       return
     }
     if (!Number.isFinite(parsedAmount) || parsedAmount < 0) {
-      setValidation('Сумма должна быть неотрицательным числом')
+      setValidation(
+        amount.trim() ? `Не понимаю сумму «${amount.trim()}» — нужно число, например 112.95` : 'Укажи сумму'
+      )
       return
     }
     if (busy) return
@@ -220,6 +226,9 @@ export function SubscriptionsView(): React.JSX.Element {
   const all = [...infra, ...userRows]
   const monthly = all.reduce((s, x) => s + monthlyUsd(x), 0)
   const yearly = monthly * 12
+  // Пометка «≈» нужна только там, где сведение реально произошло: если всё в долларах, курс
+  // ни при чём и лишний значок только сеет сомнение в точной цифре.
+  const mixedCurrencies = FX_IS_APPROXIMATE && new Set(all.map((x) => x.currency)).size > 1
 
   const byCat = Object.entries(
     all.reduce<Record<string, number>>((a, x) => {
@@ -227,7 +236,9 @@ export function SubscriptionsView(): React.JSX.Element {
       return a
     }, {})
   )
-    .map(([label, value]) => ({ label, value, color: catColor(label) }))
+    // Подпись — та же, что в списке. Раньше в легенду уезжал сырой ключ («AI», «Infra»), а в
+    // строке рядом стояло «ИИ», «Инфраструктура» — одна сущность под двумя именами на одном экране.
+    .map(([key, value]) => ({ label: catLabel(key), value, color: catColor(key) }))
     .sort((a, b) => b.value - a.value)
 
   const upcoming = all
@@ -276,9 +287,21 @@ export function SubscriptionsView(): React.JSX.Element {
         />
       )}
 
+      {/* Итог складывает евро, рубли и доллары по ВШИТОМУ курсу — он справочный и не
+          обновляется. Без «≈» цифра читается как посчитанные деньги; соседний экран ИИ ровно
+          поэтому показывает суммы по валютам раздельно. Здесь валют бывает много, поэтому
+          оставляем один итог, но честно помечаем его приблизительность. */}
       <div className="grid grid-cols-3 gap-4">
-        <StatTile label="В месяц" value={money(monthly)} />
-        <StatTile label="В год" value={money(yearly)} />
+        <StatTile
+          label="В месяц"
+          value={mixedCurrencies ? `≈ ${money(monthly)}` : money(monthly)}
+          hint={mixedCurrencies ? 'сведено по приблизительному курсу' : undefined}
+        />
+        <StatTile
+          label="В год"
+          value={mixedCurrencies ? `≈ ${money(yearly)}` : money(yearly)}
+          hint={mixedCurrencies ? 'сведено по приблизительному курсу' : undefined}
+        />
         <StatTile label="Активных" value={String(all.length)} hint={`${infra.length} инфра · ${userRows.length} приложений`} />
       </div>
 
@@ -375,7 +398,13 @@ export function SubscriptionsView(): React.JSX.Element {
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
                       <button
-                        onClick={() => void removeSub(x.userId!)}
+                        onClick={() => {
+                          // Везде в приложении необратимое удаление подтверждается, а здесь
+                          // корзина срабатывала с первого клика — и кнопка ещё и невидима до
+                          // наведения, то есть попасть по ней можно было мимоходом.
+                          if (window.confirm(`Удалить подписку «${x.name}»? Отменить будет нельзя.`))
+                            void removeSub(x.userId!)
+                        }}
                         className="rounded p-1 text-slate-500 hover:text-rose-400"
                         title="Удалить"
                         aria-label={`Удалить подписку ${x.name}`}
@@ -395,7 +424,7 @@ export function SubscriptionsView(): React.JSX.Element {
         <div className="space-y-6">
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-white">По категориям</h2>
-            <Donut data={byCat} center={money(monthly)} sub="/ мес" />
+            <Donut data={byCat} center={mixedCurrencies ? `≈ ${money(monthly)}` : money(monthly)} sub="/ мес" />
           </Card>
           <Card>
             <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
