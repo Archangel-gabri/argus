@@ -179,9 +179,11 @@ describe('форма устройства — кнопки-помощники', 
       user: 'root',
       password: 'hunter2'
     })
-    // Поле ОС спрашивается по подсказке-плейсхолдеру: рядом с ним лежит datalist, поэтому
-    // подпись достаётся обрамляющей группе, а не самому полю.
-    expect(screen.getByPlaceholderText<HTMLInputElement>('Ubuntu').value).toBe('Debian 12')
+    // Поле ОС спрашивается ПО ПОДПИСИ — как его находит и программа чтения с экрана. Рядом с
+    // ним лежит datalist с подсказками, и пока подпись доставалась обрамляющей группе, поле
+    // оставалось безымянным: заметить это можно было только с включённым диктором.
+    // Первое поле — основной ОС; такие же есть у каждой доп. системы в списке ниже.
+    expect(screen.getAllByLabelText<HTMLInputElement>(/Операционная система/i)[0].value).toBe('Debian 12')
     expect(field(/^Имя$/).value).toBe('osaka')
   })
 
@@ -271,5 +273,19 @@ describe('форма устройства — переход к другому �
     expect(screen.queryByText(/найдено записей/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Ubuntu 24.04 · CPU 12/)).not.toBeInTheDocument()
     expect(field(/^Адрес$/).value).toBe('198.51.100.7')
+  })
+})
+describe('устройство без сохранённой авторизации', () => {
+  it('открывается с выбранным способом входа, а не в подвешенном состоянии', async () => {
+    // Такие записи заводит импорт `~/.ssh/config`: способ входа там не указан. Тумблер знает
+    // два значения, тип — три, и запись с `none` открывалась без нажатой кнопки, но с полями
+    // ключа на экране; проба по SSH при этом была навсегда выключена.
+    await mount(device({ authType: 'none', hasSecret: false }))
+
+    const byPassword = screen.getByRole('button', { name: 'Пароль' })
+    expect(byPassword).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'SSH-ключ' })).toHaveAttribute('aria-pressed', 'false')
+    // И поле показывается то, которое соответствует выбранному способу.
+    expect(screen.getByPlaceholderText('хранится в зашифрованном виде')).toBeInTheDocument()
   })
 })

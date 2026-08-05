@@ -20,18 +20,29 @@ export function Field({
 }): React.JSX.Element {
   const labelId = useId()
   const childList = Children.toArray(children)
-  const child = childList.length === 1 ? childList[0] : null
-  const isNativeControl =
-    isValidElement(child) &&
-    typeof child.type === 'string' &&
-    (child.type === 'input' || child.type === 'select' || child.type === 'textarea')
-  const content = isNativeControl
-    ? cloneElement(child as ReactElement<{ 'aria-labelledby'?: string }>, { 'aria-labelledby': labelId })
-    : (
-        <div role="group" aria-labelledby={labelId}>
-          {children}
-        </div>
+  const isNativeControl = (node: ReactNode): node is ReactElement<{ 'aria-labelledby'?: string }> =>
+    isValidElement(node) &&
+    typeof node.type === 'string' &&
+    (node.type === 'input' || node.type === 'select' || node.type === 'textarea')
+
+  // Подпись вешается на ПЕРВЫЙ настоящий контрол, а не только когда ребёнок единственный.
+  // Рядом с полем «Операционная система» лежит <datalist> с подсказками — детей становится
+  // двое, и подпись доставалась обёртке role="group", а само поле оставалось безымянным для
+  // программы чтения с экрана. Слышно это только с включённым экранным диктором, поэтому
+  // заметить глазами было нельзя.
+  const controlIndex = childList.findIndex(isNativeControl)
+  const content =
+    controlIndex === -1 ? (
+      <div role="group" aria-labelledby={labelId}>
+        {children}
+      </div>
+    ) : (
+      childList.map((node, i) =>
+        i === controlIndex && isNativeControl(node)
+          ? cloneElement(node, { 'aria-labelledby': labelId, key: 'control' })
+          : node
       )
+    )
 
   return (
     <div className={cn('block', full && 'col-span-2')}>
