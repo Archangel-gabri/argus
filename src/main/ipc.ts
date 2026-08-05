@@ -14,6 +14,7 @@ import { seedAiAccess } from './ai-seed'
 import { seedSubscriptions } from './subs-seed'
 import { seedFinanceAccounts } from './finance-seed'
 import { linkPaidDevices } from './spend-link'
+import { brandIcon } from './brand-icon'
 import { migrateToAccounts } from './ai-accounts-migrate'
 import { pruneUnverifiedAccounts } from './ai-accounts-prune'
 import { readLogins, type BrowserLogin } from './browser-passwords'
@@ -862,6 +863,13 @@ export function registerIpc(): void {
 
   // IP → страна/флаг/хостер (авто-подстановка при добавлении устройства)
   ipcMain.handle('net:ipLookup', (_e, ip: unknown) => ipLookup(asString(ip)))
+
+  // Значок компании по домену. В сеть ходит только если значка ещё нет на диске, и только к
+  // самому сайту компании — никаких сервисов «логотип по домену»: им пришлось бы сообщить весь
+  // список счетов владельца.
+  ipcMain.handle('brand:icon', (_e, domain: unknown, refetch: unknown) =>
+    brandIcon(asString(domain), refetch === true)
+  )
 
   // Dual-boot ПК: текущая ОС + переключение загрузки + питание на живой ОС
   ipcMain.handle('pc:whichOs', (_e, id: unknown) => pc.whichOs(asString(id)))

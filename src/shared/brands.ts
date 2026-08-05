@@ -118,3 +118,42 @@ export function initialsOf(name: string): string {
   const compound = second && second[0] === second[0].toUpperCase() && second[0] !== second[0].toLowerCase()
   return (compound ? first[0] + second[0] : first.slice(0, 2)).toUpperCase()
 }
+
+/**
+ * Сайт компании по её написанию.
+ *
+ * Нужен для значка: своего вектора у российских банков и части бирж нет, а взять ярлык у самого
+ * сайта можно. Владелец при этом ничего не вводит — он уже написал «Bybit» в названии счёта, и
+ * требовать после этого ещё и домен значит выдумывать работу.
+ *
+ * Список короткий намеренно: сюда попадает только то, что владелец действительно завёл. Гадать
+ * домен из названия нельзя — «Ромашка» → romashka.com уводит запрос к посторонним людям.
+ */
+const SITES: Array<{ test: RegExp; domain: string }> = [
+  { test: /т-?банк|тинькофф|tinkoff|tbank/i, domain: 'tbank.ru' },
+  { test: /сбер|sberbank/i, domain: 'sberbank.ru' },
+  { test: /альфа-?банк|alfabank/i, domain: 'alfabank.ru' },
+  { test: /втб\b|vtb/i, domain: 'vtb.ru' },
+  { test: /озон\s*банк|ozon\s*bank/i, domain: 'ozon.ru' },
+  { test: /юmoney|юмани|yoomoney/i, domain: 'yoomoney.ru' },
+  { test: /qiwi|киви/i, domain: 'qiwi.com' },
+  { test: /bybit|байбит/i, domain: 'bybit.com' },
+  { test: /kraken/i, domain: 'kraken.com' },
+  { test: /bitget/i, domain: 'bitget.com' },
+  { test: /gate\.io/i, domain: 'gate.io' },
+  { test: /kucoin/i, domain: 'kucoin.com' },
+  { test: /мтс\s*банк/i, domain: 'mtsbank.ru' },
+  { test: /райффайзен|raiffeisen/i, domain: 'raiffeisen.ru' },
+  { test: /газпромбанк|gazprombank/i, domain: 'gazprombank.ru' },
+  { test: /wildberries|вайлдберриз/i, domain: 'wildberries.ru' },
+  { test: /firstbyte/i, domain: 'firstbyte.ru' },
+  { test: /extravm/i, domain: 'extravm.com' },
+  { test: /flokinet/i, domain: 'flokinet.is' }
+]
+
+/** Домен компании, если он известен. `null` — не знаем, и гадать не будем. */
+export function siteOf(...parts: Array<string | null | undefined>): string | null {
+  const haystack = parts.filter(Boolean).join(' ')
+  if (!haystack.trim()) return null
+  return SITES.find((s) => s.test.test(haystack))?.domain ?? null
+}

@@ -1,21 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Building2, Check, KeyRound, Landmark, LineChart, LogIn, Pencil, Trash2, Wallet, X } from 'lucide-react'
+import { Check, KeyRound, LogIn, Pencil, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
 import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
-import type { FinanceAccount, FinanceKind } from '@/types'
+import type { FinanceAccount } from '@/types'
 import { bankOf, type BankId } from '../../../../shared/banks'
-import { markFor } from '@/assets/providers/marks'
-import { initialsOf } from '../../../../shared/brands'
-
-const ICON: Record<FinanceKind, typeof Landmark> = {
-  bank: Landmark,
-  broker: LineChart,
-  exchange: Building2,
-  ewallet: Wallet,
-  cash: Wallet
-}
+import { BrandMark } from '@/components/BrandMark'
 
 /**
  * Строка счёта.
@@ -36,11 +27,6 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
   const [busy, setBusy] = useState(false)
   const [invalid, setInvalid] = useState<string | null>(null)
 
-  const Icon = ICON[account.kind] ?? Landmark
-  // Знак самой компании узнаётся быстрее общей иконки «банк»: в списке из десяти счетов только
-  // он и отличает Сбер от Т-Банка. Иконка по типу счёта остаётся запасным вариантом — для тех,
-  // чьего логотипа в каталоге нет.
-  const mark = markFor(`${account.institution} ${account.name}`)
   // Банк, чей остаток читается из сессии кабинета: у него вместо ключа — вход.
   const bank = account.source === 'api' ? bankOf(account) : null
   // Возраст показывается и у автоматических: если опрос перестал получаться, цифра стареет
@@ -81,26 +67,10 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
           в списке спорили друг с другом: зелёный Сбер, жёлтый Т-Банк и синий PayPal в одном
           столбце читались как СТАТУСЫ («у этого что-то не так»), хотя означали только бренд.
           Цвет в приложении занят делом — им подписаны состояния. */}
+      {/* Знак — тот же компонент, что в парке и подписках. Пока их было три, у сервера в
+          парке логотип был, а у платежа за него в подписках нет. */}
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/[0.04] text-slate-400">
-        {mark ? (
-          <svg viewBox={mark.vb} width={17} height={17} fill="currentColor" aria-hidden>
-            {mark.paths.map((path, i) => (
-              <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
-            ))}
-          </svg>
-        ) : (
-          // Свободного вектора нет ни у Сбера, ни у Т-Банка, ни у ЮMoney — их знаки либо
-          // двухцветные (в монохроме буква сливается с фоном), либо надписи, из которых в
-          // квадрате 16 пикселей получается полоска. Одинаковая иконка «банк» у каждой строки
-          // не отличает Сбер от Т-Банка вовсе, поэтому вместо неё — буквы учреждения, а сам
-          // вид счёта показывает мелкий значок в углу.
-          <span className="relative flex h-full w-full items-center justify-center">
-            <span className="text-[11px] font-semibold uppercase leading-none text-slate-300">
-              {initialsOf(account.institution || account.name)}
-            </span>
-            <Icon className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 text-slate-500" />
-          </span>
-        )}
+        <BrandMark name={`${account.institution} ${account.name}`} size={17} />
       </span>
 
       <div className="min-w-0 flex-1">

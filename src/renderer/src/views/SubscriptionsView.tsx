@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
+import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { approxMoney, isApprox, money, plural } from '@/lib/format'
 import { cn } from '@/lib/cn'
+import { BrandMark } from '@/components/BrandMark'
 import { useDevices } from '@/store/devices'
 import { useSubs } from '@/store/subs'
 import { catColor, catLabel, toUsd, SUB_CATEGORIES } from '@/data/subscriptions'
 import type { Currency, Subscription, SubscriptionInput } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 import { advanceRenewal, daysUntilCalendar, renewalLabel } from '../../../shared/billing'
-import { markFor } from '@/assets/providers/marks'
-import { initialsOf } from '../../../shared/brands'
 
 interface Row {
   id: string
@@ -181,46 +180,6 @@ function SubForm({
  * отвечает быстрее любой строки. Компании без знака сохраняют точку категории, чтобы ряд не
  * рассыпался на «с картинкой» и «без картинки».
  */
-function BrandDot({
-  name,
-  provider,
-  category
-}: {
-  name: string
-  provider?: string
-  category: string
-}): React.JSX.Element {
-  const mark = markFor(`${provider ?? ''} ${name}`)
-  // Знака нет — вместо безликой точки ставим буквы названия. Точка одного цвета на всю
-  // категорию не отличает Boosty от Spotify, а буква отличает: в списке из двадцати строк
-  // взгляд цепляется за неё так же, как за логотип.
-  if (!mark)
-    return (
-      <span
-        aria-hidden
-        title={name}
-        className="flex h-4 w-4 shrink-0 items-center justify-center rounded bg-slate-700/60 text-[8px] font-semibold uppercase leading-none text-slate-300"
-        style={{ borderBottom: `2px solid ${catColor(category)}` }}
-      >
-        {initialsOf(name)}
-      </span>
-    )
-  return (
-    <svg
-      viewBox={mark.vb}
-      width={16}
-      height={16}
-      fill="currentColor"
-      aria-hidden
-      className="shrink-0 text-slate-400"
-    >
-      {mark.paths.map((path, i) => (
-        <path key={i} d={path.d} fillRule={path.fillRule} clipRule={path.clipRule} />
-      ))}
-    </svg>
-  )
-}
-
 export function SubscriptionsView(): React.JSX.Element {
   const devices = useDevices((s) => s.devices)
   const subs = useSubs((s) => s.subs)
@@ -396,7 +355,7 @@ export function SubscriptionsView(): React.JSX.Element {
                 >
                   {/* Знак компании узнаётся быстрее строки: в списке из двадцати подписок глаз
                       находит Spotify по знаку раньше, чем прочитает название. */}
-                  <BrandDot name={x.name} provider={x.provider} category={x.category} />
+                  <BrandMark name={`${x.provider ?? ''} ${x.name}`} />
                   <span className="min-w-0">
                     <span className="block truncate text-slate-200">{x.name}</span>
                     <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
@@ -406,7 +365,6 @@ export function SubscriptionsView(): React.JSX.Element {
                           так, будто цена сервера просто пропала. */}
                       {x.forDevice && <span className="shrink-0 text-slate-400">· за {x.forDevice}</span>}
                       {stored?.provider && <span className="truncate">· {stored.provider}</span>}
-                      <SourceBadge kind={x.source} />
                       {stored?.manualRenewal && (
                         <span
                           className="shrink-0 rounded bg-amber-500/10 px-1 text-[10px] text-amber-400"

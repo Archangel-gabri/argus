@@ -75,7 +75,7 @@ export function openBankLogin(bank: BankId): void {
     return
   }
   const site = BANKS[bank]
-  const win = createBankWindow(partitionFor(bank), site.loginUrl, site.title)
+  const win = createBankWindow(partitionFor(bank), site.loginUrl, site.title, site.domain)
   windows.set(bank, win)
   win.on('closed', () => windows.delete(bank))
 

@@ -177,6 +177,10 @@ const api = {
   assist: {
     parseDevice: (text: string) => ipcRenderer.invoke('assist:parseDevice', text)
   },
+  brand: {
+    /** Значок компании по домену. Пустой ответ — нормальный исход, значок не обязателен. */
+    icon: (domain: string, refetch?: boolean) => ipcRenderer.invoke('brand:icon', domain, refetch === true)
+  },
   net: {
     ipLookup: (ip: string) => ipcRenderer.invoke('net:ipLookup', ip)
   },

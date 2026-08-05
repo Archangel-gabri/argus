@@ -104,7 +104,27 @@ export function createScreenWindow(handle: string, title: string, size: { width:
  * 4. **CSP приложения сюда не достаёт** — она висит на `session.defaultSession`, а это другая
  *    сессия. И правильно: наша политика сломала бы сайт банка.
  */
-export function createBankWindow(partition: string, url: string, title: string): BrowserWindow {
+/**
+ * Свой ли это адрес банка.
+ *
+ * Вход в кабинет — цепочка переходов, и часть шагов банк открывает НОВЫМ окном (подтверждение
+ * входа, СМС-форма, вход через связанный сервис). Раньше любое такое окно уходило в браузер
+ * системы: у владельца это выглядело как «нажал войти в Argus, а логинюсь в Brave», и толку от
+ * этого нет — кука ложится в браузер, а приложение читает свой раздел и входа не видит.
+ *
+ * Поэтому своё открываем внутри и в том же разделе, а постороннее (реклама, помощь, соцсети) —
+ * наружу, как и раньше: незнакомый адрес не должен получить доступ к сессии банка.
+ */
+function belongsToBank(url: string, domain: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === domain || host.endsWith(`.${domain}`)
+  } catch {
+    return false
+  }
+}
+
+export function createBankWindow(partition: string, url: string, title: string, domain: string): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,
     height: 820,
@@ -122,9 +142,22 @@ export function createBankWindow(partition: string, url: string, title: string):
   })
 
   win.on('ready-to-show', () => win.show())
-  // Всплывающие окна банка (подтверждения, помощь) открываются в браузере ОС, а не внутри:
-  // новое окно унаследовало бы этот же раздел, и уследить за ним было бы нельзя.
   win.webContents.setWindowOpenHandler((details) => {
+    // Шаг входа остаётся внутри Argus и в том же разделе — иначе кука сессии окажется в чужом
+    // браузере, а приложение будет считать, что владелец не входил.
+    if (belongsToBank(details.url, domain)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 560,
+          height: 720,
+          title,
+          autoHideMenuBar: true,
+          backgroundColor: '#ffffff',
+          webPreferences: { ...HARDENED, partition }
+        }
+      }
+    }
     if (isSafeExternalUrl(details.url)) void shell.openExternal(details.url)
     return { action: 'deny' }
   })

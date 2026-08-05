@@ -248,23 +248,6 @@ export function BanksView(): React.JSX.Element {
   // «≈» не ставилось. А итог всё равно получен умножением на вшитый курс 0.0126. То есть
   // правка, сделанная ради честности цифры, на живых данных её и не давала.
   const currencies = accounts.filter((a) => a.balance != null).map((a) => a.currency)
-  // «Где основное» — счёт с наибольшим остатком в пересчёте на доллары. Это первое, что человек
-  // хочет знать о своих деньгах, и единственное, чего экран раньше не говорил вовсе.
-  const withBalance = accounts.filter((a) => a.balance != null && a.balance > 0)
-  const biggestAccount = withBalance
-    .map((a) => ({ ...a, usd: toUsd(a.balance ?? 0, a.currency) }))
-    .sort((x, y) => y.usd - x.usd)[0]
-  const biggest = biggestAccount && net > 0 ? { ...biggestAccount, share: biggestAccount.usd / net } : null
-  // Доли по валютам: при жизни между двумя странами это половина смысла раздела.
-  const byCurrency = Object.entries(
-    withBalance.reduce<Record<string, number>>((acc, a) => {
-      acc[a.currency] = (acc[a.currency] ?? 0) + toUsd(a.balance ?? 0, a.currency)
-      return acc
-    }, {})
-  )
-    .map(([code, usd]) => ({ code, usd, share: net > 0 ? usd / net : 0 }))
-    .sort((x, y) => y.usd - x.usd)
-    .slice(0, 3)
   const unavailable = wallets.filter((wallet) => balanceErrors[wallet.id] || balances[wallet.id]?.status === 'error').length
 
   // Группируем по ТИПУ счёта, а подпись и цвет берём от него же. Раньше ключом группы служила
@@ -354,12 +337,14 @@ export function BanksView(): React.JSX.Element {
         />
       )}
 
-      {/* Плитки отвечают на вопросы, которые человек задаёт деньгам: «сколько у меня», «где
-          основное» и «в чём оно лежит». Раньше две из трёх считали ПРОБЕЛЫ в данных («не
-          внесено 6», «устарело 0») — это счётчик недоделанной работы, а не состояние счетов, и
-          на спокойном экране он просто занимал место. Полнота данных осталась подписью под
-          «Известно», где она и уместна: рядом с цифрой, к которой относится. */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Плитка одна и говорит одно: сколько денег известно.
+          Их было три. Сначала две считали ПРОБЕЛЫ в данных («не внесено 6», «устарело 0») —
+          счётчик недоделанной работы вместо состояния счетов. На смену им пришли «где основное»
+          и «по валютам», и владелец назвал их бредом — справедливо: при одном заполненном счёте
+          «основное» это тот же счёт, а «по валютам RUB 100 %» не сообщает ничего. Плитка обязана
+          отвечать на вопрос, ответ на который заранее неизвестен. Полнота данных осталась
+          подписью под самой цифрой, где она и уместна. */}
+      <div className="grid grid-cols-1 gap-4">
         <StatTile
           label="Известно"
           value={approxMoney(net, currencies)}
@@ -367,20 +352,6 @@ export function BanksView(): React.JSX.Element {
             accountSums.unknown + unavailable > 0
               ? `по ${accountSums.known + (wallets.length - unavailable)} из ${accounts.length + wallets.length} источников · остальные без остатка`
               : `по всем ${accounts.length + wallets.length} источникам`
-          }
-        />
-        <StatTile
-          label="Где основное"
-          value={biggest ? biggest.name : '—'}
-          hint={biggest ? `${money(biggest.balance ?? 0, biggest.currency)} · ${Math.round(biggest.share * 100)}% от известного` : 'внеси остаток хотя бы одного счёта'}
-        />
-        <StatTile
-          label="По валютам"
-          value={byCurrency.length ? byCurrency.map((c) => c.code).join(' · ') : '—'}
-          hint={
-            byCurrency.length
-              ? byCurrency.map((c) => `${c.code} ${Math.round(c.share * 100)}%`).join(' · ')
-              : 'остатки не внесены'
           }
         />
       </div>

@@ -279,6 +279,9 @@ export interface ArgusApi {
   assist: {
     parseDevice: (text: string) => Promise<AssistResult>
   }
+  brand: {
+    icon: (domain: string, refetch?: boolean) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
+  },
   net: {
     ipLookup: (ip: string) => Promise<{
       ok: boolean
