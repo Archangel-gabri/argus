@@ -320,7 +320,9 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           {s.cost.amount > 0 && (
             <span className="shrink-0 rounded-md bg-white/5 px-2 py-1.5 text-xs font-medium tabular-nums text-slate-300">
               {money(s.cost.amount, s.cost.currency)}
-              <span className="text-slate-500">/мес</span>
+              {/* На плашке `bg-white/5` фон светлее карточки, и приглушённый серый на нём не
+                  дотягивает до порога читаемости даже после подъёма в палитре. */}
+              <span className="text-slate-400">/мес</span>
             </span>
           )}
         </div>
