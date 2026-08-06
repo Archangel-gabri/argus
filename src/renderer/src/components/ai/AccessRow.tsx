@@ -100,7 +100,11 @@ export function AccessRow({
       onClick={onSelect}
       aria-current={selected}
       className={cn(
-        'group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 px-3 py-2 text-left transition-colors',
+        // Колонок ЧЕТЫРЕ, потому что прямых детей четыре: знак, имя, деньги, точка состояния.
+        // Когда точку вынесли из денежной колонки отдельным ребёнком, число колонок сократили
+        // заодно — и точка переехала во вторую строку сетки, под знак провайдера. Каждая строка
+        // стала выше, а единственный указатель состояния оказался слева, где его не ищут.
+        'group grid w-full grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-l-2 px-3 py-2 text-left transition-colors',
         selected
           ? 'border-l-accent bg-card'
           : 'border-l-transparent hover:border-l-border hover:bg-card/50'

@@ -194,7 +194,7 @@ function AccountForm({
         disabled={busy || !name.trim()}
         className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {busy ? 'Сохраняю…' : 'Добавить'}
+        {busy ? 'Сохраняю…' : initial ? 'Сохранить' : 'Добавить'}
       </button>
     </Card>
   )
@@ -433,7 +433,12 @@ export function BanksView(): React.JSX.Element {
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
                     <button
-                      onClick={() => void remove(w.id)}
+                      onClick={() => {
+                        // Везде в приложении необратимое удаление подтверждается; здесь корзина
+                        // срабатывала сразу и стояла в двадцати пикселях от карандаша.
+                        if (window.confirm(`Удалить кошелёк «${w.label || w.address}»? Отменить будет нельзя.`))
+                          void remove(w.id)
+                      }}
                       className="rounded p-1.5 text-slate-500 hover:text-rose-400"
                       title="Удалить"
                       aria-label={`Удалить кошелёк ${w.label}`}

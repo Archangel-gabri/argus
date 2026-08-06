@@ -13,6 +13,32 @@ import net from 'node:net'
 import { getOsEndpoints, getDeviceConn, listDevices } from './vault'
 import { consumeSshBanner, type Reachability } from '../shared/reachability'
 
+/**
+ * Отказ, случившийся НА НАШЕЙ стороне: до чужой машины дело не дошло.
+ *
+ * `ENETUNREACH`/`ENETDOWN` — нет маршрута или интерфейс лёг; `EAI_AGAIN`/`ENOTFOUND` — не
+ * ответил DNS (при пропаже сети это самый частый исход); `EHOSTUNREACH` оставляем в отказах
+ * машины: его присылает маршрутизатор, то есть сеть у нас есть.
+ */
+const localFailure = (code?: string): boolean =>
+  code === 'ENETUNREACH' || code === 'ENETDOWN' || code === 'EAI_AGAIN' || code === 'ENOTFOUND'
+
+/**
+ * Что доказывает отказ.
+ *
+ * `ECONNREFUSED` — машина ответила пакетом «порт закрыт». Это доказательство, что она РАБОТАЕТ:
+ * сетевой стек жив, лёг только sshd или переехал порт. Раньше такой ответ засчитывался в
+ * «Выключен» наравне с молчанием, и владелец шёл разбираться с питанием вместо службы.
+ *
+ * Молчание (таймаут, сброс, обрыв) — единственный случай, когда «выключено» правдоподобно, и
+ * даже он объявляется только после серии промахов.
+ */
+function verdictFor(code?: string): Reachability {
+  if (localFailure(code)) return 'unknown'
+  if (code === 'ECONNREFUSED') return 'unknown'
+  return 'offline'
+}
+
 export interface Reach {
   status: Reachability
   ms: number
@@ -54,10 +80,23 @@ export function tcpAlive(host: string, port: number, timeoutMs = REACH_BUDGET_MS
     sock.on('data', (buf: Buffer) => {
       const next = consumeSshBanner(banner, buf.toString('latin1'))
       banner = next.text
-      if (next.verdict !== null) finish(next.verdict ? 'online' : 'offline')
+      // Пришли байты, но это не SSH — на порту кто-то другой. Про питание машины это говорит
+      // ОБРАТНОЕ «выключено»: она ответила. Утверждать «online» тоже нельзя (через fake-ip
+      // туннель отвечает сам туннель), поэтому честный исход — «не знаю».
+      if (next.verdict !== null) finish(next.verdict ? 'online' : 'unknown')
     })
     sock.once('timeout', () => finish('offline'))
-    sock.once('error', () => finish('offline'))
+    // Причина отказа решает, что мы вправе утверждать.
+    //
+    // «Отказано в соединении» и «хост недостижим» приходят ОТ СЕТИ: кто-то ответил, значит
+    // машина правда не принимает подключение. А вот «сеть недоступна», «имя не разрешается» и
+    // «DNS не отвечает» означают, что мы не вышли за пределы своего ноутбука, — про удалённую
+    // машину это не говорит ничего.
+    //
+    // Раньше все отказы сваливались в один: стоило пропасть интернету, и весь парк через три
+    // промаха объявлялся «Выключен». Владелец видел выключенными серверы, которые в это время
+    // работали.
+    sock.once('error', (e: NodeJS.ErrnoException) => finish(verdictFor(e.code)))
     sock.once('close', () => finish('offline'))
     // Порт приходит из записи устройства, а её заполняет человек. Node на порту вне 1..65535
     // бросает СИНХРОННО (`ERR_SOCKET_BAD_PORT`), и этот бросок улетал наружу через Promise.all
@@ -98,6 +137,24 @@ export async function deviceReach(deviceId: string, timeoutMs = REACH_BUDGET_MS)
       : { status: 'offline', ms: Math.max(...results.map((r) => r.ms)) }
 }
 
+/**
+ * Есть ли у НАС выход в сеть.
+ *
+ * Спрашиваем только тогда, когда весь парк разом перестал отвечать, и только у публичных
+ * распознавателей имён: до них доходит всё, что вообще выходит наружу, они не ведут журнал
+ * посещений и не узнают из этого ничего о владельце. Один короткий TCP-коннект, без запроса.
+ */
+async function internetReachable(): Promise<boolean> {
+  const probes = [
+    tcpAlive('1.1.1.1', 443, 2500),
+    tcpAlive('8.8.8.8', 443, 2500)
+  ]
+  const results = await Promise.all(probes.map((p) => p.catch((): Reach => ({ status: 'unknown', ms: 0 }))))
+  // Здесь важен сам факт ответа, а не SSH-баннер: до 443 баннера не будет никогда, поэтому
+  // «offline» после успешного коннекта означает «дошли и получили ответ», то есть сеть есть.
+  return results.some((r) => r.ms > 0 && r.ms < 2500)
+}
+
 /** Разом по всему парку — параллельно. Именно это зовём сразу после входа в приложение. */
 export async function fleetReach(timeoutMs = REACH_BUDGET_MS): Promise<Record<string, Reach>> {
   const devices = listDevices()
@@ -112,5 +169,17 @@ export async function fleetReach(timeoutMs = REACH_BUDGET_MS): Promise<Record<st
       }
     })
   )
+  // Весь парк отвалился разом — почти наверняка это наша сеть, а не одновременная смерть всех
+  // машин. Проверяем и, если выхода наружу нет, ни про одну машину ничего не утверждаем: у
+  // владельца при пропаже интернета все серверы объявлялись выключенными, хотя работали.
+  //
+  // Одна машина в парке — признака нет: её отказ ничем не отличается от отказа сети, и лишний
+  // запрос наружу тут ничего не доказывает.
+  const answered = pairs.filter(([, r]) => r.status !== 'unknown')
+  if (answered.length > 1 && answered.every(([, r]) => r.status === 'offline')) {
+    if (!(await internetReachable())) {
+      return Object.fromEntries(pairs.map(([id, r]) => [id, r.status === 'offline' ? { status: 'unknown' as const, ms: r.ms } : r]))
+    }
+  }
   return Object.fromEntries(pairs)
 }
