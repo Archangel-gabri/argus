@@ -39,59 +39,83 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
   if (!conn) return Promise.resolve({ ok: false, error: 'Device not found' })
   if (!conn.host || conn.host.includes('x.x')) return Promise.resolve({ ok: false, error: 'Placeholder IP — set a real host first.' })
   if (!hasCredential(conn)) return Promise.resolve({ ok: false, error: 'No SSH credential stored (password or key).' })
-  return new Promise((resolve) => {
-    const client = new Client()
-    let settled = false
-    let ok = false // сессия реально открылась — не глушить это ложным «close»-сообщением
-    // Страховочный таймаут: без него молчаливый DROP TCP после SYN-ACK (файрвол/MaxStartups/
-    // обрыв jump-плеча) оставлял промис нерезолвнутым → в UI вечная «Загрузка…».
-    const timer = setTimeout(() => {
+  const client = new Client()
+  const id = randomUUID()
+  let sftpRef: SFTPWrapper | null = null
+
+  // Ручной таймер здесь был, но отменял источник в НЕВЕРНОМ порядке: соединение закрывалось до
+  // того, как право завершить операцию забрано, и сообщение о сроке подменялось сообщением о
+  // закрытии. Хуже другое: поздний ответ на запрос SFTP всё равно клал сессию в карту — она
+  // оставалась жить, а интерфейс о ней не знал и закрыть не мог.
+  return withDeadline<{ ok: boolean; sessionId?: string; error?: string }>({
+    ms: SFTP_OPEN_MS,
+    dispose: () => {
       try {
-        client.end()
+        sftpRef?.destroy()
       } catch {
-        /* ignore */
+        /* дескриптор мог не появиться вовсе */
       }
-      done({ ok: false, error: 'Таймаут открытия SFTP (20с) — хост не ответил' })
-    }, 20000)
-    const done = (r: { ok: boolean; sessionId?: string; error?: string }): void => {
-      if (!settled) {
-        settled = true
-        clearTimeout(timer)
-        resolve(r)
+      try {
+        client.destroy()
+      } catch {
+        /* соединение могло умереть раньше */
       }
-    }
-    client.on('ready', () => {
-      if (!isAccessCurrent(accessTicket)) {
-        client.end()
-        done({ ok: false, error: 'Argus заблокирован' })
-        return
-      }
-      client.sftp((err, sftp) => {
-        if (err) {
-          done({ ok: false, error: friendlyErr(err.message) })
-          client.end()
-          return
-        }
+    },
+    run: (gate) => {
+      const done = (r: { ok: boolean; sessionId?: string; error?: string }): void => void gate.settle(() => r)
+
+      client.on('ready', () => {
         if (!isAccessCurrent(accessTicket)) {
           client.end()
           done({ ok: false, error: 'Argus заблокирован' })
           return
         }
-        const id = randomUUID()
-        ok = true
-        sessions.set(id, { id, deviceId, client, sftp })
-        client.on('close', () => sessions.delete(id)) // не течь сессией при обрыве
-        done({ ok: true, sessionId: id })
+        client.sftp((err, sftp) => {
+          if (err) {
+            done({ ok: false, error: friendlyErr(err.message) })
+            client.end()
+            return
+          }
+          sftpRef = sftp
+          if (!isAccessCurrent(accessTicket)) {
+            client.end()
+            done({ ok: false, error: 'Argus заблокирован' })
+            return
+          }
+          // Сессия попадает в карту ТОЛЬКО если ждать ещё есть кому. Поздний ответ иначе
+          // оставлял бы живую сессию, о которой интерфейс не знает.
+          const registered = gate.settle(
+            () => {
+              sessions.set(id, { id, deviceId, client, sftp })
+              client.on('close', () => sessions.delete(id)) // не течь сессией при обрыве
+              return { ok: true, sessionId: id }
+            },
+            () => {
+              try {
+                sftp.destroy()
+              } catch {
+                /* уже мёртв */
+              }
+              client.end()
+            }
+          )
+          void registered
+        })
       })
-    })
-    client.on('error', (e) => done({ ok: false, error: friendlyErr(e.message) }))
-    // Канал закрылся ДО открытия SFTP — почти всегда выключенный/запрещённый sftp-subsystem.
-    client.on('close', () => {
-      if (!ok) done({ ok: false, error: 'Соединение закрылось до открытия SFTP (проверь SFTP-subsystem на сервере)' })
-    })
-    // Через jump-бастион если задан — иначе Файлы не открывались у jump-хостов.
-    establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
-  })
+      client.on('error', (e) => done({ ok: false, error: friendlyErr(e.message) }))
+      // Канал закрылся ДО открытия SFTP — почти всегда выключенный/запрещённый sftp-subsystem.
+      client.on('close', () => {
+        if (gate.active()) {
+          done({ ok: false, error: 'Соединение закрылось до открытия SFTP (проверь SFTP-subsystem на сервере)' })
+        }
+      })
+      // Через jump-бастион если задан — иначе Файлы не открывались у jump-хостов.
+      establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
+    }
+  }).catch((error: unknown) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : 'SFTP не открылся'
+  }))
 }
 
 /**
@@ -117,12 +141,20 @@ function abortSession(sessionId: string): void {
 
 /** Сколько ждём короткую операцию над файлами. Список каталога дольше этого не идёт никогда. */
 const SFTP_META_MS = 20_000
+/** Сколько ждём открытие сессии: рукопожатие, вход и ответ на запрос подсистемы SFTP. */
+const SFTP_OPEN_MS = 20_000
 /**
  * Сколько ждём передачу файла. Здесь срок другой по природе: большой файл через медленный
  * канал идёт минутами, и двадцати секунд ему мало. Десять минут — не «нормальное время
  * передачи», а граница, за которой канал считается мёртвым: живая передача успевает.
  */
 const SFTP_TRANSFER_MS = 600_000
+/**
+ * Сколько ждём заливку бинаря агента. Он весит около семи мегабайт: две минуты — это уже не
+ * «медленный канал», а мёртвый. Провижининг без этого срока останавливался на «Ставлю агент…»
+ * навсегда.
+ */
+const SFTP_PROVISION_MS = 120_000
 
 export function sftpList(
   sessionId: string,
@@ -276,11 +308,22 @@ export function sftpPutFile(
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
-  return new Promise((resolve) => {
-    s.sftp.fastPut(localPath, remotePath, (err) =>
-      resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true })
-    )
-  })
+  return withDeadline<{ ok: boolean; error?: string }>({
+    ms: SFTP_PROVISION_MS,
+    dispose: () => abortSession(sessionId),
+    run: (gate) => {
+      s.sftp.fastPut(localPath, remotePath, (err) => {
+        if (err) {
+          gate.reject(new Error(friendlyErr(err.message)))
+          return
+        }
+        gate.settle(() => ({ ok: true }))
+      })
+    }
+  }).catch((error: unknown) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : 'файл не залился'
+  }))
 }
 
 /** Записать небольшой секрет напрямую по SFTP. В отличие от `ssh exec "printf <secret>"`,
@@ -293,21 +336,47 @@ export function sftpWriteFile(
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
-  return new Promise((resolve) => {
-    s.sftp.writeFile(remotePath, Buffer.from(content, 'utf8'), { mode }, (err) =>
-      resolve(err ? { ok: false, error: friendlyErr(err.message) } : { ok: true })
-    )
-  })
+  return withDeadline<{ ok: boolean; error?: string }>({
+    ms: SFTP_META_MS,
+    dispose: () => abortSession(sessionId),
+    run: (gate) => {
+      s.sftp.writeFile(remotePath, Buffer.from(content, 'utf8'), { mode }, (err) => {
+        if (err) {
+          gate.reject(new Error(friendlyErr(err.message)))
+          return
+        }
+        gate.settle(() => ({ ok: true }))
+      })
+    }
+    // Повторять запись секрета после срока НЕЛЬЗЯ автоматически: мы не знаем, дошла ли она.
+    // Вторая попытка могла бы положить на машину второй токен, о котором никто не знает.
+  }).catch((error: unknown) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : 'файл не записался'
+  }))
 }
 
 export function sftpDelete(sessionId: string, path: string, isDir: boolean): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
-  return new Promise((resolve) => {
-    const cb = (err: Error | null | undefined): void => resolve(err ? { ok: false, error: err.message } : { ok: true })
-    if (isDir) s.sftp.rmdir(path, cb)
-    else s.sftp.unlink(path, cb)
-  })
+  return withDeadline<{ ok: boolean; error?: string }>({
+    ms: SFTP_META_MS,
+    dispose: () => abortSession(sessionId),
+    run: (gate) => {
+      const cb = (err: Error | null | undefined): void => {
+        if (err) {
+          gate.reject(new Error(err.message))
+          return
+        }
+        gate.settle(() => ({ ok: true }))
+      }
+      if (isDir) s.sftp.rmdir(path, cb)
+      else s.sftp.unlink(path, cb)
+    }
+  }).catch((error: unknown) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : 'не удалилось'
+  }))
 }
 
 export function sftpClose(sessionId: string): void {
