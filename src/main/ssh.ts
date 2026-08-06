@@ -9,6 +9,7 @@ import { trackedReach } from './reach-memory'
 import type { LiveMetrics } from './types'
 import { beginAccess, isAccessCurrent } from './access-epoch'
 import { parseProbeHostOutput } from './ssh-probe'
+import { withDeadline } from '../shared/deadline'
 
 /** ssh2's hostVerifier union resolves to the Buffer overload in TS; with hostHash:'sha256' the arg is a hex string.
  *  Factory returns a correctly-typed fingerprint verifier and pins the key TOFU-style. */
@@ -213,6 +214,9 @@ interface Session {
 
 const sessions = new Map<string, Session>()
 
+/** Сколько ждём весь путь до готовой оболочки: рукопожатие, вход и ответ на запрос канала. */
+const SSH_SHELL_OPEN_MS = 25_000
+
 export interface OpenResult {
   ok: boolean
   sessionId?: string
@@ -234,81 +238,101 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
     return Promise.resolve({ ok: false, error: 'No SSH credential stored. Edit the device and add a password or private key.' })
   }
 
-  return new Promise<OpenResult>((resolve) => {
-    const client = new Client()
-    const id = randomUUID()
-    let settled = false
-    let hostKeyChanged = false
-    const done = (r: OpenResult): void => {
-      if (!settled) {
-        settled = true
-        resolve(r)
-      }
-    }
+  const client = new Client()
+  const id = randomUUID()
+  let hostKeyChanged = false
 
-    client.on('ready', () => {
-      if (!isAccessCurrent(accessTicket)) {
-        client.end()
-        done({ ok: false, error: 'Argus заблокирован' })
-        return
+  // Канал может открыться и замолчать: рукопожатие прошло, а ответа на запрос оболочки нет.
+  // `readyTimeout` из ssh2 ограничивает только рукопожатие, поэтому дальше ждать было нечему —
+  // и вкладка терминала пульсировала «подключаюсь» до перезапуска приложения. Здесь ждём весь
+  // путь до готовой оболочки, а на исходе срока рвём соединение: поздний ответ не должен
+  // заводить сессию, которой уже никто не владеет.
+  return withDeadline<OpenResult>({
+    ms: SSH_SHELL_OPEN_MS,
+    dispose: () => {
+      try {
+        client.destroy()
+      } catch {
+        /* клиент мог умереть раньше */
       }
-      client.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
-        if (err) {
-          done({ ok: false, error: err.message })
-          client.end()
-          return
-        }
+    },
+    run: (gate) => {
+      const done = (r: OpenResult): void => void gate.settle(() => r)
+
+        client.on('ready', () => {
         if (!isAccessCurrent(accessTicket)) {
-          stream.end()
           client.end()
           done({ ok: false, error: 'Argus заблокирован' })
           return
         }
-        // Слушатель сохраняем, чтобы снять его в cleanup. `once` срабатывает один раз, но
-        // НЕ снимается, если событие так и не наступило: каждый открытый и закрытый терминал
-        // навсегда оставлял на окне ещё одну ссылку. За долгую сессию их набираются десятки, и
-        // Electron начинает ругаться на утечку слушателей — на симптом, а не на причину.
-        const onDestroyed = (): void => closeShell(id)
-        sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [], onDestroyed })
-        wc.once('destroyed', onDestroyed)
-        const forward = (d: Buffer): void => {
-          const s = sessions.get(id)
-          if (!s) return
-          const b64 = d.toString('base64')
-          if (!s.attached) {
-            s.buffer.push(b64)
-            if (s.buffer.length > 2000) s.buffer.shift() // страховка от разрастания, если рендерер не подписался
+        client.shell({ term: 'xterm-256color', cols, rows }, (err, stream) => {
+          if (err) {
+            done({ ok: false, error: err.message })
+            client.end()
             return
           }
-          if (!wc.isDestroyed()) wc.send('ssh:data', { sessionId: id, data: b64 })
-        }
-        stream.on('data', forward)
-        stream.stderr.on('data', forward)
-        stream.on('close', () => {
-          if (!wc.isDestroyed()) wc.send('ssh:exit', { sessionId: id })
-          cleanup(id)
+          if (!isAccessCurrent(accessTicket)) {
+            stream.end()
+            client.end()
+            done({ ok: false, error: 'Argus заблокирован' })
+            return
+          }
+          // Слушатель сохраняем, чтобы снять его в cleanup. `once` срабатывает один раз, но
+          // НЕ снимается, если событие так и не наступило: каждый открытый и закрытый терминал
+          // навсегда оставлял на окне ещё одну ссылку. За долгую сессию их набираются десятки, и
+          // Electron начинает ругаться на утечку слушателей — на симптом, а не на причину.
+          // Регистрация сессии — только если срок ещё не истёк. Поздний ответ иначе завёл бы
+          // терминал, о котором интерфейс не знает и закрыть который нечем.
+          if (!gate.active()) {
+            stream.end()
+            client.end()
+            return
+          }
+          const onDestroyed = (): void => closeShell(id)
+          sessions.set(id, { id, client, stream, deviceId, wc, attached: false, buffer: [], onDestroyed })
+          wc.once('destroyed', onDestroyed)
+          const forward = (d: Buffer): void => {
+            const s = sessions.get(id)
+            if (!s) return
+            const b64 = d.toString('base64')
+            if (!s.attached) {
+              s.buffer.push(b64)
+              if (s.buffer.length > 2000) s.buffer.shift() // страховка от разрастания, если рендерер не подписался
+              return
+            }
+            if (!wc.isDestroyed()) wc.send('ssh:data', { sessionId: id, data: b64 })
+          }
+          stream.on('data', forward)
+          stream.stderr.on('data', forward)
+          stream.on('close', () => {
+            if (!wc.isDestroyed()) wc.send('ssh:exit', { sessionId: id })
+            cleanup(id)
+          })
+          done({ ok: true, sessionId: id })
         })
-        done({ ok: true, sessionId: id })
       })
-    })
-    client.on('error', (e) =>
-      done({
-        ok: false,
-        error: hostKeyChanged
-          ? `⚠ Host key CHANGED for ${conn.host} — possible MITM. If this is expected, forget the saved key first.`
-          : e.message
+      client.on('error', (e) =>
+        done({
+          ok: false,
+          error: hostKeyChanged
+            ? `⚠ Host key CHANGED for ${conn.host} — possible MITM. If this is expected, forget the saved key first.`
+            : e.message
+        })
+      )
+      client.on('close', () => {
+        if (gate.active()) done({ ok: false, error: 'Connection closed' })
       })
-    )
-    client.on('close', () => {
-      if (!settled) done({ ok: false, error: 'Connection closed' })
-    })
 
-    const verifier = makeHostVerifier(conn.host, conn.port, (changed) => {
-      hostKeyChanged = changed
-    })
-    // Единый путь подключения: напрямую или через jump-бастион (с TOFU на обоих хопах).
-    establish(client, conn, verifier, (e) => done({ ok: false, error: e.message }))
-  })
+      const verifier = makeHostVerifier(conn.host, conn.port, (changed) => {
+        hostKeyChanged = changed
+      })
+      // Единый путь подключения: напрямую или через jump-бастион (с TOFU на обоих хопах).
+      establish(client, conn, verifier, (e) => done({ ok: false, error: e.message }))
+    }
+  }).catch((error: unknown) => ({
+    ok: false,
+    error: error instanceof Error ? error.message : 'терминал не открылся'
+  }))
 }
 
 /**
