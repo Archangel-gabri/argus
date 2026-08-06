@@ -119,3 +119,14 @@ describe('pngInsideIco', () => {
     expect(pngInsideIco(png(1))).toBeNull()
   })
 })
+
+describe('отметка «значка нет»', () => {
+  it('ставится только когда сайт ответил', async () => {
+    // Без сети ни один запрос не доходит. Записав отметку в этом случае, приложение запомнило бы
+    // «у Сбербанка нет логотипа» навсегда — и после возвращения интернета знак не появился бы.
+    const { brandIcon } = await import('./brand-icon')
+    const r = await brandIcon('example-нет-такого-домена.invalid')
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/связ|домен/i)
+  })
+})

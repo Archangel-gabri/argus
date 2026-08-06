@@ -93,7 +93,7 @@ function SubForm({
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать подписку' : 'Новая подписка'}</h3>
-        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200">
+        <button onClick={onClose} className="rounded p-1 text-slate-400 hover:text-slate-200" aria-label="Закрыть форму подписки">
           <X className="h-4 w-4" />
         </button>
       </div>

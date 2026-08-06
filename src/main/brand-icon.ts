@@ -251,8 +251,11 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
   // молчаливо пустого результата.
   let page: Buffer | null = null
   let pageUrl = `https://${domain}/`
+  // Дошёл ли хоть один ответ. Отличает «у сайта нет значка» от «у нас нет интернета».
+  let reached = false
   for (const candidate of [`https://${domain}/`, `https://www.${domain}/`]) {
     page = await download(candidate, 12000)
+    if (page) reached = true
     if (page && /<link/i.test(page.toString('utf8').slice(0, 200_000))) {
       pageUrl = candidate
       break
@@ -265,6 +268,7 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
 
   for (const url of candidates.slice(0, 6)) {
     const raw = await download(url)
+    if (raw) reached = true
     if (!raw || raw.length < 100) continue
     try {
       // Сайт отдаёт либо PNG, либо ICO — во втором случае внутри чаще всего лежит тот же PNG.
@@ -285,6 +289,10 @@ export async function brandIcon(input: string, refetch = false): Promise<BrandIc
     }
   }
 
-  writeFileSync(missPath(domain), '')
-  return { ok: false, error: 'значок не найден' }
+  // Отметку «значка нет» ставим ТОЛЬКО если сайт ответил и значка у него правда не нашлось.
+  // Если ни один запрос не дошёл — это отсутствие сети, а не отсутствие значка; записав отметку,
+  // мы запомнили бы «у Сбербанка нет логотипа» навсегда, и после возвращения интернета знак уже
+  // не появился бы никогда.
+  if (reached) writeFileSync(missPath(domain), '')
+  return { ok: false, error: reached ? 'значок не найден' : 'нет связи — попробуем позже' }
 }

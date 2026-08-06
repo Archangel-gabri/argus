@@ -422,7 +422,8 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
         </label>
 
         <div className="col-span-2 flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/5">
+          <button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/5"
+              aria-label="Закрыть форму доступа">
             <X className="h-4 w-4" />
           </button>
           <button

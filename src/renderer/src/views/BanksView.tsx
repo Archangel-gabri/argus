@@ -49,7 +49,7 @@ function WalletForm({
           <h3 className="text-sm font-semibold text-white">{initial ? 'Редактировать кошелёк' : 'Добавить кошелёк'}</h3>
           <Hint>Баланс читается публичным RPC. Нужен только адрес.</Hint>
         </div>
-        <button onClick={onClose} className="rounded p-1.5 text-slate-400 hover:text-slate-200">
+        <button onClick={onClose} className="rounded p-1.5 text-slate-400 hover:text-slate-200" aria-label="Закрыть форму кошелька">
           <X className="h-4 w-4" />
         </button>
       </div>
