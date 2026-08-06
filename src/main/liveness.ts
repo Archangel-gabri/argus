@@ -143,16 +143,41 @@ export async function deviceReach(deviceId: string, timeoutMs = REACH_BUDGET_MS)
  * Спрашиваем только тогда, когда весь парк разом перестал отвечать, и только у публичных
  * распознавателей имён: до них доходит всё, что вообще выходит наружу, они не ведут журнал
  * посещений и не узнают из этого ничего о владельце. Один короткий TCP-коннект, без запроса.
+ *
+ * Проверяется ФАКТ СОЕДИНЕНИЯ, а не ответ. Первая версия звала `tcpAlive`, который ждёт
+ * SSH-баннер, — но на 443-м порту баннера нет и не будет, поэтому проверка всегда упиралась в
+ * таймаут и всегда отвечала «связи нет». Защита работала наоборот: упавший парк помечался бы
+ * «не знаю» даже при живом интернете, и «выключен» не появился бы никогда.
  */
+function connectSucceeds(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = new net.Socket()
+    let done = false
+    const finish = (ok: boolean): void => {
+      if (done) return
+      done = true
+      sock.destroy()
+      resolve(ok)
+    }
+    sock.setTimeout(timeoutMs)
+    // Рукопожатие состоялось — значит пакеты доходят наружу. Больше нам ничего не нужно.
+    sock.once('connect', () => finish(true))
+    sock.once('timeout', () => finish(false))
+    sock.once('error', () => finish(false))
+    try {
+      sock.connect({ host, port })
+    } catch {
+      finish(false)
+    }
+  })
+}
+
 async function internetReachable(): Promise<boolean> {
-  const probes = [
-    tcpAlive('1.1.1.1', 443, 2500),
-    tcpAlive('8.8.8.8', 443, 2500)
-  ]
-  const results = await Promise.all(probes.map((p) => p.catch((): Reach => ({ status: 'unknown', ms: 0 }))))
-  // Здесь важен сам факт ответа, а не SSH-баннер: до 443 баннера не будет никогда, поэтому
-  // «offline» после успешного коннекта означает «дошли и получили ответ», то есть сеть есть.
-  return results.some((r) => r.ms > 0 && r.ms < 2500)
+  const results = await Promise.all([
+    connectSucceeds('1.1.1.1', 443, 2500),
+    connectSucceeds('8.8.8.8', 443, 2500)
+  ])
+  return results.some(Boolean)
 }
 
 /** Разом по всему парку — параллельно. Именно это зовём сразу после входа в приложение. */

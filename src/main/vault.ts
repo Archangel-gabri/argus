@@ -8,6 +8,7 @@ import { CURRENCY_CODES } from './types'
 import { deriveKeyHex } from './crypto'
 import { prepareVaultInitialization, type VaultMeta } from './vault-init'
 import { addColumn } from './migrate-guard'
+import { findSeedFile } from './seed-file'
 import { beginAccess, isAccessCurrent, revokePendingAccess } from './access-epoch'
 import {
   METRIC_SNAPSHOT_INSERT,
@@ -547,7 +548,8 @@ function migrate(d: Database.Database): void {
 
 /** Локальный реальный флот владельца (gitignored `fleet.local.json` рядом с приложением).
  *  keyPath читается с диска в рантайме → secret_key в зашифрованном vault; в код/git ключи
- *  не попадают. Нет файла → возвращаем null и сидим демо-флотом (маскированные IP из seed.ts). */
+ *  не попадают. Нет файла → возвращаем null, и парк остаётся пустым: демо-флот убран намеренно
+ *  (см. комментарий у seedInto), файла seed.ts давно нет. */
 interface LocalDevice {
   name: string
   provider?: string
@@ -574,14 +576,11 @@ function expandHome(p: string): string {
 }
 
 function loadLocalFleet(): DeviceRow[] | null {
-  const candidates: string[] = []
-  try {
-    candidates.push(join(app.getAppPath(), 'fleet.local.json'))
-  } catch {
-    /* app path unavailable */
-  }
-  candidates.push(join(process.cwd(), 'fleet.local.json'))
-  const path = candidates.find((p) => existsSync(p))
+  // Ищем там же, где ищутся остальные файлы засева, — начиная с userData. Это единственный
+  // засев, который не перевели на общий поиск после правки 2026-08-04, и последствие ровно то
+  // же, из-за которого правку делали: в собранном приложении файла рядом с кодом нет, рабочий
+  // каталог у него домашний, и парк владельца при первом запуске не заводился вовсе.
+  const path = findSeedFile('fleet.local.json')
   if (!path) return null
   let list: LocalDevice[]
   try {

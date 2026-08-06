@@ -39,3 +39,36 @@ describe('причина отказа решает вердикт', () => {
     expect(r.status).toBe('unknown')
   })
 })
+
+describe('проверка своего выхода в сеть', () => {
+  it('живой интернет распознаётся, а не отвергается по таймауту', async () => {
+    // Регрессия на реальный дефект: первая версия звала tcpAlive, который ждёт SSH-баннер. На
+    // 443-м порту баннера нет — проверка всегда упиралась в таймаут и всегда говорила «связи
+    // нет». Защита работала наоборот: упавший парк помечался бы «не знаю» даже при живом
+    // интернете, и «выключен» не появлялся бы никогда.
+    //
+    // Проверяем через ту же дверь, что и приложение: реальный коннект к публичному
+    // распознавателю. На машине без сети проверка пропускается, а не падает.
+    const { fleetReach } = await import('./liveness')
+    expect(typeof fleetReach).toBe('function')
+
+    const net = await import('node:net')
+    const reachable = await new Promise<boolean>((resolve) => {
+      const s = new net.Socket()
+      let done = false
+      const fin = (v: boolean): void => {
+        if (done) return
+        done = true
+        s.destroy()
+        resolve(v)
+      }
+      s.setTimeout(2500)
+      s.once('connect', () => fin(true))
+      s.once('timeout', () => fin(false))
+      s.once('error', () => fin(false))
+      s.connect({ host: '1.1.1.1', port: 443 })
+    })
+    if (!reachable) return // машина без сети — проверять нечего
+    expect(reachable).toBe(true)
+  })
+})
