@@ -157,3 +157,27 @@ describe('где проверять ключ', () => {
     ).toBe('https://own.example/v1')
   })
 })
+
+describe('срок проверки ключа', () => {
+  it('сервер, замолчавший на теле ответа, не подвешивает проверку', async () => {
+    // Прежняя версия снимала таймер сразу после заголовков и отдавала ответ наружу. Сервер,
+    // приславший 200 и замолчавший на теле, оставлял разбор без всякого ограничения: значок
+    // обновления крутился вечно, а фоновая проверка навсегда занимала признак «идёт проверка».
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      // Тело не придёт никогда — ровно тот случай, что и на почерневшем канале.
+      json: () => new Promise(() => {})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const promise = checkAccount('openrouter', 'sk-проверка')
+    await vi.advanceTimersByTimeAsync(10_000)
+    const verdict = await promise
+
+    expect(verdict.status).toBe('error')
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})

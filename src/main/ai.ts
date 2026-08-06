@@ -1,4 +1,5 @@
 import type { AiAccess, AiCheck } from './types'
+import { DeadlineError, withDeadline } from '../shared/deadline'
 
 /**
  * У кого спрашивать про ключ этой записи.
@@ -29,16 +30,43 @@ const CHECK_TIMEOUT_MS = 10_000
 
 class CheckTimeoutError extends Error {}
 
-async function fetchForCheck(url: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Запрос проверки со сроком на ВЕСЬ ответ, включая тело.
+ *
+ * Прежняя версия снимала таймер сразу после заголовков и отдавала `Response` наружу. Сервер,
+ * приславший заголовки и замолчавший на теле, оставлял `r.json()` без всякого ограничения:
+ * значок обновления у аккаунта крутился вечно, а фоновая проверка навсегда занимала признак
+ * «идёт проверка» — следующая отбрасывалась, и на экране оставалось старое состояние.
+ *
+ * Поэтому тело читается ВНУТРИ срока: вызывающий получает уже разобранное значение, а не
+ * ответ, который ещё предстоит дочитать.
+ */
+async function fetchForCheck<T>(
+  url: string,
+  init: RequestInit = {},
+  read?: (r: Response) => Promise<T>
+): Promise<{ status: number; ok: boolean; value?: T }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS)
+  type Out = { status: number; ok: boolean; value?: T }
   try {
-    return await fetch(url, { ...init, signal: controller.signal })
+    return await withDeadline<Out>({
+      ms: CHECK_TIMEOUT_MS,
+      // Отмена запроса прерывает ожидание заголовков. Чтение уже полученного тела она НЕ
+      // прерывает — поэтому срок здесь общий на весь путь, а не только на запрос.
+      dispose: () => controller.abort(),
+      run: async (gate) => {
+        const r = await fetch(url, { ...init, signal: controller.signal })
+        if (!gate.active()) return
+        const value = read ? await read(r) : undefined
+        gate.settle(() => ({ status: r.status, ok: r.ok, value }))
+      }
+    })
   } catch (error) {
-    if (controller.signal.aborted) throw new CheckTimeoutError('тайм-аут проверки')
+    // Срок и отмена — одно и то же событие для вызывающего: проверка не состоялась.
+    if (error instanceof DeadlineError || controller.signal.aborted) {
+      throw new CheckTimeoutError('тайм-аут проверки')
+    }
     throw error
-  } finally {
-    clearTimeout(timer)
   }
 }
 
@@ -64,16 +92,17 @@ export async function checkAccount(provider: string, apiKey: string, baseUrl?: s
   const p = provider.toLowerCase()
   try {
     if (p.includes('openrouter')) {
-      const r = await fetchForCheck('https://openrouter.ai/api/v1/key', {
-        headers: { Authorization: `Bearer ${apiKey}` }
-      })
+      const r = await fetchForCheck<unknown>(
+        'https://openrouter.ai/api/v1/key',
+        { headers: { Authorization: `Bearer ${apiKey}` } },
+        // Разбор — часть проверки: сервер, замолчавший на теле, не должен оставлять её висеть.
+        (res) => res.json().catch(() => null)
+      )
       const failure = knownFailure(r.status)
       if (failure) return failure
       if (!r.ok) return unknownHttp(r.status)
-      let payload: unknown
-      try {
-        payload = await r.json()
-      } catch {
+      const payload = r.value
+      if (payload === null) {
         return { status: 'error', detail: 'Ответ OpenRouter не разобран — результат неизвестен' }
       }
       if (!payload || typeof payload !== 'object' || !('data' in payload))
