@@ -117,6 +117,12 @@ function abortSession(sessionId: string): void {
 
 /** Сколько ждём короткую операцию над файлами. Список каталога дольше этого не идёт никогда. */
 const SFTP_META_MS = 20_000
+/**
+ * Сколько ждём передачу файла. Здесь срок другой по природе: большой файл через медленный
+ * канал идёт минутами, и двадцати секунд ему мало. Десять минут — не «нормальное время
+ * передачи», а граница, за которой канал считается мёртвым: живая передача успевает.
+ */
+const SFTP_TRANSFER_MS = 600_000
 
 export function sftpList(
   sessionId: string,
@@ -184,17 +190,37 @@ export async function sftpDownload(
   // копию поверх старой, владелец терял старую в первую же секунду: обрыв канала на середине
   // (а канал до нод флапает) оставлял на её месте обрубок, и восстановить было неоткуда.
   const tmp = `${target}.argus-part`
-  return new Promise((resolve) => {
-    s.sftp.fastGet(remotePath, tmp, (err) => {
-      if (err) {
-        rm(tmp, { force: true }, () => resolve({ ok: false, error: friendlyErr(err.message) }))
-        return
-      }
-      rename(tmp, target, (e) =>
-        resolve(e ? { ok: false, error: `файл скачан, но не переименован: ${e.message}` } : { ok: true })
-      )
-    })
-  })
+  type Result = { ok: boolean; error?: string }
+  return withDeadline<Result>({
+    ms: SFTP_TRANSFER_MS,
+    dispose: () => {
+      abortSession(sessionId)
+      // Обрубок на своём диске убираем: он носит имя файла владельца с приставкой и легко
+      // принимается за скачанное.
+      rm(tmp, { force: true }, () => {})
+    },
+    run: (gate) => {
+      s.sftp.fastGet(remotePath, tmp, (err) => {
+        if (err) {
+          rm(tmp, { force: true }, () => gate.reject(new Error(friendlyErr(err.message))))
+          return
+        }
+        // Публикуем переименованием только если ждать ещё есть кому: поздний успех не имеет
+        // права положить обрубок под именем настоящего файла.
+        if (!gate.active()) {
+          rm(tmp, { force: true }, () => {})
+          return
+        }
+        rename(tmp, target, (e) => {
+          if (e) {
+            gate.reject(new Error(`файл скачан, но не переименован: ${e.message}`))
+            return
+          }
+          gate.settle(() => ({ ok: true }))
+        })
+      })
+    }
+  }).catch((error: unknown) => ({ ok: false, error: error instanceof Error ? error.message : 'не скачалось' }))
 }
 
 export async function sftpUpload(
@@ -215,17 +241,31 @@ export async function sftpUpload(
   // Иначе прерванная загрузка (в том числе блокировкой приложения, которая рвёт SSH) заменяет
   // рабочий файл на сервере обрубком — а это уже чужая машина, и чинить придётся руками.
   const tmpRemote = `${remote}.argus-part`
-  return new Promise((resolve) => {
-    s.sftp.fastPut(local, tmpRemote, (err) => {
-      if (err) {
-        s.sftp.unlink(tmpRemote, () => resolve({ ok: false, error: friendlyErr(err.message) }))
-        return
-      }
-      s.sftp.rename(tmpRemote, remote, (e2) =>
-        resolve(e2 ? { ok: false, error: friendlyErr(e2.message) } : { ok: true, name })
-      )
-    })
-  })
+  type Result = { ok: boolean; name?: string; error?: string }
+  return withDeadline<Result>({
+    ms: SFTP_TRANSFER_MS,
+    // Обрубок на ЧУЖОЙ машине убрать уже нечем: канал мёртв, и попытка удаления повисла бы так
+    // же. Он остаётся под именем с приставкой `.argus-part` — по нему видно, что это огрызок.
+    dispose: () => abortSession(sessionId),
+    run: (gate) => {
+      s.sftp.fastPut(local, tmpRemote, (err) => {
+        if (err) {
+          s.sftp.unlink(tmpRemote, () => gate.reject(new Error(friendlyErr(err.message))))
+          return
+        }
+        // Поздний успех не имеет права опубликовать огрызок под конечным именем: на сервере
+        // владельца это заменило бы рабочий файл обрубком.
+        if (!gate.active()) return
+        s.sftp.rename(tmpRemote, remote, (e2) => {
+          if (e2) {
+            gate.reject(new Error(friendlyErr(e2.message)))
+            return
+          }
+          gate.settle(() => ({ ok: true, name }))
+        })
+      })
+    }
+  }).catch((error: unknown) => ({ ok: false, error: error instanceof Error ? error.message : 'не загрузилось' }))
 }
 
 /** Программная заливка файла (без диалога выбора) — нужна провижинингу агента. */

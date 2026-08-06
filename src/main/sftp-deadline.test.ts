@@ -8,6 +8,7 @@ import { EventEmitter } from 'node:events'
 
 let destroyedSftp = 0
 let destroyedClient = 0
+let renamed = 0
 
 /** Поддельный SSH-клиент: соединяется, отдаёт SFTP, который отвечает на realpath и молчит дальше. */
 class FakeClient extends EventEmitter {
@@ -15,6 +16,12 @@ class FakeClient extends EventEmitter {
     cb(null, {
       realpath: (_p: string, done: (e: Error | null, abs: string) => void) => done(null, '/home/user'),
       readdir: () => {}, // ответа не будет никогда — это и есть «чернота»
+      fastGet: () => {}, // и передача тоже молчит
+      fastPut: () => {},
+      rename: () => {
+        renamed++
+      },
+      unlink: () => {},
       destroy: () => {
         destroyedSftp++
       }
@@ -40,12 +47,36 @@ vi.mock('./ssh', () => ({
   friendlyErr: (m: string) => m
 }))
 vi.mock('./access-epoch', () => ({ beginAccess: () => 1, isAccessCurrent: () => true }))
+vi.mock('electron', () => ({
+  dialog: {
+    // Диалог отвечает сразу: предмет проверки — что будет ПОСЛЕ выбора файла, на мёртвом канале.
+    showSaveDialog: () => Promise.resolve({ canceled: false, filePath: '/tmp/argus-проверка' }),
+    showOpenDialog: () => Promise.resolve({ canceled: false, filePaths: ['/tmp/argus-исходник'] })
+  },
+  BrowserWindow: class {}
+}))
 
 beforeEach(() => {
   destroyedSftp = 0
   destroyedClient = 0
+  renamed = 0
 })
 afterEach(() => vi.useRealTimers())
+
+describe('передача файла на почерневшем канале', () => {
+  it('скачивание не висит вечно и не публикует обрубок', async () => {
+    // Поздний успех не имеет права переименовать `.argus-part` в имя настоящего файла: на
+    // диске владельца это выглядело бы как скачанный файл, а внутри был бы огрызок.
+    const mod = await import('./sftp')
+    const opened = await mod.sftpOpen('d1')
+    vi.useFakeTimers()
+    const promise = mod.sftpDownload(opened.sessionId!, '/etc/hosts', null)
+    await vi.advanceTimersByTimeAsync(600_000)
+    const result = await promise
+    expect(result.ok).toBe(false)
+    expect(renamed).toBe(0)
+  })
+})
 
 describe('список каталога на почерневшем канале', () => {
   it('не висит вечно, отвечает отказом и обрывает сессию', async () => {
