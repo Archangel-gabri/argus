@@ -142,6 +142,23 @@ await step('задать потолки лимитов у ИИ-доступа', 
   await page.getByRole('button', { name: /Изменить доступ/i }).first().click()
   const back = await page.getByLabel(/Токенов в сутки/).inputValue()
   if (back !== '1000000') throw new Error(`потолок не сохранился: в поле «${back}»`)
+  // Форму закрываем: следующий шаг начинает с карточки, а не с открытой формы.
+  await page.getByRole('button', { name: /Закрыть форму доступа/i }).first().click()
+  await page.waitForTimeout(400)
+})
+
+await step('завести канал у ИИ-доступа', async () => {
+  // Канал — то, ЧЕМ владелец пользуется на аккаунте (браузер, терминал, ключ для скрипта).
+  // Модель его знала, экран показывал, а завести руками было нельзя вообще.
+  await page.getByRole('button', { name: /Изменить доступ/i }).first().click()
+  await page.getByRole('button', { name: /\+ канал/ }).click()
+  await page.getByLabel(/Название канала 1/).fill('Мой терминал')
+  await page.getByRole('button', { name: /^Сохранить$/ }).click()
+  await page.waitForTimeout(1200)
+  await page.getByRole('button', { name: /Изменить доступ/i }).first().click()
+  const saved = await page.getByLabel(/Название канала 1/).inputValue()
+  if (saved !== 'Мой терминал') throw new Error(`канал не сохранился: в поле «${saved}»`)
+  await page.getByRole('button', { name: /Отмена|Закрыть форму доступа/i }).first().click()
 })
 
 await step('удалить заведённую подписку', async () => {

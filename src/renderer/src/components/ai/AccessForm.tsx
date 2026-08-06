@@ -2,9 +2,10 @@ import { useState, type FormEvent } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { Card } from '@/components/ui/Page'
 import { providerChangeError, KIND_LABEL, KIND_ORDER, PAYMENT_LABEL, STATUS_LABEL } from '@/lib/ai-account'
+import { cn } from '@/lib/cn'
 import { useAi } from '@/store/ai'
 import { useSubs } from '@/store/subs'
-import type { AiAccess, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus } from '@/types'
+import type { AiAccess, AiAccountEntry, AiKind, AiLimits, AiPayment, AiStatus, AiChannel } from '@/types'
 import { mergeLimits } from '../../../../shared/ai-limits'
 
 const PROVIDERS = [
@@ -105,6 +106,10 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
   // «Чем заменить, если умрёт» карточка доступа показывает, а назначить его было негде: поле
   // приходило только из файла засева. Назначенное там владелец не мог ни снять, ни переставить.
   const [fallbackId, setFallbackId] = useState(initial?.fallbackId ?? '')
+  // Каналы — то, ЧЕМ владелец пользуется на этом аккаунте: браузер, командная строка, ключ для
+  // своего скрипта. Модель их знает, экран показывает, а завести было негде: список приходил
+  // только из файла засева, и добавить канал руками было нельзя вообще.
+  const [channels, setChannels] = useState<AiChannel[]>(initial?.channels ?? [])
   const [rpm, setRpm] = useState(initial?.limits?.rpm != null ? String(initial.limits.rpm) : '')
   const [rpd, setRpd] = useState(initial?.limits?.rpd != null ? String(initial.limits.rpd) : '')
   const [windowHours, setWindowHours] = useState(
@@ -192,6 +197,8 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
           })),
         limits,
         fallbackId: fallbackId || null,
+        // Пустые названия отбрасываем: пустая строка в списке выглядит как потерянная запись.
+        channels: channels.filter((c) => c.label.trim()).map((c) => ({ ...c, label: c.label.trim() })),
         notes: notes.trim() || null
       }
       const ok = initial ? await update(initial.id, input) : await add(input)
@@ -407,6 +414,70 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
           >
             + аккаунт
           </button>
+
+        <div className="col-span-2">
+          <span className={labelCls}>Чем пользуюсь на этом аккаунте</span>
+          {channels.map((c, i) => (
+            <div key={i} className="mb-1.5 flex items-center gap-2">
+              <select
+                className={cn(inputCls, 'w-24 shrink-0')}
+                value={c.kind}
+                aria-label={`Вид канала ${i + 1}`}
+                onChange={(e) =>
+                  setChannels(channels.map((x, j) => (j === i ? { ...x, kind: e.target.value as AiChannel['kind'] } : x)))
+                }
+              >
+                <option value="web">браузер</option>
+                <option value="cli">терминал</option>
+                <option value="ide">редактор</option>
+                <option value="api">ключ</option>
+              </select>
+              <input
+                className={inputCls}
+                value={c.label}
+                aria-label={`Название канала ${i + 1}`}
+                placeholder="Claude Code"
+                onChange={(e) => setChannels(channels.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+              />
+              <input
+                className={cn(inputCls, 'w-40 shrink-0')}
+                value={c.baseUrl ?? ''}
+                aria-label={`Адрес канала ${i + 1}`}
+                placeholder="свой адрес"
+                onChange={(e) =>
+                  setChannels(channels.map((x, j) => (j === i ? { ...x, baseUrl: e.target.value || undefined } : x)))
+                }
+              />
+              <label className="flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={Boolean(c.thirdParty)}
+                  aria-label={`Канал ${i + 1} идёт через посредника`}
+                  onChange={(e) =>
+                    setChannels(channels.map((x, j) => (j === i ? { ...x, thirdParty: e.target.checked } : x)))
+                  }
+                />
+                посредник
+              </label>
+              <button
+                type="button"
+                onClick={() => setChannels(channels.filter((_, j) => j !== i))}
+                className="shrink-0 rounded p-2 text-slate-400 hover:bg-rose-500/10 hover:text-rose-400"
+                title="Убрать канал"
+                aria-label={`Убрать канал ${i + 1}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => setChannels([...channels, { kind: 'web', label: '' }])}
+            className="mt-0.5 rounded px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-border hover:bg-card-hover hover:text-slate-200"
+          >
+            + канал
+          </button>
+        </div>
           <span className="mt-1 block text-[11px] text-slate-400">
             Тариф у каждого свой — так видно, на какой почте лежит платная подписка.
           </span>
