@@ -127,6 +127,23 @@ await step('открыть ИИ и завести доступ руками', as
   await page.getByText('Мой доступ').first().waitFor({ timeout: 8000 })
 })
 
+await step('задать потолки лимитов у ИИ-доступа', async () => {
+  // Полосы «Сегодня» и «Последние 7 дней» экран рисует, а знаменатель к ним задать было негде:
+  // три поля жили только в файле засева.
+  await go(/^ИИ/)
+  await page.getByText('Мой доступ').first().click()
+  await page.waitForTimeout(400)
+  await page.getByRole('button', { name: /Изменить доступ/i }).first().click()
+  // Нестрогое совпадение: у полей с подсказкой вычисленное имя включает и её кнопку.
+  await page.getByLabel(/Токенов в сутки/).fill('1000000')
+  await page.getByLabel(/Токенов в неделю/).fill('5000000')
+  await page.getByRole('button', { name: /^Сохранить$/ }).click()
+  await page.waitForTimeout(1200)
+  await page.getByRole('button', { name: /Изменить доступ/i }).first().click()
+  const back = await page.getByLabel(/Токенов в сутки/).inputValue()
+  if (back !== '1000000') throw new Error(`потолок не сохранился: в поле «${back}»`)
+})
+
 await step('удалить заведённую подписку', async () => {
   await go(/^Подписки/)
   // Удаление спрашивает подтверждение системным окном — на него надо ответить заранее,

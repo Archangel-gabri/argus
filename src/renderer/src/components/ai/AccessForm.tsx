@@ -86,6 +86,7 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
   const add = useAi((s) => s.add)
   const update = useAi((s) => s.update)
   const subs = useSubs((s) => s.subs)
+  const allAccess = useAi((s) => s.access)
 
   const [kind, setKind] = useState<AiKind>(initial?.kind ?? 'api')
   const [provider, setProvider] = useState<string>(initial?.provider ?? 'openrouter')
@@ -101,6 +102,9 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
   const [thirdParty, setThirdParty] = useState(initial?.thirdParty ?? false)
   const [usedBy, setUsedBy] = useState((initial?.usedBy ?? []).join(', '))
   const [subscriptionId, setSubscriptionId] = useState(initial?.subscriptionId ?? '')
+  // «Чем заменить, если умрёт» карточка доступа показывает, а назначить его было негде: поле
+  // приходило только из файла засева. Назначенное там владелец не мог ни снять, ни переставить.
+  const [fallbackId, setFallbackId] = useState(initial?.fallbackId ?? '')
   const [rpm, setRpm] = useState(initial?.limits?.rpm != null ? String(initial.limits.rpm) : '')
   const [rpd, setRpd] = useState(initial?.limits?.rpd != null ? String(initial.limits.rpd) : '')
   const [windowHours, setWindowHours] = useState(
@@ -109,6 +113,13 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
   const [windowTokens, setWindowTokens] = useState(
     initial?.limits?.windowTokens != null ? String(initial.limits.windowTokens) : ''
   )
+  // Эти три потолка экран УЖЕ рисует (карточки «Сегодня», «Последние 7 дней», «В месяц»), а
+  // задать их было негде: полосы стояли без знаменателя, и владелец не мог его вписать.
+  const [tpd, setTpd] = useState(initial?.limits?.tpd != null ? String(initial.limits.tpd) : '')
+  const [weekTokens, setWeekTokens] = useState(
+    initial?.limits?.weekTokens != null ? String(initial.limits.weekTokens) : ''
+  )
+  const [tpmo, setTpmo] = useState(initial?.limits?.tpmo != null ? String(initial.limits.tpmo) : '')
   const [accounts, setAccounts] = useState<AiAccountEntry[]>(initial?.accounts ?? [])
   const [notes, setNotes] = useState(initial?.notes ?? '')
 
@@ -140,7 +151,10 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
         rpm: numOrNull(rpm),
         rpd: numOrNull(rpd),
         windowHours: numOrNull(windowHours),
-        windowTokens: numOrNull(windowTokens)
+        windowTokens: numOrNull(windowTokens),
+        tpd: numOrNull(tpd),
+        weekTokens: numOrNull(weekTokens),
+        tpmo: numOrNull(tpmo)
       })
       const input = {
         kind,
@@ -177,6 +191,7 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
             primary: a.primary
           })),
         limits,
+        fallbackId: fallbackId || null,
         notes: notes.trim() || null
       }
       const ok = initial ? await update(initial.id, input) : await add(input)
@@ -264,6 +279,18 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
             ))}
           </select>
         </Field>
+        <Field label="Если умрёт" hint="чем заменить этот доступ — показывается в шапке карточки">
+          <select className={inputCls} value={fallbackId} onChange={(e) => setFallbackId(e.target.value)}>
+            <option value="">— не назначено —</option>
+            {allAccess
+              .filter((a) => a.id !== initial?.id)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+          </select>
+        </Field>
         <Field label="Подписка (деньги)" hint="сумма и продление живут в разделе «Подписки»">
           <select className={inputCls} value={subscriptionId} onChange={(e) => setSubscriptionId(e.target.value)}>
             <option value="">— не связано —</option>
@@ -302,6 +329,33 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
             className={inputCls}
             value={windowTokens}
             onChange={(e) => setWindowTokens(e.target.value)}
+            inputMode="numeric"
+            placeholder="—"
+          />
+        </Field>
+        <Field label="Токенов в сутки" hint="потолок за календарные сутки — им подписана карточка «Сегодня»">
+          <input
+            className={inputCls}
+            value={tpd}
+            onChange={(e) => setTpd(e.target.value)}
+            inputMode="numeric"
+            placeholder="—"
+          />
+        </Field>
+        <Field label="Токенов в неделю" hint="у подписок недельный потолок идёт вторым слоем поверх окна сессии">
+          <input
+            className={inputCls}
+            value={weekTokens}
+            onChange={(e) => setWeekTokens(e.target.value)}
+            inputMode="numeric"
+            placeholder="—"
+          />
+        </Field>
+        <Field label="Токенов в месяц" hint="месячный потолок тарифа, если он назван в условиях">
+          <input
+            className={inputCls}
+            value={tpmo}
+            onChange={(e) => setTpmo(e.target.value)}
             inputMode="numeric"
             placeholder="—"
           />
