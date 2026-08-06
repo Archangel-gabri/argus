@@ -28,6 +28,14 @@ export interface ForwardInfo {
 }
 
 /** Local (-L) forward: listen on 127.0.0.1:localPort, tunnel each connection to remoteHost:remotePort via the device. */
+/**
+ * Сколько ждём ответа SSH на запрос канала для одного принятого соединения.
+ *
+ * Пятнадцати секунд хватает любому живому каналу: это открытие потока по уже установленному
+ * соединению, а не новое рукопожатие.
+ */
+const FORWARD_CHANNEL_MS = 15_000
+
 export async function openLocalForward(
   deviceId: string,
   localPort: number,
@@ -83,10 +91,27 @@ export async function openLocalForward(
         return
       }
       server = net.createServer((sock) => {
+        // Каждое принятое соединение ждёт ответа SSH ограниченное время. Без этого туннель
+        // числится «активным» и зелёным, а браузер на локальном порту ждёт вечно: соединение
+        // принято, запрос канала ушёл, ответа нет. Такие сокеты ещё и копятся.
+        const channelTimer = setTimeout(() => {
+          sock.destroy()
+        }, FORWARD_CHANNEL_MS)
+        ;(channelTimer as unknown as { unref?: () => void }).unref?.()
+        // Подписки на закрытие здесь нет намеренно: таймер снимается в обеих ветках ответа, а
+        // если сокет закрылся раньше, `destroy` по сроку на уже закрытом безвреден. Лишний
+        // слушатель на каждом соединении — это утечка, которую туннель копил бы сам.
         try {
           client.forwardOut('127.0.0.1', localPort, remoteHost, remotePort, (err, stream) => {
+            clearTimeout(channelTimer)
             if (err) {
               sock.destroy()
+              return
+            }
+            // Ответ пришёл после того, как мы сдались: канал открывать некуда, поток надо
+            // закрыть, иначе он останется висеть на удалённой стороне.
+            if (sock.destroyed) {
+              stream.destroy()
               return
             }
             stream.on('error', () => sock.destroy())
@@ -94,6 +119,7 @@ export async function openLocalForward(
             sock.pipe(stream).pipe(sock)
           })
         } catch {
+          clearTimeout(channelTimer)
           // ssh2 бросает синхронно, если SSH уже закрылся. Не оставляем мёртвый listener.
           sock.destroy()
           dispose()

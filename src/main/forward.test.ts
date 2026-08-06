@@ -138,3 +138,28 @@ describe('openLocalForward — жизненный цикл listener', () => {
     expect(listForwards('device-1')).toEqual([])
   })
 })
+
+describe('соединение через туннель на молчащем канале', () => {
+  beforeEach(() => {
+    closeAllForwards()
+    state.clients.length = 0
+    state.servers.length = 0
+    state.listenError = null
+  })
+
+  it('не ждёт вечно: сокет гасится по сроку', async () => {
+    // Туннель числится активным и зелёным, соединение принято, запрос канала ушёл — а ответа
+    // нет. Браузер на локальном порту ждал бы бесконечно, и такие сокеты копились бы.
+    await openLocalForward('device-1', 8080, '127.0.0.1', 80)
+    // Ответа на запрос канала не будет никогда.
+    state.clients[0].forwardOut.mockImplementation(() => {})
+
+    const socket = { destroy: vi.fn(), destroyed: false, on: vi.fn(), pipe: vi.fn() }
+    vi.useFakeTimers()
+    state.servers[0].accept(socket)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(socket.destroy).toHaveBeenCalledOnce()
+    vi.useRealTimers()
+  })
+})
