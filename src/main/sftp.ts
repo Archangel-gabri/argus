@@ -4,6 +4,7 @@ import { dialog, type BrowserWindow } from 'electron'
 import { rename, rm } from 'node:fs'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
 import { beginAccess, isAccessCurrent } from './access-epoch'
+import { withDeadline } from '../shared/deadline'
 
 /** Понятные тексты вместо сырых ssh2-ошибок (частые причины «Файлы не работают»). */
 function friendlyErr(msg: string): string {
@@ -93,6 +94,30 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
   })
 }
 
+/**
+ * Оборвать сессию целиком: канал почернел, и держать её незачем.
+ *
+ * Идемпотентна — срок может сработать одновременно с закрытием сессии руками.
+ */
+function abortSession(sessionId: string): void {
+  const s = sessions.get(sessionId)
+  if (!s) return
+  sessions.delete(sessionId)
+  try {
+    s.sftp.destroy()
+  } catch {
+    /* дескриптор мог умереть раньше */
+  }
+  try {
+    s.client.destroy()
+  } catch {
+    /* то же */
+  }
+}
+
+/** Сколько ждём короткую операцию над файлами. Список каталога дольше этого не идёт никогда. */
+const SFTP_META_MS = 20_000
+
 export function sftpList(
   sessionId: string,
   path: string
@@ -100,27 +125,42 @@ export function sftpList(
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, path, error: 'session closed' })
   const p = path || '.'
-  return new Promise((resolve) => {
-    s.sftp.realpath(p, (rerr, abs) => {
-      const dir = rerr ? p : abs
-      s.sftp.readdir(dir, (err, list) => {
-        if (err) {
-          resolve({ ok: false, path: dir, error: friendlyErr(err.message) })
-          return
-        }
-        const entries: SftpEntry[] = list
-          .map((e) => ({
-            name: e.filename,
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- без него тернарник выводится как string
-            type: (e.longname.startsWith('d') ? 'd' : e.longname.startsWith('l') ? 'l' : 'f') as SftpEntry['type'],
-            size: e.attrs.size,
-            mtime: e.attrs.mtime
-          }))
-          .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'd' ? -1 : 1))
-        resolve({ ok: true, path: dir, entries })
+  type Result = { ok: boolean; path: string; entries?: SftpEntry[]; error?: string }
+  // Канал может «почернеть»: соединение живо, а ответы не идут. Тогда ни один из двух
+  // обратных вызовов не придёт никогда, и вкладка «Файлы» остаётся в «Загрузка…» до
+  // перезапуска приложения. Срок обрывает сессию и отвечает честно.
+  return withDeadline<Result>({
+    ms: SFTP_META_MS,
+    dispose: () => abortSession(sessionId),
+    run: (gate) => {
+      s.sftp.realpath(p, (rerr, abs) => {
+        // Первый ответ мог прийти вовремя, а срок истечь до второго: вторую фазу запускаем,
+        // только если ждать ещё есть кому.
+        if (!gate.active()) return
+        const dir = rerr ? p : abs
+        s.sftp.readdir(dir, (err, list) => {
+          if (err) {
+            gate.reject(new Error(friendlyErr(err.message)))
+            return
+          }
+          const entries: SftpEntry[] = list
+            .map((e) => ({
+              name: e.filename,
+              // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- без него тернарник выводится как string
+              type: (e.longname.startsWith('d') ? 'd' : e.longname.startsWith('l') ? 'l' : 'f') as SftpEntry['type'],
+              size: e.attrs.size,
+              mtime: e.attrs.mtime
+            }))
+            .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'd' ? -1 : 1))
+          gate.settle(() => ({ ok: true, path: dir, entries }))
+        })
       })
-    })
-  })
+    }
+  }).catch((error: unknown) => ({
+    ok: false,
+    path,
+    error: error instanceof Error ? error.message : 'не удалось прочитать каталог'
+  }))
 }
 
 export async function sftpDownload(
