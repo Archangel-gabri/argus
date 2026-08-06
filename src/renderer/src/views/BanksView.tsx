@@ -107,6 +107,10 @@ function AccountForm({
   const [institution, setInstitution] = useState(initial?.institution ?? '')
   const [currency, setCurrency] = useState<Currency>(initial?.currency ?? 'RUB')
   const [balance, setBalance] = useState(initial?.balance != null ? String(initial.balance) : '')
+  // Указатель на ключ и заметка приходили только из файла засева. При этом `keyRef` рисует на
+  // экране плашку «можно автоматом»: плашка есть, а поставить или убрать её было нечем.
+  const [keyRef, setKeyRef] = useState(initial?.keyRef ?? '')
+  const [notes, setNotes] = useState(initial?.notes ?? '')
   const [busy, setBusy] = useState(false)
   const [validation, setValidation] = useState<string | null>(null)
 
@@ -132,6 +136,8 @@ function AccountForm({
         institution: institution.trim(),
         currency,
         balance: value,
+        keyRef: keyRef.trim() || null,
+        notes: notes.trim() || null,
         // Правка руками — это ручной источник, даже если раньше остаток приходил по ключу.
         source: 'manual'
       })
@@ -182,6 +188,22 @@ function AccountForm({
           value={balance}
           onChange={(e) => setBalance(e.target.value)}
           aria-label="Остаток"
+        />
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <input
+          className={inputCls}
+          value={keyRef}
+          onChange={(e) => setKeyRef(e.target.value)}
+          aria-label="Где лежит ключ"
+          placeholder="где лежит ключ: secrets/env/api-keys.env → BYBIT_KEY"
+        />
+        <input
+          className={inputCls}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          aria-label="Заметка о счёте"
+          placeholder="заметка"
         />
       </div>
       {(validation || error) && (

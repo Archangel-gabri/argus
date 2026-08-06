@@ -259,8 +259,13 @@ export function SubscriptionsView(): React.JSX.Element {
     .sort((a, b) => b.value - a.value)
 
   const dated = all
-    .map((x) => ({ ...x, days: daysUntil(x.renews) }))
-    .filter((x): x is Row & { days: number } => x.days != null)
+    .map((x) => ({
+      ...x,
+      days: daysUntil(x.renews),
+      // Кто платит. У автосписания прошедшая дата не доказывает, что платёж не прошёл.
+      manual: x.userId ? (subs.find((s) => s.id === x.userId)?.manualRenewal ?? false) : true
+    }))
+    .filter((x): x is Row & { days: number; manual: boolean } => x.days != null)
   // Просрочка идёт ОТДЕЛЬНО от предстоящего. Раньше всё лежало в одном списке, отсортированном
   // по возрастанию, и панель «Ближайшие продления» забивалась самыми древними датами: заголовок
   // обещает будущее, а первой строкой шло «просрочено 216 дн.». Шести старых записей хватало,
@@ -379,10 +384,14 @@ export function SubscriptionsView(): React.JSX.Element {
                     <span
                       className={cn(
                         'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium',
-                        days < 0 ? 'bg-rose-500/15 text-rose-400' : 'bg-amber-500/15 text-amber-400'
+                        days < 0
+                          ? stored?.manualRenewal !== false
+                            ? 'bg-rose-500/15 text-rose-400'
+                            : 'bg-white/5 text-slate-400'
+                          : 'bg-amber-500/15 text-amber-400'
                       )}
                     >
-                      {renewalLabel(days)}
+                      {renewalLabel(days, stored?.manualRenewal !== false)}
                     </span>
                   ) : (
                     <span />
@@ -480,7 +489,9 @@ export function SubscriptionsView(): React.JSX.Element {
               {overdue.map((x) => (
                 <li key={x.id} className="flex items-center justify-between text-xs">
                   <span className="truncate text-slate-300">{x.name}</span>
-                  <span className="tabular-nums text-rose-400">{renewalLabel(x.days)}</span>
+                  <span className={cn('tabular-nums', x.manual ? 'text-rose-400' : 'text-slate-400')}>
+                    {renewalLabel(x.days, x.manual)}
+                  </span>
                 </li>
               ))}
               {upcoming.map((x) => (
