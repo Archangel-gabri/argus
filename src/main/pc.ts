@@ -3,8 +3,8 @@
 // (Linux systemctl/grub, Windows PowerShell/shutdown.exe).
 import os from 'node:os'
 import dgram from 'node:dgram'
-import { getOsEndpoints, getDeviceMac, type DeviceConn, type OsEndpoint } from './vault'
-import { execOnConn } from './ssh'
+import { getOsEndpoints, getDeviceMac, type OsEndpoint } from './vault'
+import { execOnConn, isConnAlive } from './ssh'
 import { tcpAlive } from './liveness'
 import { singleFlight } from './single-flight'
 import { trackedReach } from './reach-memory'
@@ -90,11 +90,6 @@ function broadcastAddresses(): string[] {
 /** POSIX single-quote экранирование: любую строку безопасно вставить в shell без инъекции. */
 
 /** Жив ли эндпоинт: echo работает в обоих шеллах (bash и Windows PowerShell). */
-async function isAlive(conn: DeviceConn): Promise<boolean> {
-  const r = await execOnConn(conn, 'echo argus-ok', 8000, 8000)
-  return r.ok && r.output.includes('argus-ok')
-}
-
 interface LiveEp extends OsEndpoint {
   family: 'linux' | 'windows'
 }
@@ -105,7 +100,7 @@ function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
     let pending = eps.length
     if (!pending) return resolve(null)
     for (const ep of eps) {
-      void isAlive(ep.conn)
+      void isConnAlive(ep.conn)
         .then(async (ok) => {
           if (ok) resolve({ ...ep, family: await resolveFamily(ep) })
           else if (--pending === 0) resolve(null)
@@ -566,10 +561,10 @@ export async function power(
   // Асимметрия недопустима: утверждение о необратимом действии должно стоить не меньше
   // проверок, чем утверждение «не в сети».
   await delay(7000)
-  let stillAlive = await isAlive(ep.conn)
+  let stillAlive = await isConnAlive(ep.conn)
   if (!stillAlive) {
     await delay(2000)
-    stillAlive = await isAlive(ep.conn)
+    stillAlive = await isConnAlive(ep.conn)
   }
   if (stillAlive) {
     return {

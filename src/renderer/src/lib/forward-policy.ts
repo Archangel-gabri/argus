@@ -1,3 +1,7 @@
+import { isForwardPort } from '../../../shared/net-port'
+
+export { isForwardPort }
+
 interface ForwardPorts {
   localPort: number
   remotePort: number
@@ -5,9 +9,6 @@ interface ForwardPorts {
 
 const BROWSER_PORTS = new Set([80, 443, 2053, 3000, 3300, 8080, 8006, 9000, 5601, 9090])
 const HTTPS_PORTS = new Set([443, 2053, 8006])
-
-export const isForwardPort = (port: number): boolean =>
-  Number.isInteger(port) && port >= 1 && port <= 65_535
 
 /** Сервис на хосте сопоставляем с destination, а не с произвольно выбранным localhost-портом. */
 export function forwardedRemotePorts(forwards: ForwardPorts[]): Set<number> {

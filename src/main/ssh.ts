@@ -74,7 +74,14 @@ export const hasCredential = (c: { password: string | null; privateKey?: string 
   Boolean(c.password || c.privateKey)
 
 /** Жив ли эндпоинт: `echo` работает и в bash, и в Windows PowerShell. */
-async function isConnAlive(conn: DeviceConn): Promise<boolean> {
+/**
+ * Отвечает ли соединение.
+ *
+ * Копия этой функции жила в `pc.ts` под именем `isAlive` — та же команда, те же таймауты. Пока
+ * копий две, изменение бюджета ожидания в одной делает вердикты двух путей разными: терминал
+ * считает машину живой, а карточка — нет.
+ */
+export async function isConnAlive(conn: DeviceConn): Promise<boolean> {
   const r = await execOnConn(conn, 'echo argus-ok', 8000, 8000)
   return r.ok && r.output.includes('argus-ok')
 }

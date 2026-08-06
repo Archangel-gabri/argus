@@ -3,6 +3,8 @@ import * as net from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { resolveConn, makeHostVerifier, establish, hasCredential } from './ssh'
 import { beginAccess, isAccessCurrent } from './access-epoch'
+import { isForwardPort } from '../shared/net-port'
+export { isForwardPort }
 
 interface Forward {
   id: string
@@ -17,9 +19,6 @@ interface Forward {
 const forwards = new Map<string, Forward>()
 
 /** TCP-порт в SSH direct-tcpip и node:net — целое 1..65535. */
-export const isForwardPort = (port: number): boolean =>
-  Number.isInteger(port) && port >= 1 && port <= 65_535
-
 export interface ForwardInfo {
   id: string
   deviceId: string
