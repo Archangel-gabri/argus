@@ -13,6 +13,7 @@
 
 import { execOnce } from './ssh'
 import { whichOs, osReachable, unreachableReason } from './pc'
+import { quoteForShell } from './shell-out'
 
 /** Один сеанс logind в том виде, в каком его описывает `loginctl show-session`. */
 export type RemoteSession = {
@@ -85,7 +86,7 @@ export const LIST_SESSIONS_CMD = [
  * уведомлением агента и первым же движением мыши от пользователя — оба будят экран сами.
  */
 export function unlockCmd(sessionId: string): string {
-  const id = shellSingleQuote(sessionId)
+  const id = quoteForShell(sessionId)
   return [
     `loginctl unlock-session ${id} >/dev/null 2>&1 || echo UNLOCK_CALL_FAILED`,
     '[ -n "$DISPLAY" ] && command -v xset >/dev/null 2>&1 && xset dpms force on >/dev/null 2>&1',
@@ -118,10 +119,6 @@ export const WINDOWS_LOCK_CMD = `powershell.exe -NoProfile -NonInteractive -Enco
   WINDOWS_LOCK_PS,
   'utf16le'
 ).toString('base64')}`
-
-function shellSingleQuote(v: string): string {
-  return `'${v.replace(/'/g, `'\\''`)}'`
-}
 
 /** Разбор вывода LIST_SESSIONS_CMD. Неизвестные поля игнорируются, а не роняют разбор. */
 export function parseSessions(out: string): RemoteSession[] {

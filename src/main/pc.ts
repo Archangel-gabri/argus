@@ -11,6 +11,7 @@ import { trackedReach } from './reach-memory'
 import type { Reachability } from '../shared/reachability'
 import { UNIVERSAL_PROBE, parseAnyProbe } from './metrics'
 import type { PowerResult, PowerDiag, LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
+import { quoteForShell } from './shell-out'
 import {
   BOOT_READY_MARKER,
   bootCommandSucceeded,
@@ -87,7 +88,6 @@ function broadcastAddresses(): string[] {
 }
 
 /** POSIX single-quote экранирование: любую строку безопасно вставить в shell без инъекции. */
-const shq = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
 
 /** Жив ли эндпоинт: echo работает в обоих шеллах (bash и Windows PowerShell). */
 async function isAlive(conn: DeviceConn): Promise<boolean> {
@@ -716,7 +716,7 @@ export async function boot(
     if (target?.bootEntry && /^[0-9A-Fa-f]{4}$/.test(target.bootEntry.trim())) {
       cmd =
         `sudo -n efibootmgr --bootnext ${target.bootEntry.trim()} && ` +
-        `printf '%s\\n' ${shq(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
+        `printf '%s\\n' ${quoteForShell(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
     } else if (target?.bootEntry) {
       // bootEntry — строка из устройства: валидируем (без переносов/абсурдной длины) и
       // экранируем одинарными кавычками, чтобы исключить command injection.
@@ -724,8 +724,8 @@ export async function boot(
         return { ok: false, os: ep.os, error: 'некорректный bootEntry' }
       }
       cmd =
-        `sudo -n grub-reboot ${shq(target.bootEntry)} && ` +
-        `printf '%s\\n' ${shq(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
+        `sudo -n grub-reboot ${quoteForShell(target.bootEntry)} && ` +
+        `printf '%s\\n' ${quoteForShell(BOOT_READY_MARKER)} && sudo -n systemctl reboot`
     } else {
       return {
         ok: false,

@@ -6,6 +6,7 @@ import { execOnce } from './ssh'
 import { whichOs, osReachable, unreachableReason } from './pc'
 import { getDeviceHardware, setDeviceHardware } from './vault'
 import type { HardwareInfo, DiskInfo } from './types'
+import { sections } from './shell-out'
 
 // LC_ALL=C обязателен: разбор ищет английские подписи («Model name», «Core(s) per socket»),
 // а на локализованном хосте lscpu печатает «Имя модели:» — и весь инвентарь выходил пустым
@@ -44,19 +45,6 @@ const WIN_HW_PS = [
     `}|ConvertTo-Json -Depth 5 -Compress`
 ].join(';')
 const WIN_HW_CMD = `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(WIN_HW_PS, 'utf16le').toString('base64')}`
-
-function sections(out: string): Record<string, string[]> {
-  const sec: Record<string, string[]> = {}
-  let cur = ''
-  for (const line of out.split('\n')) {
-    const m = line.match(/^@@(\w+)\s*$/)
-    if (m) {
-      cur = m[1]
-      sec[cur] = []
-    } else if (cur) sec[cur].push(line)
-  }
-  return sec
-}
 
 const lscpuVal = (lines: string[], key: string): string | undefined => {
   const l = lines.find((x) => x.trim().startsWith(key))

@@ -3,6 +3,7 @@
 // (self-contained, без хранения предыдущего состояния в main). Все секции опциональны:
 // нет sensors/nvidia-smi/ss — соответствующие поля просто отсутствуют, не ошибка.
 import type { LiveMetrics, MountInfo, ProcInfo, GpuInfo } from './types'
+import { sections } from './shell-out'
 
 const SAMPLE_SEC = 0.7
 
@@ -32,21 +33,6 @@ export const LINUX_PROBE_V2 = ['export LC_ALL=C',
 ].join('; ')
 
 /** Разбить вывод на секции по строкам-маркерам @@NAME. */
-function sections(out: string): Record<string, string[]> {
-  const sec: Record<string, string[]> = {}
-  let cur = ''
-  for (const line of out.split('\n')) {
-    const m = line.match(/^@@(\w+)\s*$/)
-    if (m) {
-      cur = m[1]
-      sec[cur] = []
-    } else if (cur) {
-      sec[cur].push(line)
-    }
-  }
-  return sec
-}
-
 const num = (s: string | undefined): number => {
   const n = parseFloat((s ?? '').trim())
   return Number.isFinite(n) ? n : 0

@@ -7,25 +7,11 @@
 // Значения счётчиков накопительные, поэтому CPU и сеть считаются как дельта двух замеров
 // с паузой — ровно так же, как в Linux-зонде.
 import type { LiveMetrics, MountInfo, ProcInfo } from './types'
+import { sections } from './shell-out'
 
 const SAMPLE_SEC = 0.7
 
 /** Разбить вывод на секции по строкам-маркерам @@NAME (тот же формат, что у Linux-зонда). */
-function sections(out: string): Record<string, string[]> {
-  const sec: Record<string, string[]> = {}
-  let cur = ''
-  for (const line of out.split('\n')) {
-    const m = line.match(/^@@(\w+)\s*$/)
-    if (m) {
-      cur = m[1]
-      sec[cur] = []
-    } else if (cur) {
-      sec[cur].push(line)
-    }
-  }
-  return sec
-}
-
 const num = (s: string | undefined): number => {
   const n = parseFloat((s ?? '').trim())
   return Number.isFinite(n) ? n : 0
