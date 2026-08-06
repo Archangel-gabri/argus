@@ -24,6 +24,10 @@ import type {
   HardwareInfo,
   ScreenPreflight
 } from '../main/types'
+// Тип результата опроса берётся из main, а не переписывается здесь копией. Копия была: обе
+// стороны типизированы, но по разным описаниям, поэтому поле, добавленное в main, у renderer
+// не появлялось — и компилятор об этом молчал.
+export type { ProbeResult } from '../main/ssh'
 import type { ParsedHost } from '../main/sshconfig'
 import type { SftpEntry } from '../main/sftp'
 import type { ForwardInfo } from '../main/forward'
@@ -32,23 +36,6 @@ import type { AgentStatus, ProvisionResult } from '../main/agent'
 
 export type VaultResult = { ok: boolean; error?: string; state: VaultState }
 export type DeviceResult = { ok: boolean; error?: string; device?: DeviceDTO }
-export type ProbeResult = {
-  ok: boolean
-  status: 'online' | 'offline' | 'unknown'
-  cpu?: number
-  ramUsed?: number
-  ramTotal?: number
-  disk?: number
-  uptime?: number
-  load1?: number
-  netRx?: number
-  netTx?: number
-  swapUsed?: number
-  swapTotal?: number
-  tempCpu?: number
-  metrics?: LiveMetrics
-  error?: string
-}
 
 export interface ArgusApi {
   vault: {

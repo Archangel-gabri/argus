@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Bitcoin, Pencil, Plus, Trash2, X, Loader2 } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card, SourceBadge } from '@/components/ui/Page'
+import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
 import { approxMoney, money, plural } from '@/lib/format'
@@ -400,7 +400,6 @@ export function BanksView(): React.JSX.Element {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-slate-200">{w.label}</span>
-                      <SourceBadge kind="live" />
                     </div>
                     <div className="truncate font-mono text-xs text-slate-500">
                       {w.chain} · {w.address.slice(0, 10)}…{w.address.slice(-6)}

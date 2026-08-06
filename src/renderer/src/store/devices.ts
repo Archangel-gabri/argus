@@ -5,6 +5,9 @@ import { nextReachability } from '../../../shared/reachability'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
+/** Ответ опроса ПК — ровно тот, что отдаёт мост. Своё описание разъехалось бы с ним молча. */
+type PcMetrics = Awaited<ReturnType<NonNullable<typeof api>['pc']['metrics']>>
+
 /** Идёт ли полный опрос прямо сейчас — чтобы проходы не накладывались друг на друга. */
 let metricsInFlight = false
 
@@ -41,6 +44,41 @@ interface DevicesStore {
   refreshMetrics: () => Promise<void>
   refreshOsStatus: () => Promise<void>
   refreshOne: (deviceId: string) => Promise<void>
+}
+
+/**
+ * Наложить результат опроса ПК на карточку устройства.
+ *
+ * Один разбор на все пути опроса. Их три — общий проход по парку, обновление статуса ОС и
+ * учащённый опрос открытой карточки, — и раньше каждый раскладывал ответ своим списком из
+ * четырнадцати полей. Списки обязаны совпадать, и они уже расходились: в `refreshOne` не было
+ * ветки для одиночной Windows-машины, на неё уходил Linux-зонд, разбор давал нули, и ровные
+ * нули уезжали в историю метрик как измеренные.
+ *
+ * Правила свежести живут здесь же, потому что они — часть того же ответа: «измерения пришли»
+ * это `cpu`, `ramTotal` или `ramUsed`; диск один свежести не доказывает, но и не опровергает;
+ * `status` без измерений означает, что машину спросили и она молчит.
+ */
+function withPcMetrics(x: DeviceDTO, r: PcMetrics, runningOs: string | null): DeviceDTO {
+  const measured = r.cpu != null || r.ramTotal != null || r.ramUsed != null
+  return {
+    ...x,
+    status: r.status,
+    runningOs,
+    cpu: r.cpu ?? x.cpu,
+    ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
+    disk: r.disk ?? x.disk,
+    uptime: r.uptime ?? x.uptime,
+    load1: r.load1 ?? x.load1,
+    netRx: r.netRx ?? x.netRx,
+    netTx: r.netTx ?? x.netTx,
+    swapUsed: r.swapUsed ?? x.swapUsed,
+    swapTotal: r.swapTotal ?? x.swapTotal,
+    tempCpu: r.tempCpu ?? x.tempCpu,
+    metricsKnown: measured ? true : x.metricsKnown,
+    metricsFresh: measured || r.disk != null ? true : r.status != null ? false : x.metricsFresh,
+    lastSeen: measured ? Date.now() : x.lastSeen
+  }
 }
 
 export const useDevices = create<DevicesStore>((set, get) => ({
@@ -275,35 +313,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
         const r = await api.pc.metrics(d.id)
         const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
         set({
-          devices: get().devices.map((x) =>
-            x.id === d.id
-              ? {
-                  ...x,
-                  status: r.status,
-                  runningOs: running,
-                  cpu: r.cpu ?? x.cpu,
-                  ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
-                  disk: r.disk ?? x.disk,
-                  uptime: r.uptime ?? x.uptime,
-                  load1: r.load1 ?? x.load1,
-                  netRx: r.netRx ?? x.netRx,
-                  netTx: r.netTx ?? x.netTx,
-                  swapUsed: r.swapUsed ?? x.swapUsed,
-                  swapTotal: r.swapTotal ?? x.swapTotal,
-                  tempCpu: r.tempCpu ?? x.tempCpu,
-                  metricsKnown:
-                    r.cpu != null || r.ramTotal != null || r.ramUsed != null ? true : x.metricsKnown,
-                  metricsFresh:
-                    r.cpu != null || r.ramTotal != null || r.ramUsed != null || r.disk != null
-                      ? true
-                      : r.status != null
-                        ? false
-                        : x.metricsFresh,
-                  lastSeen:
-                    r.cpu != null || r.ramTotal != null || r.ramUsed != null ? Date.now() : x.lastSeen
-                }
-              : x
-          )
+          devices: get().devices.map((x) => (x.id === d.id ? withPcMetrics(x, r, running) : x))
         })
       })
     )
@@ -325,35 +335,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       const r = await api.pc.metrics(deviceId)
       const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
       set({
-        devices: get().devices.map((x) =>
-          x.id === deviceId
-            ? {
-                ...x,
-                status: r.status,
-                runningOs: running,
-                cpu: r.cpu ?? x.cpu,
-                ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
-                disk: r.disk ?? x.disk,
-                uptime: r.uptime ?? x.uptime,
-                load1: r.load1 ?? x.load1,
-                netRx: r.netRx ?? x.netRx,
-                netTx: r.netTx ?? x.netTx,
-                swapUsed: r.swapUsed ?? x.swapUsed,
-                swapTotal: r.swapTotal ?? x.swapTotal,
-                tempCpu: r.tempCpu ?? x.tempCpu,
-                metricsKnown:
-                  r.cpu != null || r.ramTotal != null || r.ramUsed != null ? true : x.metricsKnown,
-                metricsFresh:
-                  r.cpu != null || r.ramTotal != null || r.ramUsed != null || r.disk != null
-                    ? true
-                    : r.status != null
-                      ? false
-                      : x.metricsFresh,
-                lastSeen:
-                  r.cpu != null || r.ramTotal != null || r.ramUsed != null ? Date.now() : x.lastSeen
-              }
-            : x
-        )
+        devices: get().devices.map((x) => (x.id === deviceId ? withPcMetrics(x, r, running) : x))
       })
     } else {
       const r = await api.ssh.probe(deviceId)

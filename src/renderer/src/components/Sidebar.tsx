@@ -62,7 +62,9 @@ export function Sidebar(): React.JSX.Element {
   const search = useUI((s) => s.search)
   const setSearch = useUI((s) => s.setSearch)
   const deviceCount = useDevices((s) => s.devices.length)
-  const aiCount = useAi((s) => s.access.length)
+  // Та же формула, что на самом экране ИИ: неоформленные там не считаются доступами. Пока
+  // меню считало все записи, оно писало «ИИ 14» при десяти доступах на открытом экране.
+  const aiCount = useAi((s) => s.access.filter((a) => a.status !== 'planned').length)
   const badges: Partial<Record<ViewId, number>> = { devices: deviceCount, ai: aiCount }
   const locked = useVault((s) => s.status) !== 'unlocked'
   const lock = useVault((s) => s.lock)
