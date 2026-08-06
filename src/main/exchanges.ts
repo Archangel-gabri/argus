@@ -30,6 +30,7 @@
 //     format»; метка времени — ISO-8601 UTC с миллисекундами (`2020-12-08T09:08:57.715Z`).
 
 import { createHmac } from 'node:crypto'
+import { DeadlineError, withDeadline } from '../shared/deadline'
 import {
   CircuitOpenError,
   PermanentHttpError,
@@ -416,6 +417,9 @@ class ExchangeBusyError extends RetryableHttpError {
 }
 
 /** Имя содержит Timeout — по нему `isRetryable` опознаёт тайм-аут как повод повторить. */
+/** Метка «тело оказалось не JSON»: отличает её от настоящего `null` в ответе биржи. */
+const NOT_JSON = Symbol('не JSON')
+
 class ExchangeTimeoutError extends Error {
   constructor(message: string) {
     super(message)
@@ -508,28 +512,45 @@ export async function fetchExchangeBalance(
               }
 
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-        let response: Response
+        // Срок общий на весь путь, включая чтение тела. Раньше таймер снимался сразу после
+        // заголовков: биржа, приславшая 200 и замолчавшая на теле, оставляла разбор без
+        // ограничения — а счета опрашиваются по очереди, поэтому экран «Финансы» переставал
+        // обновлять ВСЕ следующие, и после ввода ключей кнопка навсегда оставалась
+        // «Проверяю…». Отмена запроса чтение уже полученного тела не прерывает, одной её мало.
+        let data: unknown
+        let status = 0
+        let retryAfter: string | null = null
         try {
-          response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+          const got = await withDeadline<{ status: number; retryAfter: string | null; data: unknown }>({
+            ms: TIMEOUT_MS,
+            dispose: () => controller.abort(),
+            run: async (gate) => {
+              const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+              if (!gate.active()) return
+              const body: unknown = await response.json().catch(() => NOT_JSON)
+              gate.settle(() => ({
+                status: response.status,
+                retryAfter: response.headers?.get('retry-after') ?? null,
+                data: body
+              }))
+            }
+          })
+          status = got.status
+          retryAfter = got.retryAfter
+          data = got.data
         } catch (error) {
-          if (controller.signal.aborted) {
+          if (error instanceof DeadlineError || controller.signal.aborted) {
             throw new ExchangeTimeoutError(`${label} не ответил за 15 с — баланс неизвестен`)
           }
           throw error
-        } finally {
-          clearTimeout(timer)
         }
 
         // HTTP-слой: 429 и пятисотки стоит повторить, 4xx — нет. Это ещё не про содержимое:
         // настоящий отказ обеих бирж приезжает с кодом 200.
-        const httpFailure = classifyResponse(response.status, response.headers?.get('retry-after'))
+        const httpFailure = classifyResponse(status, retryAfter)
         if (httpFailure) throw httpFailure
 
-        let data: unknown
-        try {
-          data = await response.json()
-        } catch {
+        if (data === NOT_JSON) {
           throw new Error(`${label}: ответ не является JSON — баланс неизвестен`)
         }
 

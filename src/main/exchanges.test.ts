@@ -530,3 +530,31 @@ describe('опознание биржи по счёту', () => {
     expect(exchangeOf({ kind: 'exchange', institution: 'Kraken', name: 'Kraken' })).toBeNull()
   })
 })
+
+describe('срок на весь ответ биржи', () => {
+  it('биржа, замолчавшая на теле, не подвешивает опрос остальных счетов', async () => {
+    // Счета опрашиваются по очереди. Пока таймер снимался после заголовков, биржа, приславшая
+    // 200 и замолчавшая на теле, останавливала весь обход: экран «Финансы» переставал
+    // обновлять все следующие счета, а после ввода ключей кнопка навсегда оставалась
+    // «Проверяю…».
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        headers: { get: () => null },
+        json: () => new Promise(() => {}) // тело не придёт никогда
+      })
+    )
+
+    const promise = fetchExchangeBalance('bybit', { apiKey: 'k', secret: 's' })
+    await vi.advanceTimersByTimeAsync(20_000)
+    const result = await promise
+
+    expect(result.status).toBe('error')
+    expect(result.error ?? '').toMatch(/не ответил|15 с/i)
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+})
