@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const TMP = mkdtempSync(join(tmpdir(), 'argus-recovery-'))
-const DB = join(TMP, 'nexus-vault.db')
-const META = join(TMP, 'nexus-vault.meta.json')
+const DB = join(TMP, 'argus-vault.db')
+const META = join(TMP, 'argus-vault.meta.json')
 const META_NEW = `${META}.new`
 const BACKUP = join(TMP, 'backup.db')
 const META_BACKUP = join(TMP, 'backup.meta.json')

@@ -65,8 +65,8 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     await vault.initialize(PASSWORD)
     expect(vault.vaultStatus()).toBe('unlocked')
     const files = readdirSync(TMP)
-    expect(files).toContain('nexus-vault.db')
-    expect(files).toContain('nexus-vault.meta.json')
+    expect(files).toContain('argus-vault.db')
+    expect(files).toContain('argus-vault.meta.json')
   })
 
   it('открывается своим паролем после блокировки', async () => {
@@ -86,7 +86,7 @@ describe('хранилище на реальном SQLCipher-файле', () => 
     await vault.unlock(PASSWORD)
     vault.createDevice(device({ name: 'encrypted-check' }))
     vault.lock()
-    const raw = readFileSync(join(TMP, 'nexus-vault.db'))
+    const raw = readFileSync(join(TMP, 'argus-vault.db'))
     // Проверяем именно байты файла: без шифрования секрет лежал бы в нём открытым текстом.
     expect(raw.includes(Buffer.from(SECRET_PASSWORD))).toBe(false)
     expect(raw.subarray(0, 16).toString('latin1')).not.toBe('SQLite format 3\0')

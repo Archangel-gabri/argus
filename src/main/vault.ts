@@ -77,8 +77,69 @@ const COLUMNS = [
 ] as const
 const INSERT_SQL = `INSERT INTO devices (${COLUMNS.join(',')}) VALUES (${COLUMNS.map((c) => '@' + c).join(',')})`
 
-const dbPath = (): string => join(app.getPath('userData'), 'nexus-vault.db')
-const metaPath = (): string => join(app.getPath('userData'), 'nexus-vault.meta.json')
+/**
+ * Где лежит хранилище.
+ *
+ * Файл назывался `nexus-vault.db` — по старому имени приложения. Приложение зовут Argus, и
+ * старое имя не должно оставаться нигде, включая пути данных. Но у владельца этот файл лежит
+ * на диске СО ВСЕМИ его данными: просто сменить имя в коде значит показать ему пустое
+ * приложение и экран «создать хранилище» вместо его серверов, счетов и ключей.
+ *
+ * Поэтому имя меняется вместе с файлом: при первом обращении, если старый файл есть, а нового
+ * нет, пара «база + метаданные» переименовывается. `renameSync` в пределах одного каталога —
+ * атомарная операция файловой системы: она либо прошла целиком, либо не начиналась, промежуточного
+ * состояния «база переименована, метаданные нет» не существует.
+ *
+ * Переименовываем ТОЛЬКО когда нового файла нет. Если он уже есть — значит миграция прошла
+ * раньше, а старый файл рядом это чей-то бэкап, и трогать его нельзя.
+ */
+const LEGACY_DB = 'nexus-vault.db'
+const LEGACY_META = 'nexus-vault.meta.json'
+const DB_FILE = 'argus-vault.db'
+const META_FILE = 'argus-vault.meta.json'
+
+let migrationChecked = false
+
+function migrateLegacyNames(): void {
+  if (migrationChecked) return
+  migrationChecked = true
+  let dir: string
+  try {
+    dir = app.getPath('userData')
+  } catch {
+    return // вне Electron (часть проверок) — мигрировать нечего
+  }
+  const oldDb = join(dir, LEGACY_DB)
+  const newDb = join(dir, DB_FILE)
+  const oldMeta = join(dir, LEGACY_META)
+  const newMeta = join(dir, META_FILE)
+  // Метаданные без базы (и наоборот) — это не наш случай: хранилище считается заведённым только
+  // когда есть оба файла. Мигрируем лишь полную пару, иначе оставляем как есть.
+  if (!existsSync(oldDb) || !existsSync(oldMeta)) return
+  if (existsSync(newDb) || existsSync(newMeta)) return
+  try {
+    renameSync(oldDb, newDb)
+    renameSync(oldMeta, newMeta)
+  } catch {
+    // Переименовать не вышло (права, занятый файл) — работаем со старым именем дальше:
+    // потерять доступ к данным хуже, чем оставить старое имя файла.
+    migrationChecked = false
+  }
+}
+
+const dbPath = (): string => {
+  migrateLegacyNames()
+  const dir = app.getPath('userData')
+  const preferred = join(dir, DB_FILE)
+  return existsSync(preferred) || !existsSync(join(dir, LEGACY_DB)) ? preferred : join(dir, LEGACY_DB)
+}
+
+const metaPath = (): string => {
+  migrateLegacyNames()
+  const dir = app.getPath('userData')
+  const preferred = join(dir, META_FILE)
+  return existsSync(preferred) || !existsSync(join(dir, LEGACY_META)) ? preferred : join(dir, LEGACY_META)
+}
 
 export const isInitialized = (): boolean => existsSync(metaPath()) && existsSync(dbPath())
 export const isUnlocked = (): boolean => db !== null

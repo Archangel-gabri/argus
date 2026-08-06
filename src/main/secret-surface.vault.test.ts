@@ -119,7 +119,7 @@ describe('поверхность секретов', () => {
   describe('сток «диск»', () => {
     it('файл базы зашифрован — ни одного секрета в его байтах', () => {
       vault.lock()
-      const raw = readFileSync(join(TMP, 'nexus-vault.db'))
+      const raw = readFileSync(join(TMP, 'argus-vault.db'))
       for (const [name, value] of Object.entries(SECRETS)) {
         expect(raw.includes(Buffer.from(value)), `${name} лежит на диске открытым текстом`).toBe(false)
       }
@@ -129,7 +129,7 @@ describe('поверхность секретов', () => {
     })
 
     it('файл соли не содержит ни пароля, ни секретов', () => {
-      const meta = readFileSync(join(TMP, 'nexus-vault.meta.json'), 'utf8')
+      const meta = readFileSync(join(TMP, 'argus-vault.meta.json'), 'utf8')
       expect(meta).not.toContain(PASSWORD)
       for (const value of Object.values(SECRETS)) expect(meta).not.toContain(value)
     })
