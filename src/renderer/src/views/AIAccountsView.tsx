@@ -247,7 +247,6 @@ export function AIAccountsView(): React.JSX.Element {
 
       {!api && (
         <p className="border-b border-border bg-surface/60 px-6 py-2 text-[11px] text-slate-400">
-          Доступно только в приложении.
         </p>
       )}
       {error && (

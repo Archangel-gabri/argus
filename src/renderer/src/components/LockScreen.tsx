@@ -92,7 +92,7 @@ export function LockScreen(): React.JSX.Element {
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {setup
-              ? 'Задай мастер-пароль — им шифруется вся база (SQLCipher).'
+              ? 'Задай мастер-пароль — им шифруется вся база.'
               : 'Введи мастер-пароль для доступа к данным.'}
           </p>
         </div>
@@ -147,7 +147,7 @@ export function LockScreen(): React.JSX.Element {
                   onChange={(e) => setAck(e.target.checked)}
                   className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#f59e0b]"
                 />
-                Понимаю: восстановления мастер-пароля НЕТ — потеря пароля = потеря всех данных vault.
+                Понимаю: восстановления мастер-пароля НЕТ — потеря пароля = потеря всех данных.
               </label>
             </>
           )}
@@ -170,7 +170,7 @@ export function LockScreen(): React.JSX.Element {
         </button>
 
         <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
-          <ShieldCheck className="h-3.5 w-3.5" /> Локально · шифрование SQLCipher
+          <ShieldCheck className="h-3.5 w-3.5" /> Всё хранится локально и в зашифрованном виде
         </div>
         {keyringBackend === 'basic_text' && (
           <p className="mt-2 text-center text-[11px] text-amber-500/80">

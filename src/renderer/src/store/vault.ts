@@ -16,8 +16,11 @@ interface VaultStore {
 }
 
 export const useVault = create<VaultStore>((set) => ({
-  // Browser fallback (no Electron API present): act unlocked so previews render.
-  status: api ? 'locked' : 'unlocked',
+  // Превью в браузере — только при разработке. В собранном приложении отсутствие `window.api`
+  // означает, что preload не поднялся; притворяться в этом случае «открытым» нельзя. Раньше
+  // ветка не была ограничена сборкой, и любой сбой моста (contextBridge глотает ошибку в
+  // console.error) открывал приложение БЕЗ запроса мастер-пароля и с выдуманными данными.
+  status: api || !import.meta.env.DEV ? 'locked' : 'unlocked',
   keyringBackend: api ? 'unknown' : 'browser-preview',
   canRemember: false,
   busy: false,

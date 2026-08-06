@@ -341,7 +341,14 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
           ))}
           <button
             type="button"
-            onClick={() => setAccounts([...accounts, { email: '' }])}
+            onClick={() =>
+              // `verified: true` обязателен. Уборка неподтверждённых аккаунтов идёт при КАЖДОМ
+              // открытии хранилища и оставляет только `verified || hasKey` — а руками завести
+              // ключ аккаунту негде. Без этой пометки запись, добавленную владельцем, стирало
+              // на следующем запуске, молча и вместе с сохранённым паролем. Аккаунт, вписанный
+              // руками, и есть то «прямое слово владельца», ради которого оговорка сделана.
+              setAccounts([...accounts, { email: '', verified: true }])
+            }
             className="mt-0.5 rounded px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-border hover:bg-card-hover hover:text-slate-200"
           >
             + аккаунт

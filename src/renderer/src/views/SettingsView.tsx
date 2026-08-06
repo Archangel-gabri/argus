@@ -49,7 +49,7 @@ function ChangePassword(): React.JSX.Element {
       }
       const r = await api.vault.changePassword(cur, next)
       if (r.ok) {
-        setMsg({ ok: true, text: 'Мастер-пароль изменён (SQLCipher rekey выполнен).' })
+        setMsg({ ok: true, text: 'Мастер-пароль изменён. Старый больше не подойдёт.' })
         setCur('')
         setNext('')
         setConfirm('')
@@ -70,7 +70,7 @@ function ChangePassword(): React.JSX.Element {
       <input className={inputCls} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Ещё раз" disabled={!api} />
       <div className="col-span-3 flex items-center justify-between">
         <span className={msg ? (msg.ok ? 'text-xs text-emerald-400' : 'text-xs text-rose-400') : 'text-[11px] text-slate-400'}>
-          {msg ? msg.text : api ? 'Перешифрует базу новым ключом.' : 'Только в десктоп-приложении.'}
+          {msg ? msg.text : 'Перешифрует базу новым ключом.'}
         </span>
         <button
           type="submit"
@@ -125,8 +125,7 @@ export function SettingsView(): React.JSX.Element {
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
             Смена мастер-пароля
             <Hint>
-              Из нового пароля выводится ключ (Argon2id), и база перешифровывается им целиком —
-              SQLCipher rekey.
+              Старый пароль перестанет подходить сразу.
             </Hint>
           </div>
           <ChangePassword />

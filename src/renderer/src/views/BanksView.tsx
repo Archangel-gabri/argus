@@ -11,7 +11,7 @@ import { AccountList } from '@/components/finance/AccountList'
 import { KIND_LABEL, totals as accountTotals } from '@/lib/finance'
 import { useAccounts } from '@/store/accounts'
 import { useWallets } from '@/store/wallets'
-import type { Currency, FinanceAccountInput, FinanceKind, Wallet, WalletInput } from '@/types'
+import type { Currency, FinanceAccountInput, FinanceKind, Wallet, WalletInput, FinanceAccount } from '@/types'
 import { CURRENCY_CODES } from '@/types'
 
 const CHAINS = ['ETH', 'BTC', 'TON']
@@ -91,19 +91,22 @@ function WalletForm({
  * («веду свои счета») работал в одну сторону.
  */
 function AccountForm({
+  initial,
   onSubmit,
   onClose,
   error
 }: {
+  /** Счёт, который правим. Пусто — заводим новый. */
+  initial?: FinanceAccount
   onSubmit: (i: FinanceAccountInput) => Promise<boolean>
   onClose: () => void
   error: string | null
 }): React.JSX.Element {
-  const [kind, setKind] = useState<FinanceKind>('bank')
-  const [name, setName] = useState('')
-  const [institution, setInstitution] = useState('')
-  const [currency, setCurrency] = useState<Currency>('RUB')
-  const [balance, setBalance] = useState('')
+  const [kind, setKind] = useState<FinanceKind>(initial?.kind ?? 'bank')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [institution, setInstitution] = useState(initial?.institution ?? '')
+  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? 'RUB')
+  const [balance, setBalance] = useState(initial?.balance != null ? String(initial.balance) : '')
   const [busy, setBusy] = useState(false)
   const [validation, setValidation] = useState<string | null>(null)
 
@@ -129,6 +132,7 @@ function AccountForm({
         institution: institution.trim(),
         currency,
         balance: value,
+        // Правка руками — это ручной источник, даже если раньше остаток приходил по ключу.
         source: 'manual'
       })
       if (ok) onClose()
@@ -141,7 +145,7 @@ function AccountForm({
     <Card className="mb-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-white">Добавить счёт</h3>
+          <h3 className="text-sm font-semibold text-white">{initial ? 'Изменить счёт' : 'Добавить счёт'}</h3>
           <Hint>Банк, брокер, биржа, кошелёк или наличные. Остаток можно вписать позже.</Hint>
         </div>
         <button onClick={onClose} className="rounded p-1.5 text-slate-400 hover:text-slate-200" aria-label="Закрыть">
@@ -215,7 +219,9 @@ export function BanksView(): React.JSX.Element {
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState<Wallet | null>(null)
   const [addingAccount, setAddingAccount] = useState(false)
+  const [editingAccount, setEditingAccount] = useState<FinanceAccount | null>(null)
   const addAccount = useAccounts((s) => s.add)
+  const updateAccount = useAccounts((s) => s.update)
   // Стор счетов складывал ошибку в восьми местах, и её не показывал никто: неудачная правка
   // остатка выглядела как «кнопка не работает».
   const accountsError = useAccounts((s) => s.error)
@@ -305,14 +311,21 @@ export function BanksView(): React.JSX.Element {
           карандаш у B» не перемонтирует компонент: React видит тот же элемент,
           useState сохраняет значения формы A, а «Сохранить» отправляет их с
           идентификатором B — то есть молча подменяет чужую запись. */}
-      {addingAccount && (
+      {(addingAccount || editingAccount) && (
         <AccountForm
+          // key даёт форме идентичность цели правки: без него переход «карандаш у A → карандаш
+          // у B» не перемонтирует компонент, и «Сохранить» отправит поля A на запись B.
+          key={editingAccount?.id ?? 'new'}
+          initial={editingAccount ?? undefined}
           error={accountsError}
-          onClose={() => setAddingAccount(false)}
-          onSubmit={(input) => addAccount(input)}
+          onClose={() => {
+            setAddingAccount(false)
+            setEditingAccount(null)
+          }}
+          onSubmit={(input) => (editingAccount ? updateAccount(editingAccount.id, input) : addAccount(input))}
         />
       )}
-      {accountsError && !addingAccount && (
+      {accountsError && !addingAccount && !editingAccount && (
         <p role="alert" className="mb-3 text-xs text-rose-400">
           Счета: {accountsError}
         </p>
@@ -363,7 +376,13 @@ export function BanksView(): React.JSX.Element {
           {accounts.length > 0 && (
             <div className="mb-5">
               <h2 className="mb-3 text-sm font-semibold text-white">Счета</h2>
-              <AccountList accounts={accounts} />
+              <AccountList
+                accounts={accounts}
+                onEdit={(a) => {
+                  setAddingAccount(false)
+                  setEditingAccount(a)
+                }}
+              />
             </div>
           )}
           <h2 className="mb-3 text-sm font-semibold text-white">Криптокошельки</h2>

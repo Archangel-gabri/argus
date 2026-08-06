@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, KeyRound, LogIn, Pencil, Trash2, X } from 'lucide-react'
+import { Check, Coins, KeyRound, LogIn, Pencil, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { money } from '@/lib/format'
 import { KIND_LABEL, balanceAge, groupByKind } from '@/lib/finance'
@@ -15,7 +15,15 @@ import { BrandMark } from '@/components/BrandMark'
  * цифру придётся регулярно, и каждый лишний шаг между «увидел в приложении банка» и «внёс сюда»
  * — это шаг, после которого цифру не внесут вовсе.
  */
-function AccountRow({ account, now }: { account: FinanceAccount; now: number }): React.JSX.Element {
+function AccountRow({
+  account,
+  now,
+  onEdit
+}: {
+  account: FinanceAccount
+  now: number
+  onEdit?: (a: FinanceAccount) => void
+}): React.JSX.Element {
   const update = useAccounts((s) => s.update)
   const remove = useAccounts((s) => s.remove)
   const setCreds = useAccounts((s) => s.setCreds)
@@ -207,6 +215,18 @@ function AccountRow({ account, now }: { account: FinanceAccount; now: number }):
           }}
           className="rounded p-1.5 text-slate-500 hover:text-accent"
           aria-label={`Изменить остаток ${account.name}`}
+          title="Вписать остаток"
+        >
+          <Coins className="h-3.5 w-3.5" />
+        </button>
+        {/* Правка самих полей счёта. Раньше карандаш открывал только ввод остатка, и опечатку
+            в названии или ошибочно выбранную валюту исправить было нечем: оставалось удалить
+            счёт и завести заново, а удаление счёта биржи заодно стирает сохранённые ключи. */}
+        <button
+          onClick={() => onEdit?.(account)}
+          className="rounded p-1.5 text-slate-500 hover:text-accent"
+          aria-label={`Изменить счёт ${account.name}`}
+          title="Изменить название, тип, валюту"
         >
           <Pencil className="h-3.5 w-3.5" />
         </button>
@@ -309,10 +329,13 @@ function CredsForm({
 /** Счета по группам: банки, брокер, биржи, кошельки, наличные. */
 export function AccountList({
   accounts,
-  now = Date.now()
+  now = Date.now(),
+  onEdit
 }: {
   accounts: FinanceAccount[]
   now?: number
+  /** Открыть форму правки полей счёта. Без неё карандаш в строке нечем обслужить. */
+  onEdit?: (a: FinanceAccount) => void
 }): React.JSX.Element | null {
   const groups = groupByKind(accounts)
   const checkBankSessions = useAccounts((s) => s.checkBankSessions)
@@ -337,7 +360,7 @@ export function AccountList({
           </h3>
           <div className="divide-y divide-border">
             {g.items.map((a) => (
-              <AccountRow key={a.id} account={a} now={now} />
+              <AccountRow key={a.id} account={a} now={now} onEdit={onEdit} />
             ))}
           </div>
         </section>

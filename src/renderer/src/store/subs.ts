@@ -19,14 +19,14 @@ const messageOf = (error: unknown): string =>
   error instanceof Error && error.message ? error.message : 'Операция не выполнена'
 
 export const useSubs = create<SubsStore>((set, get) => ({
-  subs: api ? [] : MOCK_SUBSCRIPTIONS,
-  loaded: !api,
+  subs: api || !import.meta.env.DEV ? [] : MOCK_SUBSCRIPTIONS,
+  loaded: !api && import.meta.env.DEV,
   loading: false,
   error: null,
 
   load: async () => {
     if (!api) {
-      set({ subs: MOCK_SUBSCRIPTIONS, loaded: true })
+      set({ subs: import.meta.env.DEV ? MOCK_SUBSCRIPTIONS : [], loaded: true })
       return
     }
     if (get().loading) return

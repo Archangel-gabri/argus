@@ -44,8 +44,10 @@ interface DevicesStore {
 }
 
 export const useDevices = create<DevicesStore>((set, get) => ({
-  devices: api ? [] : FALLBACK_DEVICES,
-  loaded: !api,
+  // Заглушка парка — только при разработке: в собранном приложении показывать выдуманные
+  // серверы вместо честного «мост не поднялся» значит врать о состоянии инфраструктуры.
+  devices: api || !import.meta.env.DEV ? [] : FALLBACK_DEVICES,
+  loaded: !api && import.meta.env.DEV,
   error: null,
 
   load: async () => {
@@ -54,7 +56,7 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     // выключенной, хотя в новой сессии её спросили ровно один раз.
     missStreak.clear()
     if (!api) {
-      set({ devices: FALLBACK_DEVICES, loaded: true })
+      set({ devices: import.meta.env.DEV ? FALLBACK_DEVICES : [], loaded: true })
       return
     }
     // Сначала рисуем последнее известное состояние из базы (мгновенно), потом уточняем.

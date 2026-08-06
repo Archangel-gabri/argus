@@ -82,3 +82,26 @@ describe('сохранение ИИ-доступа', () => {
     expect(input.limits).toMatchObject({ tpd: 1_000_000, weekTokens: 5_000_000 })
   })
 })
+
+describe('аккаунт, заведённый руками', () => {
+  beforeEach(() => update.mockClear())
+
+  it('помечается подтверждённым, иначе уборка сотрёт его на следующем запуске', async () => {
+    // Уборка `keepVerified` (src/main/ai-accounts-prune.ts) оставляет только `verified || hasKey`
+    // и запускается при каждом открытии хранилища. Ключ аккаунту руками завести негде, значит
+    // без этой пометки любая вторая почта провайдера исчезала молча — вместе с паролем.
+    const { AccessForm } = await import('./AccessForm')
+    const user = userEvent.setup()
+    render(<AccessForm initial={access()} onClose={() => {}} />)
+
+    await user.click(screen.getByRole('button', { name: /\+ аккаунт/ }))
+    const emails = screen.getAllByPlaceholderText(/почта/i)
+    await user.type(emails[emails.length - 1], 'second@example.com')
+    await user.click(screen.getByRole('button', { name: /Сохранить/ }))
+
+    const [, input] = update.mock.calls[0] as [string, { accounts: Array<Record<string, unknown>> }]
+    const added = input.accounts.find((a) => a.email === 'second@example.com')
+    expect(added).toBeDefined()
+    expect(added?.verified).toBe(true)
+  })
+})
