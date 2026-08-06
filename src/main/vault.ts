@@ -100,6 +100,12 @@ const DB_FILE = 'argus-vault.db'
 const META_FILE = 'argus-vault.meta.json'
 
 let migrationChecked = false
+// Работаем со старой парой: миграция не состоялась (нет прав, занятый файл, или под новым
+// именем лежит чужая половина). Оба пути — база и метаданные — обязаны выбирать ОДНО И ТО ЖЕ:
+// разъехавшись, они дают базу от одного хранилища и соль от другого.
+let legacyPair = false
+// Редкий исход: первое переименование прошло, второе нет, и откат тоже не удался.
+let splitAfterFailedMigration = false
 
 function migrateLegacyNames(): void {
   if (migrationChecked) return
@@ -114,16 +120,42 @@ function migrateLegacyNames(): void {
   const newDb = join(dir, DB_FILE)
   const oldMeta = join(dir, LEGACY_META)
   const newMeta = join(dir, META_FILE)
-  // Метаданные без базы (и наоборот) — это не наш случай: хранилище считается заведённым только
-  // когда есть оба файла. Мигрируем лишь полную пару, иначе оставляем как есть.
+
+  // Пара под НОВЫМ именем уже целая — миграция прошла раньше, трогать нечего.
+  if (existsSync(newDb) && existsSync(newMeta)) return
+  // Под старым именем нет целой пары — мигрировать нечего.
   if (!existsSync(oldDb) || !existsSync(oldMeta)) return
-  if (existsSync(newDb) || existsSync(newMeta)) return
+  // Под новым именем лежит ПОЛОВИНА пары — остаток чужой или прерванной операции. Здесь нельзя
+  // ни мигрировать (затрём чужое), ни промолчать: молчание оставляло выбор путей за парой
+  // независимых проверок, и они выбирали РАЗНОЕ — старую базу и новые метаданные. Соль в них
+  // от другого пароля, поэтому правильный пароль владельца базу не открывал бы, а приложение
+  // при этом уверенно сообщало, что хранилище заведено. Отходим в сторону целиком.
+  if (existsSync(newDb) || existsSync(newMeta)) {
+    legacyPair = true
+    return
+  }
+
+  // Два переименования не образуют одной атомарной операции: между ними приложение может
+  // умереть, и на диске останется база под новым именем с метаданными под старым. Поэтому
+  // после первого шага второй обязан либо пройти, либо откатить первый.
   try {
     renameSync(oldDb, newDb)
+  } catch {
+    migrationChecked = false // не вышло — работаем со старым именем, данные важнее имени
+    legacyPair = true
+    return
+  }
+  try {
     renameSync(oldMeta, newMeta)
   } catch {
-    // Переименовать не вышло (права, занятый файл) — работаем со старым именем дальше:
-    // потерять доступ к данным хуже, чем оставить старое имя файла.
+    try {
+      renameSync(newDb, oldDb) // откат: пара снова целая под старым именем
+      legacyPair = true
+    } catch {
+      // Откатить не удалось — пара разъехалась. Дальше работаем по фактическому положению
+      // файлов (база новая, метаданные старые), а не по общему признаку.
+      splitAfterFailedMigration = true
+    }
     migrationChecked = false
   }
 }
@@ -131,15 +163,15 @@ function migrateLegacyNames(): void {
 const dbPath = (): string => {
   migrateLegacyNames()
   const dir = app.getPath('userData')
-  const preferred = join(dir, DB_FILE)
-  return existsSync(preferred) || !existsSync(join(dir, LEGACY_DB)) ? preferred : join(dir, LEGACY_DB)
+  if (splitAfterFailedMigration) return join(dir, DB_FILE)
+  return legacyPair ? join(dir, LEGACY_DB) : join(dir, DB_FILE)
 }
 
 const metaPath = (): string => {
   migrateLegacyNames()
   const dir = app.getPath('userData')
-  const preferred = join(dir, META_FILE)
-  return existsSync(preferred) || !existsSync(join(dir, LEGACY_META)) ? preferred : join(dir, LEGACY_META)
+  if (splitAfterFailedMigration) return join(dir, LEGACY_META)
+  return legacyPair ? join(dir, LEGACY_META) : join(dir, META_FILE)
 }
 
 export const isInitialized = (): boolean => existsSync(metaPath()) && existsSync(dbPath())

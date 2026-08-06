@@ -70,3 +70,37 @@ describe('имя файла хранилища', () => {
     expect(existsSync(join(TMP, 'nexus-vault.db'))).toBe(false)
   })
 })
+
+describe('половина пары под новым именем', () => {
+  it('база и метаданные не смешиваются из разных хранилищ', async () => {
+    // Контрпример, найденный адверсарной проверкой: рядом с целой старой парой лежит только
+    // `argus-vault.meta.json` — остаток прерванной или ручной операции. Прежний код отменял
+    // миграцию, а дальше два независимых выбора пути расходились: база бралась старая, а
+    // метаданные — новые чужие. Соль в них от другого пароля, поэтому правильный пароль
+    // владельца базу не открыл бы, а приложение уверенно сообщало бы, что хранилище заведено.
+    writeFileSync(join(TMP, 'nexus-vault.db'), 'данные владельца')
+    writeFileSync(join(TMP, 'nexus-vault.meta.json'), '{"соль":"своя"}')
+    writeFileSync(join(TMP, 'argus-vault.meta.json'), '{"соль":"чужая"}')
+
+    const vault = await load()
+    expect(vault.isInitialized()).toBe(true)
+
+    // Оба пути обязаны указывать на ОДНО хранилище — старое, оно целое.
+    expect(existsSync(join(TMP, 'nexus-vault.db'))).toBe(true)
+    expect(readFileSync(join(TMP, 'nexus-vault.meta.json'), 'utf8')).toBe('{"соль":"своя"}')
+    // Чужая половина не тронута и не выбрана.
+    expect(readFileSync(join(TMP, 'argus-vault.meta.json'), 'utf8')).toBe('{"соль":"чужая"}')
+    expect(existsSync(join(TMP, 'argus-vault.db'))).toBe(false)
+  })
+
+  it('одинокая новая база рядом со старой парой тоже не смешивается', async () => {
+    writeFileSync(join(TMP, 'nexus-vault.db'), 'данные владельца')
+    writeFileSync(join(TMP, 'nexus-vault.meta.json'), '{"соль":"своя"}')
+    writeFileSync(join(TMP, 'argus-vault.db'), 'чужая база')
+
+    const vault = await load()
+    expect(vault.isInitialized()).toBe(true)
+    expect(readFileSync(join(TMP, 'argus-vault.db'), 'utf8')).toBe('чужая база')
+    expect(existsSync(join(TMP, 'nexus-vault.db'))).toBe(true)
+  })
+})
