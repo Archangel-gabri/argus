@@ -277,10 +277,36 @@ function tcpAlive(host: string, port: number, ms = 1500): Promise<boolean> {
   })
 }
 
+/** Сколько ждём `docker start`. Живой демон отвечает мгновенно; десять секунд — это уже он завис. */
+const DOCKER_START_MS = 10_000
+/** Сколько ждём, пока локальный сервер займёт порт. Дольше секунды это не делается никогда. */
+const LOCAL_LISTEN_MS = 5_000
+
 /** guacd крутится в Docker-контейнере `argus-guacd` на ноуте; поднимаем, если приспал. */
 async function ensureGuacd(): Promise<boolean> {
   if (await tcpAlive(GUACD.host, GUACD.port)) return true
-  await new Promise<void>((r) => execFile('docker', ['start', 'argus-guacd'], () => r())) // best-effort
+  // Демон Docker может зависнуть, и тогда `execFile` не вызовет обратный ход НИКОГДА: кнопка
+  // «Открыть экран» оставалась бы со значком ожидания, а сам процесс — жить. Ограничиваем и
+  // убиваем командную оболочку (не контейнер — его мы не запускали).
+  await new Promise<void>((r) => {
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      r()
+    }
+    const child = execFile('docker', ['start', 'argus-guacd'], () => finish())
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* процесс мог уже завершиться */
+      }
+      finish()
+    }, DOCKER_START_MS)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    child.once('exit', () => clearTimeout(timer))
+  })
   for (let i = 0; i < 6; i++) {
     if (await tcpAlive(GUACD.host, GUACD.port)) return true
     await delay(500)
@@ -295,9 +321,33 @@ let guacPort = 0
 async function ensureGuacServer(): Promise<number> {
   if (guacServer && guacPort) return guacPort
   const httpServer = http.createServer()
+  // Занятие локального порта тоже может не ответить. Раньше здесь не было ни срока, ни уборки:
+  // экран оставался в ожидании уже ПОСЛЕ успешного Docker и SSH, то есть на последнем шаге.
   await new Promise<void>((res, rej) => {
-    httpServer.once('error', rej)
-    httpServer.listen(0, '127.0.0.1', () => res())
+    let done = false
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      try {
+        httpServer.close()
+      } catch {
+        /* сервер мог не подняться вовсе */
+      }
+      rej(new Error('локальный сервер экрана не занял порт за 5 с'))
+    }, LOCAL_LISTEN_MS)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    httpServer.once('error', (e) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      rej(e)
+    })
+    httpServer.listen(0, '127.0.0.1', () => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      res()
+    })
   })
   guacPort = (httpServer.address() as AddressInfo).port
   guacHttpServer = httpServer
