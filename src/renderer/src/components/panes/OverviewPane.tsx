@@ -89,6 +89,54 @@ function confirmPowerText(d: DeviceDTO, action: 'reboot' | 'poweroff' | 'suspend
 }
 
 // Multi-boot ПК: одна карточка, текущая ОС + выбор из N ОС + питание на живой ОС.
+/**
+ * Кнопка действия над машиной.
+ *
+ * Жила двумя одинаковыми копиями внутри `DualBootSection` и `PowerSection` — по 34 строки
+ * каждая. Дело не только в повторе: объявленная ВНУТРИ тела компонента, она на каждой
+ * перерисовке становится новым типом, и React пересоздаёт узел вместо обновления. Карточка
+ * перерисовывается по опросу дважды в минуту — и всё это время фокус слетал с кнопки у того,
+ * кто ходит по интерфейсу с клавиатуры.
+ *
+ * `busy` — идентификатор действия, которое сейчас идёт: у него крутится значок, остальные
+ * заблокированы, чтобы нельзя было запустить второе поверх первого.
+ */
+function ActionButton({
+  id,
+  label,
+  icon: Icon,
+  onClick,
+  busy,
+  danger,
+  active
+}: {
+  id: string
+  label: string
+  icon: typeof Power
+  onClick: () => void
+  busy: string | null
+  danger?: boolean
+  active?: boolean
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      disabled={!!busy || active}
+      className={cn(
+        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
+        active
+          ? 'bg-accent/15 text-accent ring-accent/30'
+          : danger
+            ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
+            : 'text-slate-200 ring-border hover:bg-white/5'
+      )}
+    >
+      {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+      {label}
+    </button>
+  )
+}
+
 function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const [current, setCurrent] = useState<string | null>(null) // метка живой ОС; '' = off; null = проверяю
   const [busy, setBusy] = useState<string | null>(null)
@@ -173,38 +221,6 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
           ? { text: 'выключен / offline', cls: 'text-slate-500' }
           : { text: `Сейчас: ${current}`, cls: famOf(current) === 'windows' ? 'text-sky-400' : 'text-emerald-400' }
 
-  const Btn = ({
-    id,
-    label,
-    icon: Icon,
-    onClick,
-    danger,
-    active
-  }: {
-    id: string
-    label: string
-    icon: typeof Power
-    onClick: () => void
-    danger?: boolean
-    active?: boolean
-  }): React.JSX.Element => (
-    <button
-      onClick={onClick}
-      disabled={!!busy || active}
-      className={cn(
-        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
-        active
-          ? 'bg-accent/15 text-accent ring-accent/30'
-          : danger
-            ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
-            : 'text-slate-200 ring-border hover:bg-white/5'
-      )}
-    >
-      {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
-      {label}
-    </button>
-  )
-
   // «Не знаю» — это не «работает». Сентинел неизвестности надо снимать ВЕЗДЕ, где раньше
   // хватало проверки на непустую строку: иначе рядом с честным «не ответила — пробую ещё»
   // горит зелёная точка «машина жива», а кнопка «Включить» считает её включённой и гаснет —
@@ -261,11 +277,11 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
       {/* Питание живой ОС + Включить (WoL). «Включить» видна ВСЕГДА при заданном MAC
           (не прячется во время проверки); disabled только когда ПК подтверждённо online. */}
       <div className="flex flex-wrap gap-2">
-        {d.mac && <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={running} />}
-        <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
-        <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
-        <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
-        {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
+        {d.mac && <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={doWake} active={running} />}
+        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
+        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
+        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
+        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
       {!hasWakePath(d) && <OneWayHint />}
 
@@ -317,38 +333,6 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
     setDiag(r.text || '(нет данных)')
   }
 
-  const Btn = ({
-    id,
-    label,
-    icon: Icon,
-    onClick,
-    danger,
-    active
-  }: {
-    id: string
-    label: string
-    icon: typeof Power
-    onClick: () => void
-    danger?: boolean
-    active?: boolean
-  }): React.JSX.Element => (
-    <button
-      onClick={onClick}
-      disabled={!!busy || active}
-      className={cn(
-        'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium ring-1 transition-colors disabled:opacity-50',
-        active
-          ? 'bg-accent/15 text-accent ring-accent/30'
-          : danger
-            ? 'text-rose-300 ring-rose-500/30 hover:bg-rose-500/10'
-            : 'text-slate-200 ring-border hover:bg-white/5'
-      )}
-    >
-      {busy === id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
-      {label}
-    </button>
-  )
-
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3">
       <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-500">Питание</div>
@@ -356,7 +340,7 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
         {/* «Включить»: WoL при заданном MAC (видна всегда, disabled когда уже online);
             иначе — ссылка на консоль хостера; иначе — disabled-подсказка. Честно, без фейка. */}
         {d.mac ? (
-          <Btn id="wake" label="Включить" icon={Zap} onClick={doWake} active={online} />
+          <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={doWake} active={online} />
         ) : d.consoleUrl ? (
           <a
             href={d.consoleUrl}
@@ -375,10 +359,10 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
             <Zap className="h-3.5 w-3.5" /> Включить
           </button>
         )}
-        <Btn id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
-        <Btn id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
-        <Btn id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
-        {failed && <Btn id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
+        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
+        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
+        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
+        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
       </div>
       {!hasWakePath(d) && <OneWayHint />}
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
