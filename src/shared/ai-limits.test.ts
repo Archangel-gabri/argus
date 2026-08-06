@@ -27,3 +27,15 @@ describe('mergeLimits', () => {
     expect(mergeLimits(undefined, { rpm: 5 })).toEqual({ rpm: 5 })
   })
 })
+
+describe('неразобранный ввод не стирает потолок', () => {
+  it('буквы в поле оставляют прежнее значение', () => {
+    // Форма отдаёт `undefined`, когда ввод не разобрался. Раньше он приходил как `null`, а
+    // `null` означает «снять потолок» — и одна опечатка молча стирала заданное число.
+    expect(mergeLimits({ tpd: 1_000_000 }, { tpd: undefined })).toEqual({ tpd: 1_000_000 })
+  })
+
+  it('пустое поле по-прежнему снимает потолок', () => {
+    expect(mergeLimits({ tpd: 1_000_000 }, { tpd: null })).toEqual({ tpd: null })
+  })
+})

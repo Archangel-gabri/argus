@@ -10,7 +10,17 @@ import type { AiAccess, AiCheck } from './types'
  */
 export function keyEndpointBase(access: Pick<AiAccess, 'baseUrl' | 'channels'>): string | null {
   if (access.baseUrl) return access.baseUrl
-  return access.channels.find((c) => c.hasKey && c.baseUrl)?.baseUrl ?? null
+  // Признак «у канала свой ключ» ставится успешной проверкой, а завести его руками негде —
+  // значит у канала, только что добавленного владельцем, его не будет никогда. Но адрес он
+  // указал сам и не просто так: ключ этого доступа выписан ИМЕННО тем роутером. Поэтому если
+  // канала с сохранённым ключом нет, берём адрес у канала, который вообще МОЖЕТ нести ключ.
+  //
+  // Браузерный канал сюда не годится: у него в адресе веб-интерфейс (claude.ai), ключа там нет
+  // и проверять его там бессмысленно.
+  const carriesKey = (c: (typeof access.channels)[number]): boolean =>
+    c.kind === 'api' || c.kind === 'cli' || c.kind === 'ide'
+  const withKey = access.channels.find((c) => c.hasKey && c.baseUrl)
+  return (withKey ?? access.channels.find((c) => c.baseUrl && carriesKey(c)))?.baseUrl ?? null
 }
 
 // Validity / quota probes for stored AI keys. Keys stay in main; only the verdict crosses IPC.

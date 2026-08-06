@@ -75,12 +75,24 @@ function Field({
   )
 }
 
-/** Число из поля ввода: пустая строка — это «не знаю», а не ноль. */
-function numOrNull(v: string): number | null {
+/**
+ * Число из поля ввода: пустая строка — это «не знаю», а не ноль.
+ *
+ * Разделители принимаются, потому что потолки — большие числа, и человек пишет их так, как
+ * читает: «1 000 000», «1,000,000», «1 000 000». Раньше любой из этих вариантов молча
+ * превращался в `null`, а `null` для слияния лимитов означает осознанное удаление — то есть
+ * одна привычная запись стирала прежний потолок и не говорила об этом ни слова.
+ *
+ * Что остаётся негодным вводом — остаётся: буквы и мусор дают `undefined`, и вызывающий должен
+ * отличать его от «поле пустое».
+ */
+function parseLimit(v: string): number | null | undefined {
   const t = v.trim()
   if (!t) return null
-  const n = Number(t)
-  return Number.isFinite(n) && n >= 0 ? n : null
+  // Пробелы (включая неразрывный) и запятые как разделители тысяч; точка остаётся точкой.
+  const clean = t.replace(/[\s\u00a0]/g, '').replace(/,/g, '')
+  const n = Number(clean)
+  return Number.isFinite(n) && n >= 0 ? n : undefined
 }
 
 export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; onClose: () => void }): React.JSX.Element {
@@ -153,13 +165,13 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
       // максимуму, а строка «По условиям тарифа» исчезала. Заданное руками терялось навсегда:
       // засев дозаполняет только пустые поля и только для записей из файла.
       const limits: AiLimits = mergeLimits(initial?.limits, {
-        rpm: numOrNull(rpm),
-        rpd: numOrNull(rpd),
-        windowHours: numOrNull(windowHours),
-        windowTokens: numOrNull(windowTokens),
-        tpd: numOrNull(tpd),
-        weekTokens: numOrNull(weekTokens),
-        tpmo: numOrNull(tpmo)
+        rpm: parseLimit(rpm),
+        rpd: parseLimit(rpd),
+        windowHours: parseLimit(windowHours),
+        windowTokens: parseLimit(windowTokens),
+        tpd: parseLimit(tpd),
+        weekTokens: parseLimit(weekTokens),
+        tpmo: parseLimit(tpmo)
       })
       const input = {
         kind,
@@ -437,7 +449,17 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
                 value={c.label}
                 aria-label={`Название канала ${i + 1}`}
                 placeholder="Claude Code"
-                onChange={(e) => setChannels(channels.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                onChange={(e) =>
+                  setChannels(
+                    channels.map((x, j) =>
+                      // `tool` связывает канал с журналом расхода. Отдельного поля не заводим:
+                      // название канала и есть имя инструмента в подавляющем большинстве
+                      // случаев («Claude Code», «Codex CLI»), а лишнее поле в строке — это
+                      // вопрос, на который владельцу нечего ответить.
+                      j === i ? { ...x, label: e.target.value, tool: e.target.value.trim() || undefined } : x
+                    )
+                  )
+                }
               />
               <input
                 className={cn(inputCls, 'w-40 shrink-0')}
@@ -446,6 +468,15 @@ export function AccessForm({ initial, onClose }: { initial?: AiAccess | null; on
                 placeholder="свой адрес"
                 onChange={(e) =>
                   setChannels(channels.map((x, j) => (j === i ? { ...x, baseUrl: e.target.value || undefined } : x)))
+                }
+              />
+              <input
+                className={cn(inputCls, 'w-44 shrink-0')}
+                value={c.keyRef ?? ''}
+                aria-label={`Где лежит ключ канала ${i + 1}`}
+                placeholder="где лежит ключ"
+                onChange={(e) =>
+                  setChannels(channels.map((x, j) => (j === i ? { ...x, keyRef: e.target.value || undefined } : x)))
                 }
               />
               <label className="flex shrink-0 items-center gap-1 text-[11px] text-slate-400">

@@ -10,6 +10,7 @@
 // Поэтому ждём SSH-баннер («SSH-2.0-…»), который шлёт настоящий sshd сразу после коннекта:
 // стоит те же один round-trip, но подделать его туннель не может.
 import net from 'node:net'
+import tls from 'node:tls'
 import { getOsEndpoints, getDeviceConn, listDevices } from './vault'
 import { consumeSshBanner, type Reachability } from '../shared/reachability'
 
@@ -97,7 +98,10 @@ export function tcpAlive(host: string, port: number, timeoutMs = REACH_BUDGET_MS
     // промаха объявлялся «Выключен». Владелец видел выключенными серверы, которые в это время
     // работали.
     sock.once('error', (e: NodeJS.ErrnoException) => finish(verdictFor(e.code)))
-    sock.once('close', () => finish('offline'))
+    // Если байты уже пришли, машина отвечает — что бы ни случилось дальше. Незавершённый
+    // баннер («SS» без «H-2.0») с последующим закрытием раньше засчитывался в «выключено»,
+    // хотя удалённая сторона только что прислала данные.
+    sock.once('close', () => finish(banner.length > 0 ? 'unknown' : 'offline'))
     // Порт приходит из записи устройства, а её заполняет человек. Node на порту вне 1..65535
     // бросает СИНХРОННО (`ERR_SOCKET_BAD_PORT`), и этот бросок улетал наружу через Promise.all
     // в `deviceReach`/`fleetReach` — то есть одна кривая запись выключала обновление статусов у
@@ -149,10 +153,24 @@ export async function deviceReach(deviceId: string, timeoutMs = REACH_BUDGET_MS)
  * таймаут и всегда отвечала «связи нет». Защита работала наоборот: упавший парк помечался бы
  * «не знаю» даже при живом интернете, и «выключен» не появился бы никогда.
  */
-function connectSucceeds(host: string, port: number, timeoutMs: number): Promise<boolean> {
+/**
+ * Дошли ли мы до НАСТОЯЩЕГО сервера в интернете.
+ *
+ * Проверяется TLS-рукопожатие с проверкой имени в сертификате, а не факт соединения. Причина
+ * записана в шапке этого же файла и была мной упущена: на машине владельца поднят туннель в
+ * режиме fake-ip, и голый TCP-коннект успешно устанавливается к ЛЮБОМУ адресу. Проверено
+ * замером: коннект к заведомо несуществующему `192.0.2.7:443` возвращает «успех». То есть
+ * проверка по коннекту всегда отвечала бы «интернет есть» — ровно в той конфигурации, ради
+ * которой она и писалась.
+ *
+ * Сертификат туннель подделать не может: для этого ему нужен закреплённый в системе чужой
+ * удостоверяющий центр. Поэтому успешное рукопожатие с `cloudflare-dns.com` — доказательство,
+ * что наружу мы выходим.
+ */
+function tlsHandshakeSucceeds(host: string, servername: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const sock = new net.Socket()
     let done = false
+    const sock = tls.connect({ host, port: 443, servername, rejectUnauthorized: true })
     const finish = (ok: boolean): void => {
       if (done) return
       done = true
@@ -160,22 +178,16 @@ function connectSucceeds(host: string, port: number, timeoutMs: number): Promise
       resolve(ok)
     }
     sock.setTimeout(timeoutMs)
-    // Рукопожатие состоялось — значит пакеты доходят наружу. Больше нам ничего не нужно.
-    sock.once('connect', () => finish(true))
+    sock.once('secureConnect', () => finish(true))
     sock.once('timeout', () => finish(false))
     sock.once('error', () => finish(false))
-    try {
-      sock.connect({ host, port })
-    } catch {
-      finish(false)
-    }
   })
 }
 
 async function internetReachable(): Promise<boolean> {
   const results = await Promise.all([
-    connectSucceeds('1.1.1.1', 443, 2500),
-    connectSucceeds('8.8.8.8', 443, 2500)
+    tlsHandshakeSucceeds('1.1.1.1', 'cloudflare-dns.com', 4000),
+    tlsHandshakeSucceeds('8.8.8.8', 'dns.google', 4000)
   ])
   return results.some(Boolean)
 }

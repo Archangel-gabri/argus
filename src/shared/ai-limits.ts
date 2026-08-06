@@ -12,7 +12,16 @@ import type { AiLimits } from '../main/types'
  *
  * `null` от формы — это осознанное «нет лимита», и он ЗАТИРАЕТ прежнее значение: иначе снять
  * однажды введённый потолок стало бы невозможно.
+ *
+ * `undefined` — противоположный случай: поле не разобралось (человек написал буквы). Такое
+ * значение прежнее НЕ трогает. Разницу видно на живом вводе: пустое поле снимает потолок,
+ * а неразобранный ввод оставляет его на месте, вместо того чтобы молча стереть.
  */
 export function mergeLimits(previous: AiLimits | undefined, edited: AiLimits): AiLimits {
-  return { ...(previous ?? {}), ...edited }
+  const out: AiLimits = { ...(previous ?? {}) }
+  for (const [key, value] of Object.entries(edited)) {
+    if (value === undefined) continue
+    out[key as keyof AiLimits] = value as number | null
+  }
+  return out
 }

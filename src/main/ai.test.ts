@@ -116,7 +116,44 @@ describe('у кого спрашивать про ключ', () => {
     )
   })
 
-  it('канал без ключа адреса не задаёт', () => {
+  it('браузерный канал адреса для проверки ключа не задаёт', () => {
+    // У браузерного канала в адресе веб-интерфейс, ключа там нет и проверять его там незачем.
     expect(keyEndpointBase({ baseUrl: null, channels: [{ kind: 'web', label: 'веб', baseUrl: 'https://web' }] })).toBeNull()
+  })
+})
+
+describe('где проверять ключ', () => {
+  it('берёт адрес канала, даже если у канала ещё нет сохранённого ключа', () => {
+    // Канал заводится руками, а признак «есть свой ключ» ставится только успешной проверкой —
+    // то есть у только что добавленного канала его нет никогда. Адрес при этом указан
+    // владельцем осознанно: ключ доступа выписан именно этим роутером. Проверяя на официальном
+    // сервере провайдера, приложение объявляло рабочий ключ протухшим.
+    expect(
+      keyEndpointBase({
+        baseUrl: null,
+        channels: [{ kind: 'cli', label: 'Codex CLI', baseUrl: 'https://cli.neutrino.su/v1' }]
+      })
+    ).toBe('https://cli.neutrino.su/v1')
+  })
+
+  it('канал с сохранённым ключом важнее канала без него', () => {
+    expect(
+      keyEndpointBase({
+        baseUrl: null,
+        channels: [
+          { kind: 'web', label: 'без ключа', baseUrl: 'https://first.example/v1' },
+          { kind: 'api', label: 'с ключом', baseUrl: 'https://second.example/v1', hasKey: true }
+        ]
+      })
+    ).toBe('https://second.example/v1')
+  })
+
+  it('адрес самой записи главнее любого канала', () => {
+    expect(
+      keyEndpointBase({
+        baseUrl: 'https://own.example/v1',
+        channels: [{ kind: 'api', label: 'канал', baseUrl: 'https://other.example/v1', hasKey: true }]
+      })
+    ).toBe('https://own.example/v1')
   })
 })
