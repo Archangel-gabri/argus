@@ -3,7 +3,6 @@ import { Loader2, Plus } from 'lucide-react'
 import { money } from '@/lib/format'
 import {
   MONEY_GROUP_LABEL,
-  attentionList,
   dailySeries,
   daysAgoDate,
   groupByMoney,
@@ -93,7 +92,6 @@ export function AIAccountsView(): React.JSX.Element {
     return null
   }
 
-  const attention = attentionList(access, checks)
   const groups = groupByMoney(access, subs)
   // Неоформленные не считаются доступами: «14 доступов», из которых четырёх не существует, —
   // это ложь инвентаря.
@@ -146,6 +144,10 @@ export function AIAccountsView(): React.JSX.Element {
       {/* Сводка одной строкой. Раньше тут стояли четыре плитки с крупными числами — они занимали
           пятую часть экрана и повторяли то, что и так видно в списке. */}
       <header className="flex items-center gap-5 border-b border-border px-6 py-3">
+        {/* Заголовок был только у четырёх экранов из пяти: здесь его роль играла сводка, и
+            человек, попавший сюда по клавиатуре или с программой чтения, не понимал, где он.
+            Держим его коротким — место в шапке занято цифрами, которые меняются в течение часа. */}
+        <h1 className="shrink-0 text-sm font-semibold text-white">ИИ</h1>
         <div className="flex min-w-0 flex-1 items-baseline gap-5 text-[12px]">
           {/* Окно идёт первым: это единственное число здесь, которое меняется в течение часа, а
               заходят сюда посреди работы — узнать, упрусь ли сейчас в лимит. Плата за месяц
@@ -224,26 +226,6 @@ export function AIAccountsView(): React.JSX.Element {
           </button>
         </div>
       </header>
-
-      {attention.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-amber-500/15 bg-amber-500/[0.05] px-6 py-2">
-          {attention.slice(0, 4).map((a) => (
-            <button
-              key={a.text}
-              onClick={() => setSelectedId(a.accessId)}
-              className={cn(
-                'text-[12px] transition-colors hover:underline',
-                a.severity === 'critical' ? 'text-rose-300' : 'text-amber-300/90'
-              )}
-            >
-              {a.text}
-            </button>
-          ))}
-          {attention.length > 4 && (
-            <span className="text-[11px] text-slate-400">и ещё {attention.length - 4}</span>
-          )}
-        </div>
-      )}
 
       {!api && (
         <p className="border-b border-border bg-surface/60 px-6 py-2 text-[11px] text-slate-400">
