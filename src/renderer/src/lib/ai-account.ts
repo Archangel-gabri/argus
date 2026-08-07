@@ -1,14 +1,7 @@
-import { money } from '@/lib/format'
 import type { AiAccess, AiAccountEntry, AiCheck, AiKind, AiPrice, AiUsageDay, Subscription } from '@/types'
 import { costOf, perMillion, type Rates, type TokenUsage } from '../../../shared/ai-pricing'
 import { providerFamily } from '../../../shared/ai-providers'
-import {
-  CREDIT_CRITICAL_USD,
-  CREDIT_WARNING_USD,
-  IDLE_ACCESS_DAYS,
-  KEY_EXPIRY_CRITICAL_DAYS,
-  KEY_EXPIRY_WARNING_DAYS
-} from '../../../shared/ai-thresholds'
+import { CREDIT_WARNING_USD, KEY_EXPIRY_WARNING_DAYS } from '../../../shared/ai-thresholds'
 import { daysUntilCalendar } from '../../../shared/billing'
 
 export interface AiSummary {
@@ -331,53 +324,6 @@ export interface Attention {
   severity: 'warning' | 'critical'
 }
 
-/**
- * Что требует внимания — списком фраз, а не счётчиком.
- *
- * Число «3 требуют внимания» — тупик: причина уже посчитана, но человек вынужден глазами искать
- * её в списке. Здесь возвращается то, что можно показать и по чему можно кликнуть.
- *
- * Пороги — общие со сторожем (src/shared/ai-thresholds.ts): экран и уведомление обязаны
- * срабатывать на одних и тех же числах, иначе уведомление горит при спокойном экране.
- */
-export function attentionList(
-  access: AiAccess[],
-  checks: Record<string, AiCheck>,
-  now = Date.now()
-): Attention[] {
-  const out: Attention[] = []
-  for (const a of access) {
-    const check = checks[a.id]
-    const days = daysUntilExpiry(a.keyExpiresAt, now)
-
-    if (a.status === 'expired')
-      out.push({ accessId: a.id, severity: 'critical', text: `${a.label}: доступ истёк` })
-    else if (check?.status === 'invalid')
-      out.push({ accessId: a.id, severity: 'critical', text: `${a.label}: ключ не принимается — перевыпустить` })
-
-    if (days !== null && days <= KEY_EXPIRY_WARNING_DAYS)
-      out.push({
-        accessId: a.id,
-        severity: days <= KEY_EXPIRY_CRITICAL_DAYS ? 'critical' : 'warning',
-        text: days < 0 ? `${a.label}: ключ истёк` : `${a.label}: ключу осталось ${days} дн.`
-      })
-
-    if (typeof check?.remaining === 'number' && check.remaining <= LOW_CREDIT_USD)
-      out.push({
-        accessId: a.id,
-        severity: check.remaining <= CREDIT_CRITICAL_USD ? 'critical' : 'warning',
-        text: `${a.label}: остался ${money(check.remaining)} — пополнить`
-      })
-
-    if (a.status === 'planned' && a.createdAt > 0) {
-      const age = Math.floor((now - a.createdAt) / 86_400_000)
-      if (age >= IDLE_ACCESS_DAYS)
-        out.push({ accessId: a.id, severity: 'warning', text: `${a.label}: так и не оформлен, висит ${age} дн.` })
-    }
-  }
-  // Срочное впереди: полоса короткая, и первым должно стоять то, что уже сломалось.
-  return out.sort((x, y) => (x.severity === y.severity ? 0 : x.severity === 'critical' ? -1 : 1))
-}
 
 /** Ниже этого остатка доступ считается почти исчерпанным — тот же порог, что у сторожа:
  *  теперь буквально та же константа (src/shared/ai-thresholds.ts), а не два числа,

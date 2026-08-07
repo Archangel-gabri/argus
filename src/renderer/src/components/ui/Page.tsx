@@ -84,24 +84,9 @@ export function StatTile({
   )
 }
 
-const BADGE = {
-  live: 'text-accent bg-accent/10',
-  manual: 'text-slate-400 bg-white/5',
-  soon: 'text-amber-400 bg-amber-400/10'
-} as const
-
 // Подпись, а не сам ключ: раньше в русский интерфейс печаталось LIVE / MANUAL / SOON — и это
 // были два самых контрастных элемента строки подписки.
 //
 // «своё» вместо «вручную» намеренно: рядом в той же строке стоит бейдж «продлевается руками»,
 // и два «вручную» подряд с РАЗНЫМИ смыслами читались как повтор. Здесь речь о происхождении
 // записи (завёл человек, а не подтянулось из парка), а не о способе оплаты.
-const BADGE_LABEL = { live: 'из парка', manual: 'своё', soon: 'скоро' } as const
-
-export function SourceBadge({ kind }: { kind: 'live' | 'manual' | 'soon' }): React.JSX.Element {
-  return (
-    <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold', BADGE[kind])}>
-      {BADGE_LABEL[kind]}
-    </span>
-  )
-}
