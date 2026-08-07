@@ -493,6 +493,28 @@ export async function screenOpen(
   // Второе окно на то же устройство открывать НЕЛЬЗЯ: Windows-клиент держит один сеанс, и
   // новое подключение выбивает предыдущее — оба окна начинают драться, картинка чернеет.
   // (Поймано на живом тесте: два открытых окна дали чёрный экран при статусе «подключено».)
+  // Открытие уже идёт для этой машины. Проверки существующей сессии мало: она появляется
+  // через несколько сетевых ожиданий, и два вызова успевают пройти проверку оба — а дальше
+  // открываются два окна на одно устройство, где клиенты дерутся за поток и картинка чернеет.
+  if (opening.has(deviceId)) {
+    return { ok: false, error: 'экран уже открывается' }
+  }
+  opening.add(deviceId)
+  try {
+    return await openScreenOnce(deviceId, opts, accessTicket)
+  } finally {
+    opening.delete(deviceId)
+  }
+}
+
+/** Устройства, для которых открытие сейчас идёт. */
+const opening = new Set<string>()
+
+async function openScreenOnce(
+  deviceId: string,
+  opts: { password: string; remember?: boolean },
+  accessTicket: number
+): Promise<{ ok: boolean; error?: string }> {
   const existing = [...sessions.entries()].find(([, s]) => s.deviceId === deviceId)
   if (existing) {
     const w = BrowserWindow.fromId(existing[1].winId)

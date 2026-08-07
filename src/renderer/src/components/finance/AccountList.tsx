@@ -29,6 +29,7 @@ function AccountRow({
   const setCreds = useAccounts((s) => s.setCreds)
   const bankLogin = useAccounts((s) => s.bankLogin)
   const bankSessions = useAccounts((s) => s.bankSessions)
+  const issue = useAccounts((s) => s.balanceIssues[account.id])
   const [editing, setEditing] = useState(false)
   const [keys, setKeys] = useState(false)
   const [draft, setDraft] = useState('')
@@ -162,11 +163,15 @@ function AccountRow({
             <div
               className={cn(
                 'text-[11px] tabular-nums',
-                age?.level === 'stale' ? 'text-amber-400/80' : 'text-slate-400'
+                issue ? 'text-amber-400' : age?.level === 'stale' ? 'text-amber-400/80' : 'text-slate-400'
               )}
             >
-              {/* Возраст показывается только когда он что-то значит: свежая цифра молчит. */}
-              {age && age.level !== 'fresh'
+              {/* Причина, по которой остаток не обновился, важнее его возраста: пока её не
+                  показывали, строка неделями обещала «обновляется само», а цифра стояла на
+                  месте, и понять почему было нельзя. */}
+              {issue
+                ? issue
+                : age && age.level !== 'fresh'
                 ? account.source === 'api'
                   ? `обновлено ${age.days} дн. назад`
                   : `вписано ${age.days} дн. назад`
@@ -176,7 +181,7 @@ function AccountRow({
                     bank
                     ? 'по сессии кабинета'
                     : 'обновляется само'
-                  : ''}
+                    : ''}
             </div>
           </button>
         )}

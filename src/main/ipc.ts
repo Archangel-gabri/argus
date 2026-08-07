@@ -250,9 +250,12 @@ async function refreshEverything(): Promise<void> {
  * Неудачный опрос НЕ обнуляет остаток и не трогает время замера: прежняя цифра со своей датой
  * честнее, чем ноль, которого никто не подтверждал. Записывается только успешный ответ.
  */
-async function refreshExchangeBalances(): Promise<{ updated: number; failed: number }> {
+async function refreshExchangeBalances(): Promise<{ updated: number; failed: number; issues: Array<{ accountId: string; error: string }> }> {
   let updated = 0
   let failed = 0
+  // Причины отказов идут наружу вместе со счётчиками: счётчик говорит «что-то не вышло», а
+  // человеку нужно знать ЧТО именно, иначе цифра просто молча не обновляется неделями.
+  const issues: Array<{ accountId: string; error: string }> = []
   for (const account of vault.listFinanceAccounts()) {
     // Кабинет Т-Банка ключа не выдаёт — там читается сессия браузера владельца. Опрашиваются
     // Читаем остаток из кабинета, если владелец в него вошёл. Прежнее условие требовало
@@ -292,6 +295,16 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
       // «85 320 ₽» там, где на деле $85 320: цифра правдоподобная и неверная в восемьдесят раз.
       if (balance.status === 'error' || balance.totalUsd == null || account.currency !== 'USD') {
         failed++
+        // Причину надо донести до человека. Раньше провал был беззвучным: ключ зеленел,
+        // подпись обещала «обновляется само», а цифра не появлялась никогда — и понять, в чём
+        // дело (кривой ключ, счёт заведён в рублях), из приложения было нельзя.
+        issues.push({
+          accountId: account.id,
+          error:
+            account.currency !== 'USD'
+              ? `биржа считает итог в долларах, а счёт заведён в ${account.currency} — остаток не записан`
+              : (balance.error ?? 'биржа не отдала остаток')
+        })
         continue
       }
       vault.recordAccountBalance(account.id, balance.totalUsd, balance.fetchedAt)
@@ -307,6 +320,13 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
       // долларовым, а подпись валюты берётся из записи, а не из ответа.
       if (portfolio.status === 'error' || portfolio.total == null || portfolio.currency !== account.currency) {
         failed++
+        issues.push({
+          accountId: account.id,
+          error:
+            portfolio.currency && portfolio.currency !== account.currency
+              ? `портфель в ${portfolio.currency}, а счёт заведён в ${account.currency} — остаток не записан`
+              : (portfolio.error ?? 'брокер не отдал остаток')
+        })
         continue
       }
       vault.recordAccountBalance(account.id, portfolio.total, portfolio.fetchedAt)
@@ -314,7 +334,7 @@ async function refreshExchangeBalances(): Promise<{ updated: number; failed: num
     }
   }
   if (updated > 0) announceAiUpdated('accounts-balance')
-  return { updated, failed }
+  return { updated, failed, issues }
 }
 
 /**

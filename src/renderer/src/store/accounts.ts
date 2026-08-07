@@ -17,6 +17,14 @@ interface AccountsStore {
   bankLogin: (bank: string) => Promise<void>
   /** Есть ли живой вход в кабинет банка. Ключ — идентификатор банка. */
   bankSessions: Record<string, boolean>
+  /**
+   * Почему у счёта не обновился остаток. Ключ — идентификатор счёта.
+   *
+   * Раньше провал был беззвучным: ключ зеленел, подпись обещала «обновляется само», а цифра
+   * не появлялась никогда. Понять причину (ключ не принят, счёт заведён не в той валюте) из
+   * приложения было нельзя.
+   */
+  balanceIssues: Record<string, string>
   checkBankSessions: (banks: string[]) => Promise<void>
 }
 
@@ -90,6 +98,7 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   },
 
   bankSessions: {},
+  balanceIssues: {},
 
   bankLogin: async (bank) => {
     if (!api) return
@@ -121,8 +130,10 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   refresh: async () => {
     if (!api) return
     try {
-      await api.accounts.refresh()
-      set({ accounts: await api.accounts.list() })
+      const r = await api.accounts.refresh()
+      const issues: Record<string, string> = {}
+      for (const i of r.issues ?? []) issues[i.accountId] = i.error
+      set({ accounts: await api.accounts.list(), balanceIssues: issues })
     } catch (error) {
       set({ error: messageOf(error) })
     }

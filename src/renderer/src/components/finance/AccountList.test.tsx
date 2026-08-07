@@ -14,6 +14,7 @@ vi.mock('@/store/accounts', () => ({
       setCreds: vi.fn(),
       bankLogin: vi.fn(),
       bankSessions: {},
+      balanceIssues: { a1: 'биржа считает итог в долларах, а счёт заведён в RUB — остаток не записан' },
       checkBankSessions: vi.fn()
     })
 }))
@@ -42,5 +43,18 @@ describe('строка счёта', () => {
     // У биржи вход не через кабинет, а по ключу — предлагать ей «войти» значит врать.
     render(<AccountList accounts={[account({ kind: 'exchange', name: 'Bybit', institution: 'Bybit' })]} />)
     expect(screen.queryByRole('button', { name: /Войти/i })).toBeNull()
+  })
+})
+
+describe('почему остаток не обновился', () => {
+  it('причина видна прямо в строке счёта', async () => {
+    // Раньше провал был беззвучным: ключ зеленел, подпись обещала «обновляется само», а цифра
+    // не появлялась никогда. Понять причину — кривой ключ или счёт заведён не в той валюте —
+    // из приложения было нельзя.
+    const { useAccounts } = await import('@/store/accounts')
+    const original = useAccounts
+    void original
+    render(<AccountList accounts={[account({ id: 'a1', kind: 'exchange', name: 'Bybit', institution: 'Bybit' })]} />)
+    expect(screen.getByText(/счёт заведён в RUB/)).toBeInTheDocument()
   })
 })
