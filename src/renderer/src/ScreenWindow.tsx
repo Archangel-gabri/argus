@@ -82,6 +82,9 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     h: Math.max(400, Math.round(window.innerHeight))
   })
 
+  /** Ожидание первого кадра: доказательство, что картинка действительно идёт. */
+  const firstFrameRef = useRef<number | null>(null)
+
   const teardown = useCallback((): void => {
     genRef.current += 1
     agentRef.current?.close()
@@ -89,6 +92,12 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     if (retryRef.current) {
       clearTimeout(retryRef.current)
       retryRef.current = null
+    }
+    // Ожидание первого кадра снимается здесь же: иначе оно сработает на уже закрытом
+    // соединении и покажет ошибку поверх нового подключения.
+    if (firstFrameRef.current) {
+      clearTimeout(firstFrameRef.current)
+      firstFrameRef.current = null
     }
     try {
       kbRef.current?.reset?.()
@@ -134,12 +143,22 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
     canvas.tabIndex = 0
     mount.replaceChildren(canvas)
 
+    // Соединение может открыться и замолчать. Приветствие агента при этом приходит — оно
+    // отправляется до первого кадра, — и экран объявлял себя подключённым, показывая чёрное
+    // полотно. Ждём ДОКАЗАТЕЛЬСТВО картинки: первый кадр. Шесть секунд — та же граница, по
+    // которой сам агент отличает исправный путь захвата от молчащего.
+    firstFrameRef.current = window.setTimeout(() => {
+      if (genRef.current !== gen) return
+      setErr('экран не прислал ни одного кадра за 6 с')
+      setPhase('error')
+      client.close()
+    }, 6000)
+
     const client = new AgentClient(s.url, s.token, canvas, {
       onHello: (h) => {
         if (genRef.current !== gen) return
         attemptRef.current = 0
         setErr(null)
-        setPhase('connected')
         streamRef.current = {
           base: `агент ${h.version} · ${h.source}/${h.encoder}`,
           fps: 0,
@@ -147,6 +166,14 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
         }
         setInfo(streamRef.current.base)
         canvas.focus()
+      },
+      onFrame: () => {
+        if (genRef.current !== gen) return
+        if (firstFrameRef.current) {
+          clearTimeout(firstFrameRef.current)
+          firstFrameRef.current = null
+        }
+        setPhase('connected')
       },
       onStats: ({ fps }) => {
         if (genRef.current !== gen) return
@@ -232,12 +259,25 @@ export function ScreenWindow({ handle }: { handle: string }): React.JSX.Element 
       retryRef.current = setTimeout(connect, delay)
     }
 
+    // Соединение может не дать ни ошибки, ни готовности: туннель молчит, событий нет вовсе.
+    // Тогда экран оставался в «Подключаюсь…» бесконечно — обработчики ниже ждут события,
+    // которого не будет. Двадцати секунд хватает на вход по RDP с проверкой учётных данных.
+    firstFrameRef.current = window.setTimeout(() => {
+      if (genRef.current !== gen) return
+      drop()
+    }, 20_000)
+
     // Client не пробрасывает ошибки туннеля наружу — вешаем сами, иначе обрыв WS = вечный спиннер.
     tunnel.onerror = drop
     client.onerror = drop
     client.onstatechange = (st: number): void => {
       if (genRef.current !== gen) return
       if (st === 3) {
+        // Готовность пришла вовремя — ожидание снимаем, иначе оно оборвёт живое соединение.
+        if (firstFrameRef.current) {
+          clearTimeout(firstFrameRef.current)
+          firstFrameRef.current = null
+        }
         attemptRef.current = 0
         setErr(null)
         setPhase('connected')
