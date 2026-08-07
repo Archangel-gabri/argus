@@ -192,7 +192,7 @@ export function sftpList(
   path: string
 ): Promise<{ ok: boolean; path: string; entries?: SftpEntry[]; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return Promise.resolve({ ok: false, path, error: 'session closed' })
+  if (!s) return Promise.resolve({ ok: false, path, error: 'сессия файлов оборвана' })
   const p = path || '.'
   type Result = { ok: boolean; path: string; entries?: SftpEntry[]; error?: string }
   // Канал может «почернеть»: соединение живо, а ответы не идут. Тогда ни один из двух
@@ -239,7 +239,7 @@ export async function sftpDownload(
   win: BrowserWindow | null
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return { ok: false, error: 'session closed' }
+  if (!s) return { ok: false, error: 'сессия файлов оборвана' }
   const base = remotePath.split('/').pop() || 'download'
   // parent-окно ОБЯЗАТЕЛЬНО: на KDE Wayland диалог без родителя открывается позади окна/без фокуса
   // → «нажал Скачать, ничего не произошло».
@@ -306,7 +306,7 @@ export async function sftpUpload(
   win: BrowserWindow | null
 ): Promise<{ ok: boolean; name?: string; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return { ok: false, error: 'session closed' }
+  if (!s) return { ok: false, error: 'сессия файлов оборвана' }
   const res = win
     ? await dialog.showOpenDialog(win, { properties: ['openFile'] })
     : await dialog.showOpenDialog({ properties: ['openFile'] })
@@ -362,7 +362,7 @@ export function sftpPutFile(
   remotePath: string
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  if (!s) return Promise.resolve({ ok: false, error: 'сессия файлов оборвана' })
   let lastMove = monotonic()
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_TRANSFER_CEILING_MS,
@@ -400,7 +400,7 @@ export function sftpWriteFile(
   mode = 0o600
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  if (!s) return Promise.resolve({ ok: false, error: 'сессия файлов оборвана' })
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_META_MS,
     what: 'сервер не записал файл',
@@ -424,7 +424,7 @@ export function sftpWriteFile(
 
 export function sftpDelete(sessionId: string, path: string, isDir: boolean): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
-  if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  if (!s) return Promise.resolve({ ok: false, error: 'сессия файлов оборвана' })
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_META_MS,
     what: 'сервер не удалил файл',

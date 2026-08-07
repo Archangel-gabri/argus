@@ -350,9 +350,10 @@ export function AccountList({
   const checkBankSessions = useAccounts((s) => s.checkBankSessions)
   // Спрашиваем один раз на состав списка: проверка читает свою же куку и в сеть не ходит,
   // а знание «вход есть» меняет подпись кнопки у каждой строки банка.
-  const bankIds = accounts
-    .map((a) => (a.source === 'api' ? bankOf(a) : null))
-    .filter((b): b is BankId => Boolean(b))
+  // Спрашиваем про ВСЕ опознанные банки, а не только про те, чей остаток уже читается по
+  // сессии. Прежний фильтр повторял ту же ошибку, что и кнопка входа: узнать про вход можно
+  // было только у того, кто уже вошёл.
+  const bankIds = accounts.map((a) => bankOf(a)).filter((b): b is BankId => Boolean(b))
   const bankKey = bankIds.join(',')
   useEffect(() => {
     if (bankKey) void checkBankSessions(bankKey.split(','))

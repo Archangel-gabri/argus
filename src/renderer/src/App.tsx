@@ -17,6 +17,7 @@ import { useWallets } from './store/wallets'
 import { useSubs } from './store/subs'
 import { useAi } from './store/ai'
 import { useAccounts } from './store/accounts'
+import { bankOf } from '../../shared/banks'
 import { loadPrefs, savePrefs, PREFS_EVENT } from './lib/prefs'
 
 function renderView(view: ViewId): React.JSX.Element {
@@ -107,7 +108,14 @@ export default function App(): React.JSX.Element {
     return api.ai.onUpdated(({ reason }) => {
       // Перечитывает тот, кого касается: лишний поход в базу дешевле, но экран от него мигает.
       if (reason === 'accounts-balance') void useAccounts.getState().load()
-      else void useAi.getState().load(true)
+      else if (reason === 'bank-session') {
+        // Вход в кабинет состоялся. Перечитываем именно состояние входа: без этого кнопка
+        // продолжала звать «войти» у того, кто только что вошёл, до перезахода на экран.
+        const accounts = useAccounts.getState()
+        const banks = [...new Set(accounts.accounts.map((a) => bankOf(a)).filter(Boolean))] as string[]
+        if (banks.length) void accounts.checkBankSessions(banks)
+        void accounts.load()
+      } else void useAi.getState().load(true)
     })
   }, [status])
 

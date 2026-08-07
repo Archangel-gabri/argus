@@ -43,6 +43,16 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
     return () => clearTimeout(t)
   }, [toast])
 
+  /**
+   * Сессия мертва — её оборвали по сроку или закрыл сам сервер.
+   *
+   * Дальше по этой сессии всё отвечает «session closed», и вкладка остаётся мёртвой до
+   * закрытия всей карточки, что заодно убивает живой терминал на соседней вкладке. Признак
+   * нужен, чтобы предложить переподключиться, а не молчать.
+   */
+  const sessionDead = (message?: string): boolean =>
+    Boolean(message && /session closed|сессия/i.test(message))
+
   const load = async (sid: string, p: string): Promise<void> => {
     if (!api) return
     setLoading(true)
@@ -50,11 +60,29 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
     const r = await api.sftp.list(sid, p)
     setLoading(false)
     if (!r.ok) {
+      // Срок обрывает сессию: держать её идентификатор дальше незачем, а человеку нужен путь
+      // назад — кнопка переподключения вместо мёртвого «Обновить».
+      if (sessionDead(r.error)) setSessionId(null)
       setError(r.error ?? 'Ошибка чтения')
       return
     }
     setPath(r.path)
     setEntries(r.entries ?? [])
+  }
+
+  /** Открыть сессию заново после обрыва — тем же путём, что и при первом входе на вкладку. */
+  const reconnect = async (): Promise<void> => {
+    if (!api) return
+    setLoading(true)
+    setError(null)
+    const r = await api.sftp.open(device.id)
+    if (!r.ok || !r.sessionId) {
+      setLoading(false)
+      setError(r.error ?? 'Не удалось открыть файлы')
+      return
+    }
+    setSessionId(r.sessionId)
+    await load(r.sessionId, path)
   }
 
   useEffect(() => {
@@ -161,7 +189,22 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <div className="p-6 text-center text-sm text-rose-400">{error}</div>
+          <div className="p-6 text-center text-sm text-rose-400">
+            {error}
+            {/* Обрыв сессии — не тупик: предлагаем открыть её заново прямо здесь. Раньше
+                вкладка оставалась мёртвой до закрытия всей карточки, а это заодно убивало
+                живой терминал на соседней вкладке. */}
+            {!sessionId && (
+              <div className="mt-3">
+                <button
+                  onClick={() => void reconnect()}
+                  className="rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
+                >
+                  Подключиться заново
+                </button>
+              </div>
+            )}
+          </div>
         ) : loading ? (
           <div className="flex items-center justify-center gap-2 p-6 text-sm text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin" /> Загрузка…
