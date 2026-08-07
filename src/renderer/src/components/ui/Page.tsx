@@ -5,6 +5,37 @@ export function Page({ children }: { children: ReactNode }): React.JSX.Element {
   return <div className="h-full overflow-y-auto px-8 py-7">{children}</div>
 }
 
+/**
+ * Кнопка главного действия экрана.
+ *
+ * Один вид на всё приложение. Раньше их было три: в финансах — в строке заголовка, в подписках
+ * — отдельной полосой ниже, в разделе ИИ — мельче и другой формы. Главное действие приходилось
+ * искать заново на каждом экране, хотя это самая частая кнопка.
+ */
+export function PrimaryAction({
+  onClick,
+  children,
+  secondary
+}: {
+  onClick: () => void
+  children: ReactNode
+  /** Второе по важности действие того же экрана: та же форма, но не тянет на себя взгляд. */
+  secondary?: boolean
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        secondary
+          ? 'flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border transition-colors hover:bg-card-hover'
+          : 'flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-bold text-bg transition-colors hover:bg-accent-hover'
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
 export function PageHeader({
   title,
   subtitle,

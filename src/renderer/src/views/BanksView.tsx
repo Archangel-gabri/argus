@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Bitcoin, Pencil, Plus, Trash2, X, Loader2 } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
+import { Page, PageHeader, PrimaryAction, StatTile, Card } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { Hint } from '@/components/ui/Hint'
 import { approxMoney, money, plural } from '@/lib/format'
@@ -306,26 +306,28 @@ export function BanksView(): React.JSX.Element {
         subtitle={`${accounts.length + wallets.length} ${plural(accounts.length + wallets.length, 'источник', 'источника', 'источников')}`}
         action={
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setAdding(false)
-                setEditing(null)
-                setAddingAccount((v) => !v)
-              }}
-              className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-sm font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
-            >
-              <Plus className="h-4 w-4" /> Счёт
-            </button>
-            <button
+            {/* Счёт — главное действие экрана: банков, брокеров и бирж у владельца много, а
+                криптокошельков единицы. Раньше акцент стоял на кошельке, и «завести счёт»
+                выглядело второстепенным — при том что именно этого действия не хватало. */}
+            <PrimaryAction
+              secondary
               onClick={() => {
                 setAddingAccount(false)
                 setEditing(null)
                 setAdding((v) => !v)
               }}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
             >
               <Plus className="h-4 w-4" /> Кошелёк
-            </button>
+            </PrimaryAction>
+            <PrimaryAction
+              onClick={() => {
+                setAdding(false)
+                setEditing(null)
+                setAddingAccount((v) => !v)
+              }}
+            >
+              <Plus className="h-4 w-4" /> Счёт
+            </PrimaryAction>
           </div>
         }
       />

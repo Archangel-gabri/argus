@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CalendarClock, Pencil, Plus, Trash2, X } from 'lucide-react'
-import { Page, PageHeader, StatTile, Card } from '@/components/ui/Page'
+import { Page, PageHeader, PrimaryAction, StatTile, Card } from '@/components/ui/Page'
 import { Donut } from '@/components/ui/Donut'
 import { approxMoney, isApprox, money, plural } from '@/lib/format'
 import { cn } from '@/lib/cn'
@@ -278,19 +278,17 @@ export function SubscriptionsView(): React.JSX.Element {
       <PageHeader
         title="Подписки"
         subtitle={`${all.length} ${plural(all.length, 'активная', 'активные', 'активных')}`}
+        action={
+          <PrimaryAction
+            onClick={() => {
+              setEditing(null)
+              setAdding((v) => !v)
+            }}
+          >
+            <Plus className="h-4 w-4" /> Подписка
+          </PrimaryAction>
+        }
       />
-
-      <div className="mb-4 flex justify-end">
-        <button
-          onClick={() => {
-            setEditing(null)
-            setAdding((v) => !v)
-          }}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-bold text-bg hover:bg-accent-hover"
-        >
-          <Plus className="h-4 w-4" /> Подписка
-        </button>
-      </div>
 
       {/* key даёт форме идентичность цели правки. Без него переход «карандаш у A →
           карандаш у B» не перемонтирует компонент: React видит тот же элемент,
