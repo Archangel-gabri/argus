@@ -51,6 +51,7 @@ async function fetchForCheck<T>(
   try {
     return await withDeadline<Out>({
       ms: CHECK_TIMEOUT_MS,
+      what: 'сервис не ответил на проверку ключа',
       // Отмена запроса прерывает ожидание заголовков. Чтение уже полученного тела она НЕ
       // прерывает — поэтому срок здесь общий на весь путь, а не только на запрос.
       dispose: () => controller.abort(),

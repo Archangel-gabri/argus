@@ -523,6 +523,7 @@ export async function fetchExchangeBalance(
         try {
           const got = await withDeadline<{ status: number; retryAfter: string | null; data: unknown }>({
             ms: TIMEOUT_MS,
+            what: `${label} не ответил`,
             dispose: () => controller.abort(),
             run: async (gate) => {
               const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })

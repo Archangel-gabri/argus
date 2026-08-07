@@ -322,6 +322,7 @@ export async function sftpUpload(
   let lastMove = monotonic()
   return withDeadline<Result>({
     ms: SFTP_TRANSFER_CEILING_MS,
+    what: 'файл так и не загрузился',
     // Обрубок на ЧУЖОЙ машине убрать уже нечем: канал мёртв, и попытка удаления повисла бы так
     // же. Он остаётся под именем с приставкой `.argus-part` — по нему видно, что это огрызок.
     dispose: () => abortSession(sessionId),
@@ -365,6 +366,7 @@ export function sftpPutFile(
   let lastMove = monotonic()
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_TRANSFER_CEILING_MS,
+    what: 'агент так и не залился',
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       const stall = setInterval(() => {
@@ -401,6 +403,7 @@ export function sftpWriteFile(
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_META_MS,
+    what: 'сервер не записал файл',
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       s.sftp.writeFile(remotePath, Buffer.from(content, 'utf8'), { mode }, (err) => {
@@ -424,6 +427,7 @@ export function sftpDelete(sessionId: string, path: string, isDir: boolean): Pro
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_META_MS,
+    what: 'сервер не удалил файл',
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       const cb = (err: Error | null | undefined): void => {
