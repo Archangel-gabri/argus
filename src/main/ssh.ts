@@ -285,6 +285,7 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
   let disposeConn: (() => void) | null = null
   return withDeadline<OpenResult>({
     ms: SSH_SHELL_OPEN_MS,
+    what: 'сервер не открыл терминал',
     dispose: () => {
       try {
         disposeConn?.()

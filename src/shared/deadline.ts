@@ -22,8 +22,16 @@
 
 export class DeadlineError extends Error {
   readonly code = 'ARGUS_DEADLINE'
-  constructor(readonly ms: number) {
-    super(`операция не уложилась в ${Math.round(ms / 1000)} с`)
+  /**
+   * `what` — что именно не дождались, словами человека. Без него сообщение выходило про
+   * механику («операция не уложилась в 20 с»), а человеку нужно понять, что делать: «сервер не
+   * ответил» и «файл не передаётся» — разные новости, хотя внутри это один и тот же срок.
+   */
+  constructor(
+    readonly ms: number,
+    what?: string
+  ) {
+    super(what ? `${what} за ${Math.round(ms / 1000)} с` : `операция не уложилась в ${Math.round(ms / 1000)} с`)
     this.name = 'DeadlineError'
   }
 }
@@ -53,6 +61,8 @@ export function withDeadline<T>(options: {
   run: (gate: DeadlineGate<T>) => void | Promise<void>
   /** Отмена источника: синхронная, идемпотентная, без ожидания. */
   dispose: (error: DeadlineError) => void
+  /** Что не дождались — попадёт в сообщение, которое прочитает человек. */
+  what?: string
 }): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false
@@ -66,7 +76,7 @@ export function withDeadline<T>(options: {
     // завершить операцию раньше, чем срок вообще начал идти, и `clearTimeout` промахнулся бы.
     const timer = setTimeout(() => {
       if (!take()) return
-      const error = new DeadlineError(options.ms)
+      const error = new DeadlineError(options.ms, options.what)
       try {
         // Отмена идёт ПОСЛЕ того, как право забрано: если она синхронно породит `close` или
         // `error`, обработчик увидит закрытые ворота и не подменит причину отказа.

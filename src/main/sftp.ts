@@ -51,6 +51,7 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
   let disposeConn: (() => void) | null = null
   return withDeadline<{ ok: boolean; sessionId?: string; error?: string }>({
     ms: SFTP_OPEN_MS,
+    what: 'сервер не открыл доступ к файлам',
     dispose: () => {
       try {
         disposeConn?.()
@@ -199,6 +200,7 @@ export function sftpList(
   // перезапуска приложения. Срок обрывает сессию и отвечает честно.
   return withDeadline<Result>({
     ms: SFTP_META_MS,
+    what: 'сервер не прислал список файлов',
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       s.sftp.realpath(p, (rerr, abs) => {

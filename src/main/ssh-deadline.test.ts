@@ -48,7 +48,7 @@ describe('открытие терминала', () => {
 
     const result = await promise
     expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/не уложилась|closed/i)
+    expect(result.error).toMatch(/сервер не открыл|closed/i)
     // Соединение, которое молчит, держать незачем.
     expect(destroyed).toBeGreaterThan(0)
     // Сессию терминала, о которой интерфейс не знает, заводить нельзя.

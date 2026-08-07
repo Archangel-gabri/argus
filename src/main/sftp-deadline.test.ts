@@ -92,7 +92,7 @@ describe('список каталога на почерневшем канале
     const result = await promise
 
     expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/не уложилась/i)
+    expect(result.error).toMatch(/сервер не (прислал|открыл)/i)
     // Канал, который не отвечает, держать незачем: оба дескриптора закрыты.
     expect(destroyedSftp).toBe(1)
     expect(destroyedClient).toBe(1)
