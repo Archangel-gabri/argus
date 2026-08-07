@@ -128,14 +128,19 @@ describe('живая передача не обрывается по общем�
     const opened = await mod.sftpOpen('d1')
 
     vi.useFakeTimers()
-    void mod.sftpDownload(opened.sessionId!, '/big.iso', null)
+    let finished = false
+    void mod.sftpDownload(opened.sessionId!, '/big.iso', null).then(() => {
+      finished = true
+    })
     // Двадцать минут передачи, куски идут каждые полминуты.
     for (let i = 0; i < 40; i++) {
       await vi.advanceTimersByTimeAsync(30_000)
       transfer.step?.()
     }
-    // Передача всё ещё жива: обрыва не случилось.
-    expect(transfer.step).not.toBeNull()
+    // Проверяем ИМЕННО то, ради чего правка: промис не завершился, передача жива. Прежняя
+    // версия этой проверки смотрела на наличие обратного вызова — а он есть всегда, поэтому
+    // проверка проходила бы и при обрыве.
+    expect(finished).toBe(false)
     vi.useRealTimers()
     vi.doUnmock('ssh2')
   })

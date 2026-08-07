@@ -163,6 +163,14 @@ const SFTP_OPEN_MS = 20_000
  * `fastGet`/`fastPut` сообщают о каждом куске через `step` — по нему и продлеваем.
  */
 const SFTP_STALL_MS = 60_000
+/**
+ * Последний рубеж для передачи: столько она не идёт ни при каких обстоятельствах.
+ *
+ * Нужен только чтобы промис не жил вечно, если сломается сам сторож застоя. Реальное решение
+ * принимает застой: общий срок в разумные минуты убил бы исправную передачу большого файла —
+ * ровно та ошибка, ради исправления которой застой и вводился.
+ */
+const SFTP_TRANSFER_CEILING_MS = 24 * 60 * 60 * 1000
 
 export function sftpList(
   sessionId: string,
@@ -233,9 +241,10 @@ export async function sftpDownload(
   type Result = { ok: boolean; error?: string }
   let lastMove = Date.now()
   return withDeadline<Result>({
-    ms: SFTP_STALL_MS,
-    // Срок продлевается, пока идут куски: `withDeadline` умеет только общий срок, поэтому
-    // движение проверяем сами и обрываем лишь при настоящем застое.
+    // Здесь именно ПОТОЛОК: `withDeadline` умеет только общий срок, а решение о живости
+    // принимает сторож застоя ниже. Поставить сюда рабочий предел значило бы вернуть ту самую
+    // ошибку — обрыв исправной передачи большого файла на середине.
+    ms: SFTP_TRANSFER_CEILING_MS,
     dispose: () => {
       abortSession(sessionId)
       // Обрубок на своём диске убираем: он носит имя файла владельца с приставкой и легко
@@ -296,7 +305,7 @@ export async function sftpUpload(
   type Result = { ok: boolean; name?: string; error?: string }
   let lastMove = Date.now()
   return withDeadline<Result>({
-    ms: SFTP_STALL_MS,
+    ms: SFTP_TRANSFER_CEILING_MS,
     // Обрубок на ЧУЖОЙ машине убрать уже нечем: канал мёртв, и попытка удаления повисла бы так
     // же. Он остаётся под именем с приставкой `.argus-part` — по нему видно, что это огрызок.
     dispose: () => abortSession(sessionId),
@@ -339,7 +348,7 @@ export function sftpPutFile(
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
   let lastMove = Date.now()
   return withDeadline<{ ok: boolean; error?: string }>({
-    ms: SFTP_STALL_MS,
+    ms: SFTP_TRANSFER_CEILING_MS,
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       const stall = setInterval(() => {
