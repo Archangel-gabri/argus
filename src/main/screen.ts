@@ -295,7 +295,10 @@ async function ensureGuacd(): Promise<boolean> {
       done = true
       r()
     }
-    const child = execFile('docker', ['start', 'argus-guacd'], () => finish())
+    const child = execFile('docker', ['start', 'argus-guacd'], () => {
+      clearTimeout(timer)
+      finish()
+    })
     const timer = setTimeout(() => {
       try {
         child.kill('SIGKILL')
@@ -305,7 +308,9 @@ async function ensureGuacd(): Promise<boolean> {
       finish()
     }, DOCKER_START_MS)
     ;(timer as unknown as { unref?: () => void }).unref?.()
-    child.once('exit', () => clearTimeout(timer))
+    // Таймер снимается ВМЕСТЕ с завершением ожидания, а не по событию выхода потомка: выход
+    // приходит раньше закрытия потоков, и в зазоре между ними ожидание оказалось бы снятым,
+    // а работа — незавершённой.
   })
   for (let i = 0; i < 6; i++) {
     if (await tcpAlive(GUACD.host, GUACD.port)) return true

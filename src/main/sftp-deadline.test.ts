@@ -16,7 +16,8 @@ class FakeClient extends EventEmitter {
     cb(null, {
       realpath: (_p: string, done: (e: Error | null, abs: string) => void) => done(null, '/home/user'),
       readdir: () => {}, // ответа не будет никогда — это и есть «чернота»
-      fastGet: () => {}, // и передача тоже молчит
+      // Передача молчит: `step` не зовётся, кусков нет.
+      fastGet: () => {},
       fastPut: () => {},
       rename: () => {
         renamed++
@@ -71,7 +72,8 @@ describe('передача файла на почерневшем канале',
     const opened = await mod.sftpOpen('d1')
     vi.useFakeTimers()
     const promise = mod.sftpDownload(opened.sessionId!, '/etc/hosts', null)
-    await vi.advanceTimersByTimeAsync(600_000)
+    // Срок теперь считается от последнего пришедшего куска: ждём застой, а не общее время.
+    await vi.advanceTimersByTimeAsync(70_000)
     const result = await promise
     expect(result.ok).toBe(false)
     expect(renamed).toBe(0)
@@ -94,5 +96,47 @@ describe('список каталога на почерневшем канале
     // Канал, который не отвечает, держать незачем: оба дескриптора закрыты.
     expect(destroyedSftp).toBe(1)
     expect(destroyedClient).toBe(1)
+  })
+})
+
+describe('живая передача не обрывается по общему времени', () => {
+  it('пока идут куски, срок не наступает', async () => {
+    // Контрпример от адверсарной проверки: файл на гигабайт по каналу в мегабайт в секунду
+    // идёт семнадцать минут. Абсолютный срок убил бы его на десятой минуте, хотя передача
+    // исправна. Считаем от последнего куска, а не от начала.
+    const transfer: { step: (() => void) | null } = { step: null }
+    class MovingClient extends EventEmitter {
+      connect(): void {
+        setTimeout(() => this.emit('ready'), 0)
+      }
+      sftp(cb: (err: Error | null, sftp: unknown) => void): void {
+        cb(null, {
+          realpath: (_p: string, done: (e: Error | null, abs: string) => void) => done(null, '/home'),
+          fastGet: (_r: string, _l: string, opts: { step: () => void }) => {
+            transfer.step = opts.step // куски приходят по нашей команде
+          },
+          destroy: () => {}
+        })
+      }
+      end(): void {}
+      destroy(): void {}
+    }
+
+    vi.resetModules()
+    vi.doMock('ssh2', () => ({ Client: MovingClient }))
+    const mod = await import('./sftp')
+    const opened = await mod.sftpOpen('d1')
+
+    vi.useFakeTimers()
+    void mod.sftpDownload(opened.sessionId!, '/big.iso', null)
+    // Двадцать минут передачи, куски идут каждые полминуты.
+    for (let i = 0; i < 40; i++) {
+      await vi.advanceTimersByTimeAsync(30_000)
+      transfer.step?.()
+    }
+    // Передача всё ещё жива: обрыва не случилось.
+    expect(transfer.step).not.toBeNull()
+    vi.useRealTimers()
+    vi.doUnmock('ssh2')
   })
 })

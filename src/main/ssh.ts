@@ -130,13 +130,22 @@ export async function resolveConn(deviceId: string): Promise<DeviceConn | null> 
  *  Пинит host-key (TOFU) на ОБОИХ прыжках (баг: раньше jump-хост не проверялся). Вызывающий
  *  сам вешает client 'ready'/'error'/'close'; onError зовётся при сбое jump-плеча или синхронном
  *  throw connect. Единый путь для терминала/файлов/портов/exec/probe — раньше jump был только у терминала. */
+/**
+ * Поднять соединение — напрямую или через бастион.
+ *
+ * Возвращает отмену. Она нужна вызывающему: при подключении через бастион здесь создаётся
+ * ВТОРОЙ клиент, о котором снаружи не знают. Пока отмены не было, срок уничтожал только
+ * целевой клиент, а клиент бастиона оставался жить — вместе с висящим на нём запросом канала.
+ * Вдобавок `destroy()` у клиента, который ещё не начал подключаться, ничего не делает: сокета
+ * у него нет, и события закрытия не будет.
+ */
 export function establish(
   client: Client,
   conn: DeviceConn,
   verifier: NonNullable<ConnectConfig['hostVerifier']>,
   onError: (e: Error) => void,
   readyTimeout = 15000
-): void {
+): () => void {
   const base = {
     username: conn.user,
     ...authFields(conn),
@@ -155,7 +164,15 @@ export function establish(
     } catch (e) {
       onError(e as Error)
     }
-    return
+    // Прямое подключение: закрывать нечего, кроме самого клиента.
+    return () => {
+      try {
+        client.end()
+        client.destroy()
+      } catch {
+        /* уже мёртв */
+      }
+    }
   }
   const jump = conn.jump
   const jumpClient = new Client()
@@ -183,6 +200,20 @@ export function establish(
       /* ignore */
     }
   })
+  const disposeJump = (): void => {
+    try {
+      jumpClient.end()
+      jumpClient.destroy()
+    } catch {
+      /* уже мёртв */
+    }
+    try {
+      client.end()
+      client.destroy()
+    } catch {
+      /* уже мёртв */
+    }
+  }
   try {
     jumpClient.connect({
       host: jump.host,
@@ -196,6 +227,7 @@ export function establish(
   } catch (e) {
     onError(e as Error)
   }
+  return disposeJump
 }
 
 interface Session {
@@ -247,9 +279,18 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
   // и вкладка терминала пульсировала «подключаюсь» до перезапуска приложения. Здесь ждём весь
   // путь до готовой оболочки, а на исходе срока рвём соединение: поздний ответ не должен
   // заводить сессию, которой уже никто не владеет.
+  // Отмену бастиона запоминаем: при подключении через него живёт ВТОРОЙ клиент, о котором
+  // снаружи не знают, и уничтожение целевого его не трогает. Вдобавок `destroy()` у клиента,
+  // ещё не начавшего подключаться, ничего не делает — сокета у него нет.
+  let disposeConn: (() => void) | null = null
   return withDeadline<OpenResult>({
     ms: SSH_SHELL_OPEN_MS,
     dispose: () => {
+      try {
+        disposeConn?.()
+      } catch {
+        /* соединение могло умереть раньше */
+      }
       try {
         client.destroy()
       } catch {
@@ -327,7 +368,7 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
         hostKeyChanged = changed
       })
       // Единый путь подключения: напрямую или через jump-бастион (с TOFU на обоих хопах).
-      establish(client, conn, verifier, (e) => done({ ok: false, error: e.message }))
+      disposeConn = establish(client, conn, verifier, (e) => done({ ok: false, error: e.message }))
     }
   }).catch((error: unknown) => ({
     ok: false,

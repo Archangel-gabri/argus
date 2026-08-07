@@ -527,12 +527,18 @@ export async function fetchExchangeBalance(
             run: async (gate) => {
               const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
               if (!gate.active()) return
+              const status = response.status
+              const retryAfterHeader = response.headers?.get('retry-after') ?? null
+              // Код ответа — уже доказанный факт, и терять его из-за молчащего тела нельзя.
+              // Биржа, отдавшая 401 и замолчавшая, по сроку превращалась в «не ответила»: на
+              // экране это «связи нет» вместо «ключ не принят», и владелец чинил бы не то.
+              // Тело у неудачного ответа не нужно: вердикт ставит сам код.
+              if (!response.ok) {
+                gate.settle(() => ({ status, retryAfter: retryAfterHeader, data: NOT_JSON }))
+                return
+              }
               const body: unknown = await response.json().catch(() => NOT_JSON)
-              gate.settle(() => ({
-                status: response.status,
-                retryAfter: response.headers?.get('retry-after') ?? null,
-                data: body
-              }))
+              gate.settle(() => ({ status, retryAfter: retryAfterHeader, data: body }))
             }
           })
           status = got.status

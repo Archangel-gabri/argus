@@ -98,9 +98,10 @@ export async function openLocalForward(
           sock.destroy()
         }, FORWARD_CHANNEL_MS)
         ;(channelTimer as unknown as { unref?: () => void }).unref?.()
-        // Подписки на закрытие здесь нет намеренно: таймер снимается в обеих ветках ответа, а
-        // если сокет закрылся раньше, `destroy` по сроку на уже закрытом безвреден. Лишний
-        // слушатель на каждом соединении — это утечка, которую туннель копил бы сам.
+        // Ранний обрыв клиента снимает таймер: иначе на каждом коротком соединении он живёт
+        // лишние пятнадцать секунд и держит сокет замыканием. Слушатель одноразовый — он
+        // снимается сам, поэтому не копится.
+        sock.once?.('close', () => clearTimeout(channelTimer))
         try {
           client.forwardOut('127.0.0.1', localPort, remoteHost, remotePort, (err, stream) => {
             clearTimeout(channelTimer)

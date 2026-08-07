@@ -57,6 +57,13 @@ async function fetchForCheck<T>(
       run: async (gate) => {
         const r = await fetch(url, { ...init, signal: controller.signal })
         if (!gate.active()) return
+        // Известный вердикт нельзя терять из-за молчащего тела. Ответ «401 в заголовках, тело
+        // не идёт» — это доказанный отказ ключа, и по сроку он превращался в «сервис не
+        // ответил»: владелец видел «проверка не удалась» вместо «ключ не принят».
+        if (!r.ok) {
+          gate.settle(() => ({ status: r.status, ok: false }))
+          return
+        }
         const value = read ? await read(r) : undefined
         gate.settle(() => ({ status: r.status, ok: r.ok, value }))
       }

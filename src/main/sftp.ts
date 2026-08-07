@@ -47,9 +47,16 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
   // того, как право завершить операцию забрано, и сообщение о сроке подменялось сообщением о
   // закрытии. Хуже другое: поздний ответ на запрос SFTP всё равно клал сессию в карту — она
   // оставалась жить, а интерфейс о ней не знал и закрыть не мог.
+  // Отмена соединения включает клиента бастиона, если подключаемся через него.
+  let disposeConn: (() => void) | null = null
   return withDeadline<{ ok: boolean; sessionId?: string; error?: string }>({
     ms: SFTP_OPEN_MS,
     dispose: () => {
+      try {
+        disposeConn?.()
+      } catch {
+        /* соединение могло умереть раньше */
+      }
       try {
         sftpRef?.destroy()
       } catch {
@@ -110,7 +117,9 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
         }
       })
       // Через jump-бастион если задан — иначе Файлы не открывались у jump-хостов.
-      establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) => done({ ok: false, error: e.message }))
+      disposeConn = establish(client, conn, makeHostVerifier(conn.host, conn.port), (e) =>
+        done({ ok: false, error: e.message })
+      )
     }
   }).catch((error: unknown) => ({
     ok: false,
@@ -144,17 +153,16 @@ const SFTP_META_MS = 20_000
 /** Сколько ждём открытие сессии: рукопожатие, вход и ответ на запрос подсистемы SFTP. */
 const SFTP_OPEN_MS = 20_000
 /**
- * Сколько ждём передачу файла. Здесь срок другой по природе: большой файл через медленный
- * канал идёт минутами, и двадцати секунд ему мало. Десять минут — не «нормальное время
- * передачи», а граница, за которой канал считается мёртвым: живая передача успевает.
+ * Сколько ждём БЕЗ ДВИЖЕНИЯ при передаче файла.
+ *
+ * Срок здесь считается не от начала, а от последнего пришедшего куска. Абсолютный не годится:
+ * файл на гигабайт по каналу в мегабайт в секунду идёт семнадцать минут, и любой разумный
+ * общий срок убил бы живую передачу на середине. Зато канал, замолчавший на минуту при живом
+ * соединении, мёртв независимо от размера файла.
+ *
+ * `fastGet`/`fastPut` сообщают о каждом куске через `step` — по нему и продлеваем.
  */
-const SFTP_TRANSFER_MS = 600_000
-/**
- * Сколько ждём заливку бинаря агента. Он весит около семи мегабайт: две минуты — это уже не
- * «медленный канал», а мёртвый. Провижининг без этого срока останавливался на «Ставлю агент…»
- * навсегда.
- */
-const SFTP_PROVISION_MS = 120_000
+const SFTP_STALL_MS = 60_000
 
 export function sftpList(
   sessionId: string,
@@ -223,8 +231,11 @@ export async function sftpDownload(
   // (а канал до нод флапает) оставлял на её месте обрубок, и восстановить было неоткуда.
   const tmp = `${target}.argus-part`
   type Result = { ok: boolean; error?: string }
+  let lastMove = Date.now()
   return withDeadline<Result>({
-    ms: SFTP_TRANSFER_MS,
+    ms: SFTP_STALL_MS,
+    // Срок продлевается, пока идут куски: `withDeadline` умеет только общий срок, поэтому
+    // движение проверяем сами и обрываем лишь при настоящем застое.
     dispose: () => {
       abortSession(sessionId)
       // Обрубок на своём диске убираем: он носит имя файла владельца с приставкой и легко
@@ -232,7 +243,16 @@ export async function sftpDownload(
       rm(tmp, { force: true }, () => {})
     },
     run: (gate) => {
-      s.sftp.fastGet(remotePath, tmp, (err) => {
+      const stall = setInterval(() => {
+        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        clearInterval(stall)
+        abortSession(sessionId)
+        rm(tmp, { force: true }, () => {})
+        gate.reject(new Error(`передача встала: за ${SFTP_STALL_MS / 1000} с не пришло ни одного куска`))
+      }, 5_000)
+      ;(stall as unknown as { unref?: () => void }).unref?.()
+      s.sftp.fastGet(remotePath, tmp, { step: () => (lastMove = Date.now()) }, (err) => {
+        clearInterval(stall)
         if (err) {
           rm(tmp, { force: true }, () => gate.reject(new Error(friendlyErr(err.message))))
           return
@@ -274,13 +294,22 @@ export async function sftpUpload(
   // рабочий файл на сервере обрубком — а это уже чужая машина, и чинить придётся руками.
   const tmpRemote = `${remote}.argus-part`
   type Result = { ok: boolean; name?: string; error?: string }
+  let lastMove = Date.now()
   return withDeadline<Result>({
-    ms: SFTP_TRANSFER_MS,
+    ms: SFTP_STALL_MS,
     // Обрубок на ЧУЖОЙ машине убрать уже нечем: канал мёртв, и попытка удаления повисла бы так
     // же. Он остаётся под именем с приставкой `.argus-part` — по нему видно, что это огрызок.
     dispose: () => abortSession(sessionId),
     run: (gate) => {
-      s.sftp.fastPut(local, tmpRemote, (err) => {
+      const stall = setInterval(() => {
+        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        clearInterval(stall)
+        abortSession(sessionId)
+        gate.reject(new Error(`передача встала: за ${SFTP_STALL_MS / 1000} с не ушло ни одного куска`))
+      }, 5_000)
+      ;(stall as unknown as { unref?: () => void }).unref?.()
+      s.sftp.fastPut(local, tmpRemote, { step: () => (lastMove = Date.now()) }, (err) => {
+        clearInterval(stall)
         if (err) {
           s.sftp.unlink(tmpRemote, () => gate.reject(new Error(friendlyErr(err.message))))
           return
@@ -308,11 +337,20 @@ export function sftpPutFile(
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
+  let lastMove = Date.now()
   return withDeadline<{ ok: boolean; error?: string }>({
-    ms: SFTP_PROVISION_MS,
+    ms: SFTP_STALL_MS,
     dispose: () => abortSession(sessionId),
     run: (gate) => {
-      s.sftp.fastPut(localPath, remotePath, (err) => {
+      const stall = setInterval(() => {
+        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        clearInterval(stall)
+        abortSession(sessionId)
+        gate.reject(new Error('заливка встала: канал не принимает данные'))
+      }, 5_000)
+      ;(stall as unknown as { unref?: () => void }).unref?.()
+      s.sftp.fastPut(localPath, remotePath, { step: () => (lastMove = Date.now()) }, (err) => {
+        clearInterval(stall)
         if (err) {
           gate.reject(new Error(friendlyErr(err.message)))
           return
