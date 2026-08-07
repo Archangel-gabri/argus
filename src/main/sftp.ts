@@ -69,7 +69,12 @@ export async function sftpOpen(deviceId: string): Promise<{ ok: boolean; session
       }
     },
     run: (gate) => {
-      const done = (r: { ok: boolean; sessionId?: string; error?: string }): void => void gate.settle(() => r)
+      // То же и здесь: неудачный исход обязан закрыть соединение бастиона. По сроку оно
+      // закрывалось, а по обычному отказу — нет.
+      const done = (r: { ok: boolean; sessionId?: string; error?: string }): void => {
+        const won = gate.settle(() => r)
+        if (won && !r.ok) disposeConn?.()
+      }
 
       client.on('ready', () => {
         if (!isAccessCurrent(accessTicket)) {
@@ -163,6 +168,15 @@ const SFTP_OPEN_MS = 20_000
  * `fastGet`/`fastPut` сообщают о каждом куске через `step` — по нему и продлеваем.
  */
 const SFTP_STALL_MS = 60_000
+
+/**
+ * Часы для сроков — монотонные, а не настенные.
+ *
+ * `Date.now()` прыгает: перевод системного времени вперёд на две минуты заставил бы сторож
+ * застоя оборвать исправную передачу, а перевод назад — не заметить настоящий застой, пока
+ * часы не догонят прежнее значение. `performance.now()` идёт равномерно и назад не ходит.
+ */
+const monotonic = (): number => performance.now()
 /**
  * Последний рубеж для передачи: столько она не идёт ни при каких обстоятельствах.
  *
@@ -239,7 +253,7 @@ export async function sftpDownload(
   // (а канал до нод флапает) оставлял на её месте обрубок, и восстановить было неоткуда.
   const tmp = `${target}.argus-part`
   type Result = { ok: boolean; error?: string }
-  let lastMove = Date.now()
+  let lastMove = monotonic()
   return withDeadline<Result>({
     // Здесь именно ПОТОЛОК: `withDeadline` умеет только общий срок, а решение о живости
     // принимает сторож застоя ниже. Поставить сюда рабочий предел значило бы вернуть ту самую
@@ -253,14 +267,14 @@ export async function sftpDownload(
     },
     run: (gate) => {
       const stall = setInterval(() => {
-        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        if (monotonic() - lastMove < SFTP_STALL_MS) return
         clearInterval(stall)
         abortSession(sessionId)
         rm(tmp, { force: true }, () => {})
         gate.reject(new Error(`передача встала: за ${SFTP_STALL_MS / 1000} с не пришло ни одного куска`))
       }, 5_000)
       ;(stall as unknown as { unref?: () => void }).unref?.()
-      s.sftp.fastGet(remotePath, tmp, { step: () => (lastMove = Date.now()) }, (err) => {
+      s.sftp.fastGet(remotePath, tmp, { step: () => (lastMove = monotonic()) }, (err) => {
         clearInterval(stall)
         if (err) {
           rm(tmp, { force: true }, () => gate.reject(new Error(friendlyErr(err.message))))
@@ -303,7 +317,7 @@ export async function sftpUpload(
   // рабочий файл на сервере обрубком — а это уже чужая машина, и чинить придётся руками.
   const tmpRemote = `${remote}.argus-part`
   type Result = { ok: boolean; name?: string; error?: string }
-  let lastMove = Date.now()
+  let lastMove = monotonic()
   return withDeadline<Result>({
     ms: SFTP_TRANSFER_CEILING_MS,
     // Обрубок на ЧУЖОЙ машине убрать уже нечем: канал мёртв, и попытка удаления повисла бы так
@@ -311,13 +325,13 @@ export async function sftpUpload(
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       const stall = setInterval(() => {
-        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        if (monotonic() - lastMove < SFTP_STALL_MS) return
         clearInterval(stall)
         abortSession(sessionId)
         gate.reject(new Error(`передача встала: за ${SFTP_STALL_MS / 1000} с не ушло ни одного куска`))
       }, 5_000)
       ;(stall as unknown as { unref?: () => void }).unref?.()
-      s.sftp.fastPut(local, tmpRemote, { step: () => (lastMove = Date.now()) }, (err) => {
+      s.sftp.fastPut(local, tmpRemote, { step: () => (lastMove = monotonic()) }, (err) => {
         clearInterval(stall)
         if (err) {
           s.sftp.unlink(tmpRemote, () => gate.reject(new Error(friendlyErr(err.message))))
@@ -346,19 +360,19 @@ export function sftpPutFile(
 ): Promise<{ ok: boolean; error?: string }> {
   const s = sessions.get(sessionId)
   if (!s) return Promise.resolve({ ok: false, error: 'session closed' })
-  let lastMove = Date.now()
+  let lastMove = monotonic()
   return withDeadline<{ ok: boolean; error?: string }>({
     ms: SFTP_TRANSFER_CEILING_MS,
     dispose: () => abortSession(sessionId),
     run: (gate) => {
       const stall = setInterval(() => {
-        if (Date.now() - lastMove < SFTP_STALL_MS) return
+        if (monotonic() - lastMove < SFTP_STALL_MS) return
         clearInterval(stall)
         abortSession(sessionId)
         gate.reject(new Error('заливка встала: канал не принимает данные'))
       }, 5_000)
       ;(stall as unknown as { unref?: () => void }).unref?.()
-      s.sftp.fastPut(localPath, remotePath, { step: () => (lastMove = Date.now()) }, (err) => {
+      s.sftp.fastPut(localPath, remotePath, { step: () => (lastMove = monotonic()) }, (err) => {
         clearInterval(stall)
         if (err) {
           gate.reject(new Error(friendlyErr(err.message)))

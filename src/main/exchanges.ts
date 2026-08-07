@@ -535,6 +535,8 @@ export async function fetchExchangeBalance(
               // Тело у неудачного ответа не нужно: вердикт ставит сам код.
               if (!response.ok) {
                 gate.settle(() => ({ status, retryAfter: retryAfterHeader, data: NOT_JSON }))
+                // Тело неудачного ответа не нужно, но идти не перестаёт: отменяем явно.
+                void response.body?.cancel().catch(() => {})
                 return
               }
               const body: unknown = await response.json().catch(() => NOT_JSON)

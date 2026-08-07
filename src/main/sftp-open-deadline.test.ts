@@ -54,3 +54,31 @@ describe('открытие сессии файлов', () => {
     expect(mod.sftpCloseDevice('d1')).toBe(0)
   })
 })
+
+describe('соединение бастиона', () => {
+  it('закрывается и при обычном отказе, а не только по сроку', async () => {
+    // Контрпример от адверсарной проверки: бастион успешно открыл канал, а на целевой машине
+    // вход отклонён. Операция завершалась отказом, а клиент бастиона оставался жить вместе с
+    // открытым на нём каналом — снаружи о нём никто не знает и закрыть нечем.
+    let jumpClosed = 0
+    vi.resetModules()
+    vi.doMock('./ssh', () => ({
+      establish: (client: { emit: (e: string, v?: unknown) => void }) => {
+        // Целевая машина отвечает отказом сразу.
+        setTimeout(() => client.emit('error', new Error('Authentication failed')), 0)
+        return () => {
+          jumpClosed++
+        }
+      },
+      makeHostVerifier: () => () => true,
+      resolveConn: () => Promise.resolve({ host: '198.51.100.10', port: 22, user: 'root', password: 'x', jump: null }),
+      hasCredential: () => true
+    }))
+    const mod = await import('./sftp')
+    const result = await mod.sftpOpen('d1')
+
+    expect(result.ok).toBe(false)
+    expect(jumpClosed).toBe(1)
+    vi.doUnmock('./ssh')
+  })
+})

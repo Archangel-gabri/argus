@@ -298,7 +298,13 @@ export async function openShell(wc: WebContents, deviceId: string, cols = 80, ro
       }
     },
     run: (gate) => {
-      const done = (r: OpenResult): void => void gate.settle(() => r)
+      // Любой исход закрывает соединение бастиона, а не только срок. Отказ на целевой машине
+      // (непонятный ключ, отклонённый вход) завершал операцию, а клиент бастиона оставался
+      // жить вместе с открытым на нём каналом — снаружи о нём никто не знает и закрыть нечем.
+      const done = (r: OpenResult): void => {
+        const won = gate.settle(() => r)
+        if (won && !r.ok) disposeConn?.()
+      }
 
         client.on('ready', () => {
         if (!isAccessCurrent(accessTicket)) {

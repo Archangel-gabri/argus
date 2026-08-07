@@ -62,6 +62,9 @@ async function fetchForCheck<T>(
         // ответил»: владелец видел «проверка не удалась» вместо «ключ не принят».
         if (!r.ok) {
           gate.settle(() => ({ status: r.status, ok: false }))
+          // Тело неудачного ответа нам не нужно, но оно продолжает идти: без отмены соединение
+          // держится, пока сервер не закончит или пока не сработает сборка мусора.
+          void r.body?.cancel().catch(() => {})
           return
         }
         const value = read ? await read(r) : undefined
