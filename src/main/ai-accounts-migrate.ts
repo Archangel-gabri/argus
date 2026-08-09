@@ -130,6 +130,9 @@ export function repairLabel(access: Pick<AiAccess, 'label' | 'account' | 'channe
   return named ? named.label : null
 }
 
+/** Вид памяти о переходах: тот же механизм, что помнит засев и связи «сервер ↔ платёж». */
+const MIGRATION_KIND = 'migration'
+
 export function migrateToAccounts(): { accounts: number; merged: number } {
   if (!vault.isUnlocked()) return { accounts: 0, merged: 0 }
   const list = vault.listAiAccess()
@@ -141,8 +144,22 @@ export function migrateToAccounts(): { accounts: number; merged: number } {
     if (name) vault.updateAiAccess(a.id, { provider: a.provider, label: name })
   }
 
-  // Каналы уже расставлены — значит переход состоялся.
-  if (list.length === 0 || list.every((a) => a.channels.length > 0)) return { accounts: 0, merged: 0 }
+  // Переход — одноразовый, и помнить о нём надо ОТДЕЛЬНО, а не выводить из состояния данных.
+  //
+  // Признак «у всех записей есть каналы» для этого не годится: форма создаёт запись с пустым
+  // списком каналов, то есть любая заведённая руками запись возвращала слияние к жизни. Дальше
+  // оно складывало её с записью того же провайдера и на следующем входе УДАЛЯЛО — вместе с
+  // вписанными лимитами, заметками, привязкой к подписке и сроком ключа. Тот же класс дефекта,
+  // что уже дважды чинили уровнем ниже, у аккаунтов.
+  //
+  // Побочный эффект был не менее скверным: удаление ПОСЛЕДНЕГО канала откатывалось само —
+  // следующий вход воссоздавал автоканал, и удаление выглядело не работающим.
+  const MIGRATION_KEY = 'channels-merged'
+  if (vault.appliedSeedKeys(MIGRATION_KIND).has(MIGRATION_KEY)) return { accounts: 0, merged: 0 }
+  if (list.length === 0) {
+    vault.rememberSeedKeys(MIGRATION_KIND, [MIGRATION_KEY])
+    return { accounts: 0, merged: 0 }
+  }
 
   const plans = planMerge(list)
   let merged = 0
@@ -166,5 +183,8 @@ export function migrateToAccounts(): { accounts: number; merged: number } {
       merged++
     }
   }
+  // Помечаем переход состоявшимся независимо от того, было ли что сливать: одноразовость —
+  // свойство самого перехода, а не результата.
+  vault.rememberSeedKeys(MIGRATION_KIND, [MIGRATION_KEY])
   return { accounts: plans.length, merged }
 }
