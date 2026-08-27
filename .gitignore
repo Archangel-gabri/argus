@@ -37,3 +37,6 @@ playwright-report/
 
 coverage/
 *.tsbuildinfo
+
+# Генерируется вольтом, не версионируем
+.proeb/context-pack.md
