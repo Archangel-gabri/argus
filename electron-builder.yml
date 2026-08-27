@@ -35,7 +35,7 @@ linux:
     - AppImage
   icon: resources/icon.png
   category: Network
-  maintainer: Danya Kubrak <fordengiplatno@gmail.com>
+  maintainer: Vadim Kubrak <archangel-gabri@users.noreply.github.com>
   desktop:
     entry:
       Name: Argus

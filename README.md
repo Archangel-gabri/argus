@@ -170,7 +170,7 @@ mv -f ~/Applications/.Argus.new ~/Applications/Argus.AppImage
 
 ## Ограничения и грабли
 
-Всё ниже уже стоило кому-то времени. Подробные разборы — в [`CLAUDE.md`](CLAUDE.md).
+Всё ниже уже стоило кому-то времени. Подробные разборы — в [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md).
 
 - **Мастер-пароль не восстанавливается.** Забыл — данных нет. Об этом спрашивают подтверждение при
   первом запуске, и это не формальность.
@@ -205,14 +205,14 @@ mv -f ~/Applications/.Argus.new ~/Applications/Argus.AppImage
 
 ## Куда смотреть дальше
 
-- [`CLAUDE.md`](CLAUDE.md) — полная история решений, замеров и подводных камней (главный документ).
+- [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md) — полная история решений, замеров и подводных камней (главный документ).
 - [`docs/UX-MAP-2026-08.md`](docs/UX-MAP-2026-08.md) — карта интерфейса по факту кода: кто приходит
   на экран, что вводит, что видит дальше, что может пойти не так.
 - [`DESIGN.md`](DESIGN.md) — визуальный контракт (палитра Graphite & Ember).
 - [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) — утверждённая архитектура и честные пределы интеграций.
 - [`docs/OS-MATRIX.md`](docs/OS-MATRIX.md) — что поддержано на Linux / Windows / macOS / FreeBSD.
-- [`docs/plans/`](docs/plans/) · [`docs/audit/`](docs/audit/) · [`docs/research/`](docs/research/) —
-  планы заходов, реестр находок аудита, разборы.
+- [`docs/audit/`](docs/audit/) · [`docs/research/`](docs/research/) · [`docs/testing/`](docs/testing/) —
+  реестр находок аудита, технические разборы, тестовая стратегия.
 - [`agent/README.md`](agent/README.md) — протокол агента трансляции и его честные пробелы.
 
 ## Безопасность
