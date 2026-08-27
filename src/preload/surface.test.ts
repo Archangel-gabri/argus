@@ -37,12 +37,20 @@ const listened = (src: string): string[] => all(src, /ipcRenderer\.on\('([^']+)'
  * ровно в тот день, когда добавляют новое событие, и тест начинает падать на верном коде.
  */
 const MAIN_DIR = join(__dirname, '..', 'main')
+
+/** Модули main лежат по тематическим папкам, поэтому обход рекурсивный. */
+const mainSources = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = join(dir, e.name)
+    if (e.isDirectory()) return mainSources(full)
+    return e.name.endsWith('.ts') && !e.name.includes('.test.') ? [full] : []
+  })
+
 const EVENTS = unique(
-  readdirSync(MAIN_DIR)
-    .filter((f) => f.endsWith('.ts') && !f.includes('.test.'))
+  mainSources(MAIN_DIR)
     // Отправитель у main разный: где-то `win.webContents.send`, где-то сохранённый `wc.send`.
     // Ищем по самому вызову, а не по имени переменной перед ним.
-    .flatMap((f) => all(readFileSync(join(MAIN_DIR, f), 'utf8'), /(?:wc|webContents)\.send\('([^']+)'/g))
+    .flatMap((f) => all(readFileSync(f, 'utf8'), /(?:wc|webContents)\.send\('([^']+)'/g))
 )
 
 describe('поверхность IPC — направление вызова', () => {

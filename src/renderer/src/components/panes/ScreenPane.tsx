@@ -6,7 +6,7 @@ import { MonitorPlay, Loader2, RefreshCw, AlertTriangle, ExternalLink, Lock, Cpu
 import { cn } from '@/lib/cn'
 import { Hint } from '@/components/ui/Hint'
 import type { DeviceDTO, ScreenPreflight } from '@/types'
-import type { AgentStatus } from '../../../../main/agent'
+import type { AgentStatus } from '../../../../main/screen/agent'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 

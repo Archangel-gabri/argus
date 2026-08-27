@@ -47,7 +47,7 @@ export type {
 } from '../../main/types'
 // Значение (не только тип): единый список валют для дропдаунов.
 export { CURRENCY_CODES } from '../../main/types'
-export type { ParsedHost } from '../../main/sshconfig'
-export type { SftpEntry } from '../../main/sftp'
-export type { ForwardInfo } from '../../main/forward'
-export type { ListeningPort } from '../../main/ports'
+export type { ParsedHost } from '../../main/remote/sshconfig'
+export type { SftpEntry } from '../../main/remote/sftp'
+export type { ForwardInfo } from '../../main/remote/forward'
+export type { ListeningPort } from '../../main/devices/ports'

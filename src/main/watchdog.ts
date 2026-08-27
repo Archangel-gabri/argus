@@ -8,8 +8,8 @@
 // Правила и подавление повторов живут в alerts.ts и покрыты проверками; здесь остаётся
 // расписание, доступ к данным и показ уведомления.
 
-import { evaluateAlerts, AlertMemory, type Alert } from './alerts'
-import { listDevices, listSubscriptions, listAiAccess, listAiChecks, isUnlocked } from './vault'
+import { evaluateAlerts, AlertMemory, type Alert } from './support/alerts'
+import { listDevices, listSubscriptions, listAiAccess, listAiChecks, isUnlocked } from './vault/vault'
 
 /** Как часто смотреть. Чаще незачем: полный опрос машин и так идёт раз в 30 секунд. */
 const CHECK_EVERY_MS = 60_000

@@ -2,9 +2,9 @@ import { app, BrowserWindow, session } from 'electron'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpc } from './ipc'
 import { createAppWindow } from './windows'
-import { certPinMatches } from './agent'
+import { certPinMatches } from './screen/agent'
 import { startWatchdog, stopWatchdog } from './watchdog'
-import { lockApplication } from './lockdown'
+import { lockApplication } from './security/lockdown'
 
 void app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.argus.app')

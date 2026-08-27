@@ -27,12 +27,12 @@ import type {
 // Тип результата опроса берётся из main, а не переписывается здесь копией. Копия была: обе
 // стороны типизированы, но по разным описаниям, поэтому поле, добавленное в main, у renderer
 // не появлялось — и компилятор об этом молчал.
-export type { ProbeResult } from '../main/ssh'
-import type { ParsedHost } from '../main/sshconfig'
-import type { SftpEntry } from '../main/sftp'
-import type { ForwardInfo } from '../main/forward'
-import type { ListeningPort } from '../main/ports'
-import type { AgentStatus, ProvisionResult } from '../main/agent'
+export type { ProbeResult } from '../main/remote/ssh'
+import type { ParsedHost } from '../main/remote/sshconfig'
+import type { SftpEntry } from '../main/remote/sftp'
+import type { ForwardInfo } from '../main/remote/forward'
+import type { ListeningPort } from '../main/devices/ports'
+import type { AgentStatus, ProvisionResult } from '../main/screen/agent'
 
 export type VaultResult = { ok: boolean; error?: string; state: VaultState }
 export type DeviceResult = { ok: boolean; error?: string; device?: DeviceDTO }

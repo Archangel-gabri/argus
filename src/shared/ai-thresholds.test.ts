@@ -4,7 +4,7 @@
 // иначе уведомление уже горит, а экран ещё говорит «всё в порядке». Когда alerts.ts начнёт
 // импортировать из shared, тест станет тривиальным — убрать его вместе с дублем.
 import { describe, expect, it } from 'vitest'
-import * as alerts from '../main/alerts'
+import * as alerts from '../main/support/alerts'
 import * as shared from './ai-thresholds'
 
 const NAMES = [
