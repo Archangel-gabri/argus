@@ -50,6 +50,31 @@ const requireFile = (path, label, minBytes = 1) => {
   return path
 }
 
+const requireNativeAddon = (electronPath, nativePath) => {
+  const probe = spawnSync(
+    electronPath,
+    [
+      '-e',
+      'require(process.argv[1]); console.log("native-addon-load-ok")',
+      nativePath,
+    ],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  )
+  check(!probe.error, `SQLCipher native module: probe не запустился (${probe.error?.message})`)
+  const details = `${probe.stdout}\n${probe.stderr}`
+    .split('\n')
+    .filter((line) => /NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|native-addon-load-ok/.test(line))
+    .join('; ')
+  check(
+    probe.status === 0 && probe.stdout.includes('native-addon-load-ok'),
+    `SQLCipher native module не загрузился встроенным Electron (rc=${probe.status}): ${details}`,
+  )
+}
+
 const binaryKind = (path) => {
   // Для формата достаточно заголовка; не читаем целиком 160+ МБ AppImage в память.
   const fd = openSync(path, 'r')
@@ -195,6 +220,10 @@ const verifyArtifact = () => {
     check(
       binaryKind(nativePath) === 'linux-amd64',
       'SQLCipher native module: неверный формат/архитектура',
+    )
+    requireNativeAddon(
+      requireFile(join(scratch, 'squashfs-root', pkg.name), 'Electron executable', 1_000_000),
+      nativePath,
     )
 
     const agentDir = join(resources, 'agent')

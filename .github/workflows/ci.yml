@@ -49,3 +49,8 @@ jobs:
 
       - name: Run repository quality gate
         run: npm run check
+
+      # `npm ci` installs native addons for the host Node ABI. Rebuild and load the
+      # SQLCipher binding under Electron so a green unit gate cannot hide an ABI mismatch.
+      - name: Verify Electron native ABI
+        run: npm run rebuild && npm run test:vault

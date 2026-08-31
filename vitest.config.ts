@@ -13,7 +13,8 @@ import { resolve } from 'node:path'
 //   *.live.test.ts   — живой парк и внешние API, только по явному запуску
 //
 // ВАЖНО. `projects` разделяет конфигурацию, но НЕ меняет исполняемый файл и ABI процесса.
-// Нативный модуль SQLCipher собран под Electron: под системным node он падает с
+// Нативный модуль SQLCipher должен быть пересобран под Electron (`npm run rebuild`;
+// `check:full` и `dist` делают это сами): под системным node он после этого падает с
 // ERR_DLOPEN_FAILED (проверено). Поэтому проект `vault` запускается ОТДЕЛЬНОЙ командой
 // под `ELECTRON_RUN_AS_NODE=1 electron … vitest.mjs --project vault` — см. package.json.
 // Запустить его вместе с остальными в одном процессе нельзя: это не неудобство, а невозможность.

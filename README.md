@@ -131,11 +131,12 @@ gitignored, значений ключей в них нет (только име�
 кросс-компилирует пять агентов, а сам релизный AppImage намеренно собирает для Linux x86_64.
 
 ```bash
-npm install
+npm ci               # Node 26 + npm >=11.16; unreviewed install scripts fail closed
+npm run rebuild      # пересобрать native-модули под ABI встроенного Electron
 npm run dev          # запустить в разработке (electron-vite dev)
 npm run build        # сборка трёх бандлов в out/
 npm run check        # typecheck + lint + тесты + тесты агента + сборка
-npm run dist         # собрать 5 агентов + x86_64 AppImage в dist/ и прогнать artifact-smoke
+npm run dist         # сам делает rebuild, собирает AppImage и проверяет native ABI артефакта
 ```
 
 Отдельные проверки:
@@ -149,7 +150,7 @@ npm run test:net     # интеграция с настоящим sshd в Docker
 npm run test:agent   # агент: gofmt -l, go vet, go test -race (нужен Go)
 npm run test:e2e     # 17 проверок на собранном приложении; global-setup собирает его сам
 npm run test:live    # живой парк и внешние API, только по явному запуску (ARGUS_LIVE=1)
-npm run check:full   # check + vault + net + e2e
+npm run check:full   # check + Electron rebuild + vault + net + e2e
 ```
 
 Инструменты ревью (каждый поднимает собранное приложение — сначала `npm run build`):
@@ -163,7 +164,9 @@ node tools/timing-lab.mjs  # сколько миллисекунд ждёт че
 
 Служебное: `npm run agent:build` (бинари агента под 5 платформ), `npm run ai:prices` (пересобрать
 каталог цен), `npm run brand:logos` (пересобрать монохромные логотипы), `npm run rebuild`
-(electron-rebuild нативного модуля).
+(electron-rebuild нативных модулей под ABI версии Electron из lockfile). После чистого `npm ci`
+обычный `npm run check` намеренно не трогает SQLCipher; релизным доказательством служат
+`npm run check:full` и `npm run dist`, которые rebuild выполняют сами.
 
 Установить собранный образ себе:
 
@@ -210,7 +213,8 @@ mv -f ~/Applications/.Argus.new ~/Applications/Argus.AppImage
 - **После правки любого `*.local.json` копируй его в `~/.config/argus/`** (права 600). В AppImage
   эти файлы не входят (в сборку кладутся только `out/**` и `package.json`), поэтому установленная
   копия видит только то, что лежит в каталоге данных.
-- **`npm run test:vault` нельзя гонять обычным node.** Нативный SQLCipher собран под ABI Electron
+- **`npm run test:vault` нельзя гонять обычным node.** После `npm run rebuild` нативный SQLCipher
+  собран под ABI Electron
   и падает с `ERR_DLOPEN_FAILED` — поэтому у него отдельная команда с
   `ELECTRON_RUN_AS_NODE=1 electron … vitest.mjs`. Это не неудобство конфига, а невозможность.
 - **`npm install`: vite пришпилен к `^7`.** electron-vite@5 не берёт vite 8, а

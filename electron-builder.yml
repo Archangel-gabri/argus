@@ -4,7 +4,7 @@ copyright: © Danya Kubrak
 directories:
   output: dist
   buildResources: resources
-# Нативный модуль уже собран под ABI Electron (electron-rebuild) — не пересобираем.
+# `npm run dist` сначала запускает electron-rebuild под ABI Electron — здесь второй раз не пересобираем.
 npmRebuild: false
 files:
   - out/**

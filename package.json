@@ -7,10 +7,26 @@
   "author": "Danya Kubrak",
   "license": "MIT",
   "private": true,
+  "engines": {
+    "node": ">=26.0.0 <27",
+    "npm": ">=11.16.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=26.0.0 <27",
+      "onFail": "error"
+    },
+    "packageManager": {
+      "name": "npm",
+      "version": ">=11.16.0",
+      "onFail": "error"
+    }
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist": "npm run agent:build && electron-vite build && electron-builder --linux AppImage --x64 && npm run test:artifact",
+    "dist": "npm run rebuild && npm run agent:build && electron-vite build && electron-builder --linux AppImage --x64 && npm run test:artifact",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
@@ -30,9 +46,19 @@
     "brand:logos": "node tools/build-brand-catalog.mjs",
     "ui:lab": "npm run build && node tools/ui-lab.mjs",
     "check": "npm run typecheck && npm run lint && npm run test && npm run test:agent && npm run build",
-    "check:full": "npm run check && npm run test:vault && npm run test:net && npm run test:e2e",
+    "check:full": "npm run check && npm run rebuild && npm run test:vault && npm run test:net && npm run test:e2e",
     "rebuild": "electron-rebuild",
     "test:e2e": "playwright test"
+  },
+  "allowScripts": {
+    "better-sqlite3-multiple-ciphers@12.11.1": true,
+    "cpu-features@0.0.10": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true,
+    "ssh2@1.17.0": true
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
