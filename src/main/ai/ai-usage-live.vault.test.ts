@@ -14,7 +14,10 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const TMP = mkdtempSync(join(tmpdir(), 'argus-usage-'))
-const REPO = join(__dirname, '..', '..')
+// `__dirname` здесь `src/main/ai`; до корня проекта три уровня, а не два.
+// Старый путь указывал на `src/`, поэтому production fallback искал несуществующий
+// `src/resources/ai/model-prices.json` и live-suite молча оставался без цен.
+const REPO = join(__dirname, '..', '..', '..')
 
 vi.mock('electron', () => ({
   // getAppPath указывает на корень репозитория: оттуда читается вшитый каталог цен.
@@ -48,7 +51,12 @@ beforeAll(async () => {
 
 describe.skipIf(!hasLogs)('расход на реальных логах', () => {
   it('вшитый каталог цен читается и заливается', () => {
-    const count = prices.seedPricesIfEmpty()
+    // Vault-проекты намеренно идут последовательно в одном процессе и другие файлы могут
+    // раньше добавить одну ручную цену. `seedPricesIfEmpty()` тогда корректно вернёт 0,
+    // но live-проверка останется без полного каталога и посчитает все логи по нулевой цене.
+    // Здесь проверяем именно загрузку snapshot-каталога, поэтому делаем явный безопасный
+    // reseed: ручные записи production-функция сохраняет.
+    const count = prices.reseedPrices()
     expect(count).toBeGreaterThan(100)
     // Без цен на модели Anthropic расход Claude Code остался бы в токенах без денег.
     expect(vault.findAiPrice('claude-opus-4-7') ?? vault.listAiPrices('anthropic')[0]).toBeTruthy()
