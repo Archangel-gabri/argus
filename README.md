@@ -4,7 +4,7 @@
 всё локально, ничего в облаке.
 
 Версия 0.1.0 · один пользователь · **в активной разработке** (последний коммит кода — 10.08.2026) ·
-собирается только в AppImage для Linux.
+релизная сборка сейчас закреплена за AppImage для Linux x86_64.
 
 > Каталог проекта называется `Nexus-One` — историческое имя. Приложение, пакет (`package.json`
 > → `"name": "argus"`), файл хранилища и AppImage называются **Argus**. Переименование было
@@ -127,12 +127,15 @@ gitignored, значений ключей в них нет (только име�
 
 ## Сборка и запуск
 
+Нужны Node.js с npm. Для `npm run dist` дополнительно нужны Bash и Go toolchain: команда
+кросс-компилирует пять агентов, а сам релизный AppImage намеренно собирает для Linux x86_64.
+
 ```bash
 npm install
 npm run dev          # запустить в разработке (electron-vite dev)
 npm run build        # сборка трёх бандлов в out/
 npm run check        # typecheck + lint + тесты + тесты агента + сборка
-npm run dist         # собрать AppImage в dist/
+npm run dist         # собрать 5 агентов + x86_64 AppImage в dist/ и прогнать artifact-smoke
 ```
 
 Отдельные проверки:
@@ -172,6 +175,8 @@ mv -f ~/Applications/.Argus.new ~/Applications/Argus.AppImage
 ```
 
 Переименование атомарно, поэтому запущенная копия доживёт до перезапуска.
+Если в системе нет `libfuse.so.2` (Arch без пакета `fuse2`), тот же образ запускается
+через встроенную распаковку: `APPIMAGE_EXTRACT_AND_RUN=1 ~/Applications/Argus.AppImage`.
 
 ## Состояние (на 10.08.2026)
 

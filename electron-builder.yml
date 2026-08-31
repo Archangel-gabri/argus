@@ -14,7 +14,14 @@ files:
 extraResources:
   - from: resources/agent
     to: agent
-    filter: ['**/*']
+    # Каталог генерируется и целиком gitignored, поэтому broad `**/*` опасен: случайный
+    # debug-файл или symlink тоже уехал бы в публичный образ. Релизный набор закрытый.
+    filter:
+      - argus-agent-linux-amd64
+      - argus-agent-linux-arm64
+      - argus-agent-windows-amd64.exe
+      - argus-agent-darwin-amd64
+      - argus-agent-darwin-arm64
   # Каталог цен моделей: читается при первом открытии вольта, чтобы расход считался в деньгах
   # сразу и без сети. Собирается tools/build-price-catalog.mjs.
   - from: resources/ai

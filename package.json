@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "dist": "electron-vite build && electron-builder --linux AppImage",
+    "dist": "npm run agent:build && electron-vite build && electron-builder --linux AppImage --x64 && npm run test:artifact",
     "preview": "electron-vite preview",
     "start": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
@@ -24,6 +24,7 @@
     "test:net": "vitest run --project net",
     "test:live": "ARGUS_LIVE=1 vitest run --project live",
     "test:agent": "cd agent && test -z \"$(gofmt -l .)\" && go vet ./... && go test -race ./...",
+    "test:artifact": "node tools/appimage-smoke.mjs --self-test && node tools/appimage-smoke.mjs",
     "agent:build": "bash agent/build-all.sh",
     "ai:prices": "node tools/build-price-catalog.mjs",
     "brand:logos": "node tools/build-brand-catalog.mjs",

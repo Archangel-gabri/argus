@@ -73,6 +73,13 @@ export default tseslint.config(
     }
   },
   {
+    // Синхронный artifact-smoke не входит в TS-проекты и не использует промисы. Не добавляем
+    // девятый файл в allowDefaultProject (лимит typescript-eslint — 8), но сохраняем для него
+    // обычные JS/no-unused/no-undef проверки из конфигов выше.
+    ...tseslint.configs.disableTypeChecked,
+    files: ['tools/appimage-smoke.mjs']
+  },
+  {
     // Ambient-декларации: `import … = require(…)` внутри `declare module` — штатный синтаксис TS,
     // ESM-импортом его не заменить.
     files: ['**/*.d.ts'],
