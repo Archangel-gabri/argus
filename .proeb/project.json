@@ -1,0 +1,24 @@
+{
+  "registry_schema_version": 2,
+  "status": "active",
+  "stage": "active-dev",
+  "priority": "high",
+  "project_type": "fullstack",
+  "stack": "Electron + React + TypeScript + Tailwind + SQLCipher + Go",
+  "target_preset": "premium-saas",
+  "owner": "danya",
+  "next_action": null,
+  "business_goal": "Local-first Argus command center",
+  "github_remote": "https://github.com/Archangel-gabri/argus.git",
+  "tags": [
+    "desktop",
+    "electron",
+    "command-center",
+    "personal",
+    "argus",
+    "local-first"
+  ],
+  "archived_at": null,
+  "why_archived": null,
+  "mcp_profile": "frontend"
+}
