@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { FinanceAccount, FinanceAccountInput } from '@/types'
+import { captureSession, isSessionCurrent } from './session-lifetime'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -38,6 +39,8 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   error: null,
 
   load: async () => {
+    const ticket = captureSession()
+    if (ticket === null) return
     if (!api) {
       set({ loaded: true })
       return
@@ -45,54 +48,63 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
     if (get().loading) return
     set({ loading: true, error: null })
     try {
-      set({ accounts: await api.accounts.list(), loaded: true })
+      const accounts = await api.accounts.list()
+      if (!isSessionCurrent(ticket)) return
+      set({ accounts, loaded: true })
     } catch (error) {
       // Неудачная загрузка оставляет loaded=false: пустой список и «список не загрузился» —
       // разные вещи, и второе нельзя показывать как «счетов нет».
-      set({ loaded: false, error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ loaded: false, error: messageOf(error) })
     } finally {
-      set({ loading: false })
+      if (isSessionCurrent(ticket)) set({ loading: false })
     }
   },
 
   add: async (input) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     try {
       const created = await api.accounts.create(input)
+      if (!isSessionCurrent(ticket)) return false
       set({ accounts: [...get().accounts, created], error: null })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   },
 
   update: async (id, input) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     try {
       const saved = await api.accounts.update(id, input)
+      if (!isSessionCurrent(ticket)) return false
       set({ accounts: get().accounts.map((a) => (a.id === id ? saved : a)), error: null })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   },
 
   setCreds: async (id, creds) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     try {
       const r = await api.accounts.setCreds(id, creds)
+      if (!isSessionCurrent(ticket)) return false
       if (!r.ok) {
         set({ error: r.error ?? 'Ключи не сохранены' })
         return false
       }
       // Ключи ушли в main и обратно не вернутся: перечитываем список ради признака «ключи есть».
       await get().load()
+      if (!isSessionCurrent(ticket)) return false
       await get().refresh()
-      return true
+      return isSessionCurrent(ticket)
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   },
@@ -101,14 +113,16 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   balanceIssues: {},
 
   bankLogin: async (bank) => {
-    if (!api) return
+    const ticket = captureSession()
+    if (!api || ticket === null) return
     try {
       await api.accounts.bankLogin(bank)
+      if (!isSessionCurrent(ticket)) return
       // После окна входа состояние меняется, и спросить надо СРАЗУ: иначе кнопка ещё долго
       // предлагает войти туда, где уже вошли.
       await get().checkBankSessions([bank])
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
     }
   },
 
@@ -116,11 +130,13 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   // открытии экрана: без этого приложение предлагало «войти в Сбер» тому, кто уже вошёл, и
   // единственным способом узнать правду было нажать и посмотреть.
   checkBankSessions: async (banks) => {
-    if (!api || banks.length === 0) return
+    const ticket = captureSession()
+    if (!api || ticket === null || banks.length === 0) return
     try {
       const pairs = await Promise.all(
         banks.map(async (b) => [b, (await api.accounts.bankSession(b)).logged] as const)
       )
+      if (!isSessionCurrent(ticket)) return
       set((s) => ({ bankSessions: { ...s.bankSessions, ...Object.fromEntries(pairs) } }))
     } catch {
       /* состояние входа неизвестно — кнопка останется в виде «войти», это безопасный исход */
@@ -128,26 +144,36 @@ export const useAccounts = create<AccountsStore>((set, get) => ({
   },
 
   refresh: async () => {
-    if (!api) return
+    const ticket = captureSession()
+    if (!api || ticket === null) return
     try {
       const r = await api.accounts.refresh()
+      if (!isSessionCurrent(ticket)) return
       const issues: Record<string, string> = {}
       for (const i of r.issues ?? []) issues[i.accountId] = i.error
-      set({ accounts: await api.accounts.list(), balanceIssues: issues })
+      const accounts = await api.accounts.list()
+      if (!isSessionCurrent(ticket)) return
+      set({ accounts, balanceIssues: issues })
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
     }
   },
 
   remove: async (id) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     try {
       await api.accounts.remove(id)
+      if (!isSessionCurrent(ticket)) return false
       set({ accounts: get().accounts.filter((a) => a.id !== id), error: null })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   }
 }))
+
+export function resetAccounts(): void {
+  useAccounts.setState({ accounts: [], bankSessions: {}, balanceIssues: {}, loaded: false, loading: false, error: null })
+}

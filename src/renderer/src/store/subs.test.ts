@@ -31,12 +31,47 @@ const makeApi = (patch: Partial<SubsApi> = {}): SubsApi => ({
 async function storeWith(api: SubsApi) {
   vi.resetModules()
   vi.stubGlobal('window', { api: { subs: api } })
+  const { activateSession } = await import('./session-lifetime')
+  activateSession()
   return (await import('./subs')).useSubs
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+})
+
+describe('subscription operations cannot cross a renderer lock', () => {
+  it.each(['create', 'update', 'remove'] as const)('ignores an old %s success after a new session starts', async (operation) => {
+    let finish!: (value: unknown) => void
+    const api = makeApi({ [operation]: vi.fn(() => new Promise(resolve => { finish = resolve })) })
+    const store = await storeWith(api)
+    const input = { ...sub }
+    const pending = operation === 'create' ? store.getState().create(input)
+      : operation === 'update' ? store.getState().update(sub.id, input) : store.getState().remove(sub.id)
+    const lifetime = await import('./session-lifetime')
+    lifetime.invalidateSession()
+    store.setState({ subs: [sub], error: null })
+    lifetime.activateSession()
+    finish(operation === 'remove' ? { ok: true } : { ...sub, name: 'obsolete' })
+    await expect(pending).resolves.toBe(false)
+    expect(store.getState().subs).toEqual([sub])
+    expect(store.getState().error).toBeNull()
+  })
+
+  it.each(['create', 'update', 'remove'] as const)('ignores an old %s rejection after reset', async (operation) => {
+    let fail!: (error: Error) => void
+    const api = makeApi({ [operation]: vi.fn(() => new Promise((_, reject) => { fail = reject })) })
+    const store = await storeWith(api)
+    const pending = operation === 'create' ? store.getState().create(sub)
+      : operation === 'update' ? store.getState().update(sub.id, sub) : store.getState().remove(sub.id)
+    const lifetime = await import('./session-lifetime')
+    lifetime.invalidateSession()
+    store.setState({ subs: [], error: null })
+    fail(new Error('obsolete subscription error'))
+    await expect(pending).resolves.toBe(false)
+    expect(store.getState().error).toBeNull()
+  })
 })
 
 describe('подписки store: честные async-результаты', () => {

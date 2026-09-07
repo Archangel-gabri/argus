@@ -95,6 +95,9 @@ async function mount(opts: {
   }
   Object.defineProperty(window, 'api', { value: api, configurable: true })
   vi.resetModules()
+  // This isolated feature mount represents an already authorized renderer session.
+  const { activateSession } = await import('@/store/session-lifetime')
+  activateSession()
   const { AIAccountsView } = await import('./AIAccountsView')
   render(<AIAccountsView />)
   await vi.waitFor(() => expect(api.ai.list).toHaveBeenCalled())

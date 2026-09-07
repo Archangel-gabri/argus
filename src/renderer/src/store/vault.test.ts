@@ -14,7 +14,145 @@ async function storeWith(patch: Record<string, ReturnType<typeof vi.fn>> = {}) {
   return { store: (await import('./vault')).useVault, api }
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
+describe('vault refresh belongs to the latest observation outside a mutation', () => {
+  const locked = { status: 'locked', keyringBackend: 'synthetic', canRemember: false }
+  const unlocked = { ...locked, status: 'unlocked' }
+
+  it('an older refresh success cannot reopen after a newer locked refresh', async () => {
+    const older = deferred<unknown>(), newer = deferred<unknown>()
+    const { store } = await storeWith({ state: vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise) })
+    const lifetime = await import('./session-lifetime')
+    const first = store.getState().refresh()
+    const second = store.getState().refresh()
+    newer.resolve(locked)
+    await second
+    older.resolve(unlocked)
+    await first
+    expect(store.getState().status).toBe('locked')
+    expect(lifetime.captureSession()).toBeNull()
+  })
+
+  it('an older refresh rejection cannot revoke a newer acknowledged active session', async () => {
+    const older = deferred<unknown>(), newer = deferred<unknown>()
+    const { store } = await storeWith({ state: vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise) })
+    const lifetime = await import('./session-lifetime')
+    const first = store.getState().refresh()
+    const second = store.getState().refresh()
+    newer.resolve(unlocked)
+    await second
+    const current = lifetime.captureSession()
+    older.reject(new Error('synthetic old transport failure'))
+    await first
+    expect(store.getState()).toMatchObject({ status: 'unlocked', error: null })
+    expect(lifetime.isSessionCurrent(current)).toBe(true)
+  })
+
+  it.each(['lock', 'initialize', 'unlock'] as const)('does not observe an intermediate state while %s awaits acknowledgement', async (operation) => {
+    const reply = deferred<unknown>()
+    const { store, api } = await storeWith({ [operation]: vi.fn().mockReturnValueOnce(reply.promise) })
+    const lifetime = await import('./session-lifetime')
+    const pending = operation === 'lock' ? store.getState().lock() : store.getState()[operation]('synthetic-password')
+    api.state.mockResolvedValue(unlocked)
+    await store.getState().refresh()
+    expect(api.state).not.toHaveBeenCalled()
+    expect(lifetime.captureSession()).toBeNull()
+    reply.resolve(operation === 'lock' ? locked : { ok: true, state: unlocked })
+    const result = await pending
+    if (operation !== 'lock') expect(result).toBe(true)
+    expect(store.getState()).toMatchObject({ status: operation === 'lock' ? 'locked' : 'unlocked', busy: false })
+    const current = lifetime.captureSession()
+    api.state.mockResolvedValue(operation === 'lock' ? locked : unlocked)
+    await store.getState().refresh()
+    expect(api.state).toHaveBeenCalledOnce()
+    expect(lifetime.captureSession()).toBe(current)
+  })
+
+  it.each((['lock', 'initialize', 'unlock'] as const).flatMap(operation =>
+    (['resolve', 'reject'] as const).map(settle => ({ operation, settle }))
+  ))('old refresh $settle cannot cross a later $operation boundary', async ({ operation, settle }) => {
+    const observation = deferred<unknown>()
+    const { store } = await storeWith({ state: vi.fn().mockReturnValueOnce(observation.promise) })
+    const lifetime = await import('./session-lifetime')
+    const pending = store.getState().refresh()
+    if (operation === 'lock') await store.getState().lock()
+    else await expect(store.getState()[operation]('synthetic-password')).resolves.toBe(true)
+    const current = lifetime.captureSession()
+    const state = store.getState()
+    if (settle === 'resolve') observation.resolve(operation === 'lock' ? unlocked : locked)
+    else observation.reject(new Error('synthetic obsolete state failure'))
+    await pending
+    expect(store.getState()).toBe(state)
+    expect(lifetime.captureSession()).toBe(current)
+  })
+})
+
+describe('vault owns renderer lifetime activation', () => {
+  it.each(['initialize', 'unlock'] as const)('does not activate on a rejected %s whose state says unlocked', async (operation) => {
+    const { store } = await storeWith({ [operation]: vi.fn().mockResolvedValue({
+      ok: false, error: 'Synthetic refusal', state: { status: 'unlocked', keyringBackend: 'synthetic', canRemember: false }
+    }) })
+    await expect(store.getState()[operation]('synthetic-password')).resolves.toBe(false)
+    expect(store.getState().status).not.toBe('unlocked')
+    expect((await import('./session-lifetime')).captureSession()).toBeNull()
+  })
+
+  it.each(['initialize', 'unlock'] as const)('activates only after a current acknowledged %s', async (operation) => {
+    let finish!: (value: unknown) => void
+    const { store } = await storeWith({ [operation]: vi.fn(() => new Promise(resolve => { finish = resolve })) })
+    const lifetime = await import('./session-lifetime')
+    const pending = store.getState()[operation]('synthetic-password')
+    expect(lifetime.captureSession()).toBeNull()
+    finish({ ok: true, state: { status: 'unlocked', keyringBackend: 'synthetic', canRemember: false } })
+    await expect(pending).resolves.toBe(true)
+    expect(lifetime.isSessionCurrent(lifetime.captureSession())).toBe(true)
+  })
+
+  it('does not cancel current requests for repeated acknowledged unlocked refreshes', async () => {
+    const { store, api } = await storeWith()
+    const lifetime = await import('./session-lifetime')
+    await store.getState().unlock('synthetic-password')
+    const ticket = lifetime.captureSession()
+    api.state.mockResolvedValue({ status: 'unlocked', keyringBackend: 'synthetic', canRemember: false })
+    await store.getState().refresh()
+    await store.getState().refresh()
+    expect(lifetime.captureSession()).toBe(ticket)
+    expect(lifetime.isSessionCurrent(ticket)).toBe(true)
+  })
+
+  it('cannot activate through a missing production preload', async () => {
+    vi.resetModules()
+    vi.stubEnv('DEV', false)
+    vi.stubGlobal('window', {})
+    const { useVault } = await import('./vault')
+    const lifetime = await import('./session-lifetime')
+    await expect(useVault.getState().unlock('synthetic-password')).resolves.toBe(false)
+    await expect(useVault.getState().initialize('synthetic-password')).resolves.toBe(false)
+    expect(useVault.getState().status).toBe('locked')
+    expect(lifetime.captureSession()).toBeNull()
+  })
+
+  it('retains explicit development browser-preview activation', async () => {
+    vi.resetModules()
+    vi.stubEnv('DEV', true)
+    vi.stubGlobal('window', {})
+    const { useVault } = await import('./vault')
+    const lifetime = await import('./session-lifetime')
+    expect(useVault.getState().status).toBe('unlocked')
+    expect(lifetime.isSessionCurrent(lifetime.captureSession())).toBe(true)
+  })
+})
 
 describe('vault renderer: rejected IPC is not a successful or permanently busy operation', () => {
   it.each(['initialize', 'unlock'] as const)('%s reports failure and releases busy', async (operation) => {

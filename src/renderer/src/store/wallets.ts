@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { captureSession, isSessionCurrent } from './session-lifetime'
 import type { Wallet, WalletInput, WalletBalance } from '@/types'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
@@ -35,6 +36,8 @@ export const useWallets = create<WalletsStore>((set, get) => ({
   error: null,
 
   load: async () => {
+    const session = captureSession()
+    if (session === null) return
     if (!api) {
       set({ loaded: true })
       return
@@ -44,50 +47,57 @@ export const useWallets = create<WalletsStore>((set, get) => ({
     let loaded = false
     try {
       const wallets = await api.wallets.list()
+      if (!isSessionCurrent(session)) return
       set({ wallets, loaded: true })
       loaded = true
     } catch (error) {
-      set({ loaded: false, error: messageOf(error) })
+      if (isSessionCurrent(session)) set({ loaded: false, error: messageOf(error) })
     } finally {
-      set({ loading: false })
+      if (isSessionCurrent(session)) set({ loading: false })
     }
-    if (loaded) await get().refresh()
+    if (loaded && isSessionCurrent(session)) await get().refresh()
   },
 
   add: async (input) => {
-    if (!api) return false
+    const session = captureSession()
+    if (!api || session === null) return false
     set({ error: null })
     try {
       const wallet = await api.wallets.create(input)
+      if (!isSessionCurrent(session)) return false
       set({ wallets: [...get().wallets, wallet] })
-      await refreshWallet(wallet, set, get)
-      return true
+      await refreshWallet(wallet, set, get, session)
+      return isSessionCurrent(session)
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(session)) set({ error: messageOf(error) })
       return false
     }
   },
 
   update: async (id, input) => {
-    if (!api) return false
+    const session = captureSession()
+    if (!api || session === null) return false
     set({ error: null })
     try {
       const wallet = await api.wallets.update(id, input)
+      if (!isSessionCurrent(session)) return false
       set({ wallets: get().wallets.map((item) => (item.id === id ? wallet : item)) })
       // Адрес/сеть могли поменяться: новый request-id не даст старому ответу затереть этот баланс.
-      await refreshWallet(wallet, set, get)
-      return true
+      await refreshWallet(wallet, set, get, session)
+      return isSessionCurrent(session)
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(session)) set({ error: messageOf(error) })
       return false
     }
   },
 
   remove: async (id) => {
-    if (!api) return false
+    const session = captureSession()
+    if (!api || session === null) return false
     set({ error: null })
     try {
       const result = await api.wallets.remove(id)
+      if (!isSessionCurrent(session)) return false
       if (!result.ok) throw new Error(result.error ?? 'Кошелёк не удалён')
       latestBalanceRequest.set(id, ++balanceSequence)
       const balances = { ...get().balances }
@@ -99,19 +109,20 @@ export const useWallets = create<WalletsStore>((set, get) => ({
       set({ wallets: get().wallets.filter((wallet) => wallet.id !== id), balances, balanceLoading, balanceErrors })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(session)) set({ error: messageOf(error) })
       return false
     }
   },
 
   refresh: async () => {
-    if (!api) return
+    const session = captureSession()
+    if (!api || session === null) return
     const wallets = [...get().wallets]
     if (wallets.length === 0) return
     const request = ++refreshSequence
     set({ loading: true })
-    await Promise.all(wallets.map((wallet) => refreshWallet(wallet, set, get)))
-    if (request === refreshSequence) set({ loading: false })
+    await Promise.all(wallets.map((wallet) => refreshWallet(wallet, set, get, session)))
+    if (isSessionCurrent(session) && request === refreshSequence) set({ loading: false })
   }
 }))
 
@@ -120,15 +131,16 @@ type WalletSet = Parameters<typeof useWallets.setState>[0] extends never ? never
 async function refreshWallet(
   wallet: Wallet,
   set: WalletSet,
-  get: typeof useWallets.getState
+  get: typeof useWallets.getState,
+  session: number
 ): Promise<void> {
-  if (!api) return
+  if (!api || !isSessionCurrent(session)) return
   const request = ++balanceSequence
   latestBalanceRequest.set(wallet.id, request)
   set((state) => ({ balanceLoading: { ...state.balanceLoading, [wallet.id]: true } }))
   try {
     const balance = await api.wallets.balance(wallet.chain, wallet.address)
-    if (latestBalanceRequest.get(wallet.id) !== request) return
+    if (!isSessionCurrent(session) || latestBalanceRequest.get(wallet.id) !== request) return
     const current = get().wallets.find((item) => item.id === wallet.id)
     if (!current || current.chain !== wallet.chain || current.address !== wallet.address) return
     set((state) => {
@@ -144,7 +156,7 @@ async function refreshWallet(
       return { balances: { ...state.balances, [wallet.id]: balance }, balanceErrors }
     })
   } catch (error) {
-    if (latestBalanceRequest.get(wallet.id) !== request) return
+    if (!isSessionCurrent(session) || latestBalanceRequest.get(wallet.id) !== request) return
     const message = messageOf(error)
     set((state) => {
       const previous = state.balances[wallet.id]
@@ -166,7 +178,16 @@ async function refreshWallet(
       }
     })
   } finally {
-    if (latestBalanceRequest.get(wallet.id) === request)
+    if (isSessionCurrent(session) && latestBalanceRequest.get(wallet.id) === request)
       set((state) => ({ balanceLoading: { ...state.balanceLoading, [wallet.id]: false } }))
   }
+}
+
+/** Clear private DTOs and request ownership without recycling sequence numbers. */
+export function resetWallets(): void {
+  latestBalanceRequest.clear()
+  useWallets.setState({
+    wallets: [], balances: {}, balanceLoading: {}, balanceErrors: {},
+    loaded: !api, loading: false, error: null
+  })
 }

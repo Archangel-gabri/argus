@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Subscription, SubscriptionInput } from '@/types'
 import { MOCK_SUBSCRIPTIONS } from '../data/subscriptions'
+import { captureSession, isSessionCurrent } from './session-lifetime'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
 
@@ -25,6 +26,8 @@ export const useSubs = create<SubsStore>((set, get) => ({
   error: null,
 
   load: async () => {
+    const ticket = captureSession()
+    if (ticket === null) return
     if (!api) {
       set({ subs: import.meta.env.DEV ? MOCK_SUBSCRIPTIONS : [], loaded: true })
       return
@@ -32,51 +35,63 @@ export const useSubs = create<SubsStore>((set, get) => ({
     if (get().loading) return
     set({ loading: true, error: null })
     try {
-      set({ subs: await api.subs.list(), loaded: true })
+      const subs = await api.subs.list()
+      if (!isSessionCurrent(ticket)) return
+      set({ subs, loaded: true })
     } catch (error) {
-      set({ loaded: false, error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ loaded: false, error: messageOf(error) })
     } finally {
-      set({ loading: false })
+      if (isSessionCurrent(ticket)) set({ loading: false })
     }
   },
 
   create: async (input) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     set({ error: null })
     try {
       const sub = await api.subs.create(input)
+      if (!isSessionCurrent(ticket)) return false
       set({ subs: [...get().subs, sub] })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   },
 
   update: async (id, input) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     set({ error: null })
     try {
       const sub = await api.subs.update(id, input)
+      if (!isSessionCurrent(ticket)) return false
       set({ subs: get().subs.map((item) => (item.id === id ? sub : item)) })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   },
 
   remove: async (id) => {
-    if (!api) return false
+    const ticket = captureSession()
+    if (!api || ticket === null) return false
     set({ error: null })
     try {
       const result = await api.subs.remove(id)
+      if (!isSessionCurrent(ticket)) return false
       if (!result.ok) throw new Error(result.error ?? 'Подписка не удалена')
       set({ subs: get().subs.filter((sub) => sub.id !== id) })
       return true
     } catch (error) {
-      set({ error: messageOf(error) })
+      if (isSessionCurrent(ticket)) set({ error: messageOf(error) })
       return false
     }
   }
 }))
+
+export function resetSubs(): void {
+  useSubs.setState({ subs: [], loaded: false, loading: false, error: null })
+}

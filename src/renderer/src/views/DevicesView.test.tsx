@@ -54,6 +54,9 @@ async function mount(devices: DeviceDTO[]): Promise<ReturnType<typeof stubApi>> 
   const api = stubApi()
   Object.defineProperty(window, 'api', { value: api, configurable: true })
   vi.resetModules()
+  // This isolated feature mount represents an already authorized renderer session.
+  const { activateSession } = await import('@/store/session-lifetime')
+  activateSession()
   const { DevicesView } = await import('./DevicesView')
   // Стор берём из того же реестра модулей, что и экран: `resetModules` создаёт новый
   // экземпляр, и статический импорт наверху файла указывал бы на другой стор.

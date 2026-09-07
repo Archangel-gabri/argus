@@ -2,8 +2,10 @@ import { create } from 'zustand'
 import type { DeviceDTO, DeviceInput } from '@/types'
 import { FALLBACK_DEVICES } from '@/data/mock'
 import { nextReachability } from '../../../shared/reachability'
+import { captureSession, isSessionCurrent } from './session-lifetime'
 
 const api = typeof window !== 'undefined' ? window.api : undefined
+const SESSION_CANCELLED = 'Операция отменена после блокировки'
 
 /** Ответ опроса ПК — ровно тот, что отдаёт мост. Своё описание разъехалось бы с ним молча. */
 type PcMetrics = Awaited<ReturnType<NonNullable<typeof api>['pc']['metrics']>>
@@ -89,6 +91,8 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   error: null,
 
   load: async () => {
+    const ticket = captureSession()
+    if (ticket === null) return
     // Новая сессия считает серию промахов с нуля — как это уже делает `clearReachMemory` в main.
     // Иначе промах до блокировки складывается с первым промахом после, и машина объявляется
     // выключенной, хотя в новой сессии её спросили ровно один раз.
@@ -104,11 +108,13 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     try {
       list = await api.devices.list()
     } catch (e) {
+      if (!isSessionCurrent(ticket)) return
       // Отказ IPC и пустой парк выглядели одинаково: пустой список. Человек видел «устройств
       // нет» и решал, что база потеряна, — тогда как связь с main просто не удалась.
       set({ error: e instanceof Error ? e.message : 'не удалось прочитать парк', loaded: true })
       return
     }
+    if (!isSessionCurrent(ticket)) return
     set({ error: null })
     const prev = new Map(get().devices.map((d) => [d.id, d]))
     set({
@@ -138,22 +144,35 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       loaded: true
     })
     try {
+      if (!isSessionCurrent(ticket)) return
       await get().refreshLiveness()
     } catch {
-      set({ error: 'Не удалось проверить доступность устройств' })
+      if (isSessionCurrent(ticket)) set({ error: 'Не удалось проверить доступность устройств' })
     }
   },
 
   create: async (input) => {
+    const ticket = captureSession()
+    if (ticket === null) return { ok: false, error: SESSION_CANCELLED }
     if (!api) return { ok: false, error: 'недоступно вне приложения' }
-    const r = await api.devices.create(input)
+    const r = await api.devices.create(input).catch((error: unknown) => {
+      if (!isSessionCurrent(ticket)) return null
+      throw error
+    })
+    if (!isSessionCurrent(ticket) || !r) return { ok: false, error: SESSION_CANCELLED }
     if (r.ok && r.device) set({ devices: [...get().devices, r.device] })
     return { ok: r.ok, error: r.error }
   },
 
   update: async (id, input) => {
+    const ticket = captureSession()
+    if (ticket === null) return { ok: false, error: SESSION_CANCELLED }
     if (!api) return { ok: false, error: 'недоступно вне приложения' }
-    const r = await api.devices.update(id, input)
+    const r = await api.devices.update(id, input).catch((error: unknown) => {
+      if (!isSessionCurrent(ticket)) return null
+      throw error
+    })
+    if (!isSessionCurrent(ticket) || !r) return { ok: false, error: SESSION_CANCELLED }
     if (r.ok && r.device) {
       const updated = r.device
       // Сливаем, а не подменяем: в ответе из базы нет эфемерных данных (какая ОС запущена,
@@ -192,13 +211,19 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   },
 
   remove: async (id) => {
+    const ticket = captureSession()
+    if (ticket === null) return { ok: false, error: SESSION_CANCELLED }
     if (!api) {
       set({ devices: get().devices.filter((d) => d.id !== id) })
       return { ok: true }
     }
     // Убираем из UI ТОЛЬКО если удаление в vault реально прошло — иначе устройство «исчезало»
     // из списка, оставаясь в базе (провалившееся удаление выглядело как успех).
-    let r = await api.devices.remove(id)
+    let r = await api.devices.remove(id).catch((error: unknown) => {
+      if (!isSessionCurrent(ticket)) return null
+      throw error
+    })
+    if (!isSessionCurrent(ticket) || !r) return { ok: false, error: SESSION_CANCELLED }
     // Агент на машине отозвать не удалось (обычно она просто выключена). Спрашиваем прямо:
     // удалить с остатком или отложить. Молча оставлять работающую службу с инжектом ввода
     // нельзя, но и запирать человека, у которого машина офлайн, — тоже.
@@ -207,13 +232,19 @@ export const useDevices = create<DevicesStore>((set, get) => ({
         `${r.error}\n\nУдалить устройство всё равно? Служба на машине останется работать.`
       )
       if (!proceed) return { ok: false, error: 'удаление отменено' }
-      r = await api.devices.remove(id, { force: true })
+      if (!isSessionCurrent(ticket)) return { ok: false, error: SESSION_CANCELLED }
+      r = await api.devices.remove(id, { force: true }).catch((error: unknown) => {
+        if (!isSessionCurrent(ticket)) return null
+        throw error
+      })
+      if (!isSessionCurrent(ticket) || !r) return { ok: false, error: SESSION_CANCELLED }
     }
     if (r?.ok) set({ devices: get().devices.filter((d) => d.id !== id) })
     return { ok: !!r?.ok, error: r?.error }
   },
 
-  updateMetrics: (id, m) =>
+  updateMetrics: (id, m) => {
+    if (captureSession() === null) return
     set({
       devices: get().devices.map((d) =>
         d.id === id
@@ -243,14 +274,20 @@ export const useDevices = create<DevicesStore>((set, get) => ({
             }
           : d
       )
-    }),
+    })
+  },
 
   // Быстрая живость: один TCP-коннект на устройство. Даёт точку «онлайн/офлайн» за сотни
   // миллисекунд, пока полноценный опрос (секунды) ещё едет за цифрами. Метрики НЕ трогаем —
   // только статус, иначе затрём свежие значения нулями.
   refreshLiveness: async () => {
-    if (!api) return
-    const reach = await api.devices.liveness()
+    const ticket = captureSession()
+    if (!api || ticket === null) return
+    const reach = await api.devices.liveness().catch((error: unknown) => {
+      if (!isSessionCurrent(ticket)) return null
+      throw error
+    })
+    if (!isSessionCurrent(ticket) || !reach) return
     set({
       devices: get().devices.map((d) => {
         const r = reach[d.id]
@@ -270,7 +307,8 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   // Agentless: probe only devices that have a real host + stored credential.
   // Dual-boot ПК (alt) обрабатываются через refreshOsStatus (у них живой может быть Windows-эндпоинт).
   refreshMetrics: async () => {
-    if (!api) return
+    const ticket = captureSession()
+    if (!api || ticket === null) return
     // Защита от наложения проходов: один опрос может идти дольше интервала (офлайновый хост —
     // это таймаут в 10с), и без флага проходы копились бы очередью, без конца долбя SSH.
     if (metricsInFlight) return
@@ -296,18 +334,23 @@ export const useDevices = create<DevicesStore>((set, get) => ({
           // туннелем; за него и платим лишним таймаутом.
           if (d.status === 'offline' && !d.jumpId) return
           const r = await api.ssh.probe(d.id)
+          if (!isSessionCurrent(ticket)) return
           get().updateMetrics(d.id, r)
         })
       )
+      if (!isSessionCurrent(ticket)) return
       await get().refreshOsStatus()
+    } catch (error) {
+      if (isSessionCurrent(ticket)) throw error
     } finally {
-      metricsInFlight = false
+      if (isSessionCurrent(ticket)) metricsInFlight = false
     }
   },
 
   // Dual-boot: живая ОС + метрики этой ОS (OS-aware) → статус + runningOs + cpu/ram/disk/uptime.
   refreshOsStatus: async () => {
-    if (!api) return
+    const ticket = captureSession()
+    if (!api || ticket === null) return
     // Сюда же попадают одиночные Windows-хосты — у них OS-aware путь единственно верный.
     const pcs = get().devices.filter(
       (d) => d.altOs.length > 0 || (/win/i.test(d.os) && d.hasSecret && !d.ip.includes('x.x'))
@@ -315,17 +358,21 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     await Promise.all(
       pcs.map(async (d) => {
         const r = await api.pc.metrics(d.id)
+        if (!isSessionCurrent(ticket)) return
         const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
         set({
           devices: get().devices.map((x) => (x.id === d.id ? withPcMetrics(x, r, running) : x))
         })
       })
-    )
+    ).catch((error: unknown) => {
+      if (isSessionCurrent(ticket)) throw error
+    })
   },
 
   // Точечный опрос одного устройства (для учащённого refresh при открытой карточке).
   refreshOne: async (deviceId) => {
-    if (!api) return
+    const ticket = captureSession()
+    if (!api || ticket === null) return
     const d = get().devices.find((x) => x.id === deviceId)
     if (!d || !d.hasSecret || d.ip.includes('x.x')) return
     // Одиночная Windows-машина идёт по ОС-зависимой ветке наравне с двухзагрузочной.
@@ -336,17 +383,31 @@ export const useDevices = create<DevicesStore>((set, get) => ({
     // метрик как измеренные. Учащённый опрос при открытой карточке бьёт по этому пути чаще
     // всего, то есть именно у открытой карточки данные и портились.
     if (d.altOs.length > 0 || /win/i.test(d.os)) {
-      const r = await api.pc.metrics(deviceId)
+      const r = await api.pc.metrics(deviceId).catch((error: unknown) => {
+        if (!isSessionCurrent(ticket)) return null
+        throw error
+      })
+      if (!isSessionCurrent(ticket) || !r) return
       const running = r.status === 'online' ? r.current || (r.family === 'windows' ? 'Windows' : d.os) : null
       set({
         devices: get().devices.map((x) => (x.id === deviceId ? withPcMetrics(x, r, running) : x))
       })
     } else {
-      const r = await api.ssh.probe(deviceId)
+      const r = await api.ssh.probe(deviceId).catch((error: unknown) => {
+        if (!isSessionCurrent(ticket)) return null
+        throw error
+      })
+      if (!isSessionCurrent(ticket) || !r) return
       get().updateMetrics(deviceId, r)
     }
   }
 }))
+
+export function resetDevices(): void {
+  metricsInFlight = false
+  missStreak.clear()
+  useDevices.setState({ devices: [], loaded: false, error: null })
+}
 
 export function totals(devices: DeviceDTO[]): { monthly: number; yearly: number } {
   const monthly = devices.reduce((s, d) => s + d.cost.usd, 0)

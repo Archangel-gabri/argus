@@ -80,6 +80,9 @@ type Api = ReturnType<typeof stubApi>
 async function mount(open: 'new' | DeviceDTO, api: Api = stubApi()): Promise<{ api: Api; openEdit: (d: DeviceDTO) => void }> {
   Object.defineProperty(window, 'api', { value: api, configurable: true })
   vi.resetModules()
+  // This isolated feature mount represents an already authorized renderer session.
+  const { activateSession } = await import('@/store/session-lifetime')
+  activateSession()
   const { DeviceDialog } = await import('../DeviceDialog')
   const { useUI } = await import('@/store/ui')
   if (open === 'new') useUI.getState().openCreate()
