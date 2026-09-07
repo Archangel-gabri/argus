@@ -55,7 +55,7 @@ import type {
 } from './types'
 import { resolvePowerAction, describeRejectedAction } from './devices/power-action'
 import { disposeDevice } from './devices/device-disposal'
-import { revokePendingAccess } from './vault/access-epoch'
+import { beginAccess, isAccessCurrent, revokePendingAccess } from './vault/access-epoch'
 
 import { masterPasswordPolicyError } from '../shared/password-strength'
 import { parseSubscriptionInput, parseWalletInput } from './finance/finance-validation'
@@ -82,6 +82,7 @@ function state(): VaultState {
 }
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
+const VAULT_ACCESS_CANCELLED = 'Хранилище заблокировали во время открытия — введи пароль ещё раз'
 
 /** Список моделей у провайдеров меняется небыстро — чаще раза в сутки спрашивать незачем. */
 const MODELS_TTL_MS = 24 * 60 * 60 * 1000
@@ -394,11 +395,15 @@ export function registerIpc(): void {
   ipcMain.handle('vault:state', () => state())
 
   ipcMain.handle('vault:initialize', async (_e, password: unknown) => {
+    // Policy loads asynchronously too: a ticket created only inside initialize is too late.
+    const ticket = beginAccess()
     try {
       const value = asString(password)
       const policyError = await masterPasswordPolicyError(value)
+      if (!isAccessCurrent(ticket)) throw new Error(VAULT_ACCESS_CANCELLED)
       if (policyError) return { ok: false, error: policyError, state: state() }
       await vault.initialize(value)
+      if (!isAccessCurrent(ticket) || !vault.isUnlocked()) throw new Error(VAULT_ACCESS_CANCELLED)
       afterUnlock()
       return { ok: true, state: state() }
     } catch (err) {
@@ -407,8 +412,10 @@ export function registerIpc(): void {
   })
 
   ipcMain.handle('vault:unlock', async (_e, password: unknown) => {
+    const ticket = beginAccess()
     try {
       await vault.unlock(asString(password))
+      if (!isAccessCurrent(ticket) || !vault.isUnlocked()) throw new Error(VAULT_ACCESS_CANCELLED)
       afterUnlock()
       return { ok: true, state: state() }
     } catch (err) {

@@ -701,6 +701,7 @@ function seedInto(d: Database.Database): void {
 export async function initialize(password: string): Promise<void> {
   if (isInitialized()) throw new Error('Vault already initialized')
   if (!password || password.length < 6) throw new Error('Master password must be at least 6 characters')
+  const ticket = beginAccess()
   const pendingPath = metaPath() + '.new'
 
   // Сначала на диск уходит ВОССТАНАВЛИВАЕМАЯ соль, и только затем создаётся база. Раньше
@@ -709,9 +710,16 @@ export async function initialize(password: string): Promise<void> {
   const meta = prepareVaultInitialization(dbPath(), metaPath())
 
   const keyHex = await deriveKeyHex(password, Buffer.from(meta.salt, 'hex'))
+  // Lock must cancel creation as well as unlock. Preserve .new for a fresh retry, but do
+  // not open a database (or touch a newer session's file) after the old derivation finishes.
+  if (!isAccessCurrent(ticket))
+    throw new Error('Хранилище заблокировали во время создания — введи пароль ещё раз')
   const d = openEncrypted(keyHex)
   try {
     migrate(d)
+    // Keep the publication boundary guarded too; catch closes only our local handle.
+    if (!isAccessCurrent(ticket))
+      throw new Error('Хранилище заблокировали во время создания — введи пароль ещё раз')
     // Публикация атомарна. До неё initialize можно безопасно повторить с тем же паролем;
     // после неё обычный unlock видит полностью созданную схему.
     renameSync(pendingPath, metaPath())
