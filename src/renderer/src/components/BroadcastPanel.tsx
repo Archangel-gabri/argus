@@ -25,8 +25,10 @@ export function BroadcastPanel(): React.JSX.Element | null {
   const [snips, setSnips] = useState<Snippet[]>([])
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<Result[]>([])
+  const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const commandRef = useRef<HTMLTextAreaElement>(null)
+  const generation = useRef(0)
 
   useOverlayA11y({
     open,
@@ -39,9 +41,18 @@ export function BroadcastPanel(): React.JSX.Element | null {
 
   useEffect(() => {
     if (!open) return
+    let alive = true
     setResults([])
-    if (api) api.snippets.list().then(setSnips)
+    setRunning(false)
+    setSnips([])
+    setError(null)
+    if (api) api.snippets.list().then((items) => {
+      if (alive) setSnips(items)
+    }).catch((cause: unknown) => {
+      if (alive) setError(cause instanceof Error ? cause.message : 'Не удалось прочитать сниппеты')
+    })
     setSel(Object.fromEntries(eligible.map((d) => [d.id, true])))
+    return () => { alive = false; generation.current += 1 }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -49,30 +60,55 @@ export function BroadcastPanel(): React.JSX.Element | null {
   const chosen = eligible.filter((d) => sel[d.id])
 
   const run = async (): Promise<void> => {
-    if (!api || !cmd.trim() || chosen.length === 0) return
+    if (!api || running || !cmd.trim() || chosen.length === 0) return
+    const epoch = generation.current
     setRunning(true)
     setResults([])
-    const rs = await Promise.all(
-      chosen.map(async (d): Promise<Result> => {
-        const r = await api.ssh.exec(d.id, cmd)
-        return { id: d.id, name: d.name, ok: r.ok, output: r.output, error: r.error }
-      })
-    )
-    setResults(rs)
-    setRunning(false)
+    try {
+      const rs = await Promise.all(
+        chosen.map(async (d): Promise<Result> => {
+          try {
+            const r = await api.ssh.exec(d.id, cmd)
+            return { id: d.id, name: d.name, ok: r.ok, output: r.output, error: r.error }
+          } catch (cause) {
+            return { id: d.id, name: d.name, ok: false, output: '',
+              error: cause instanceof Error ? cause.message : 'Не удалось выполнить команду' }
+          }
+        })
+      )
+      if (epoch === generation.current) setResults(rs)
+    } finally {
+      if (epoch === generation.current) setRunning(false)
+    }
   }
 
   const saveSnippet = async (): Promise<void> => {
     if (!api || !cmd.trim()) return
     const name = window.prompt('Название сниппета:')
     if (!name) return
-    await api.snippets.create(name, cmd)
-    api.snippets.list().then(setSnips)
+    const epoch = generation.current
+    setError(null)
+    try {
+      await api.snippets.create(name, cmd)
+      if (epoch !== generation.current) return
+      const items = await api.snippets.list()
+      if (epoch === generation.current) setSnips(items)
+    } catch (cause) {
+      if (epoch === generation.current) setError(cause instanceof Error ? cause.message : 'Не удалось сохранить сниппет')
+    }
   }
   const delSnippet = async (id: string): Promise<void> => {
     if (!api) return
-    await api.snippets.remove(id)
-    api.snippets.list().then(setSnips)
+    const epoch = generation.current
+    setError(null)
+    try {
+      await api.snippets.remove(id)
+      if (epoch !== generation.current) return
+      const items = await api.snippets.list()
+      if (epoch === generation.current) setSnips(items)
+    } catch (cause) {
+      if (epoch === generation.current) setError(cause instanceof Error ? cause.message : 'Не удалось удалить сниппет')
+    }
   }
 
   return (
@@ -99,11 +135,12 @@ export function BroadcastPanel(): React.JSX.Element | null {
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          {error && <p role="alert" className="text-xs text-rose-400">{error}</p>}
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Команда</span>
               <button
-                onClick={saveSnippet}
+                onClick={() => void saveSnippet()}
                 disabled={!cmd.trim()}
                 className="flex items-center gap-1 text-xs text-slate-400 hover:text-accent disabled:opacity-40"
               >
@@ -127,7 +164,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
                       {s.name}
                     </button>
                     <button
-                      onClick={() => delSnippet(s.id)}
+                      onClick={() => void delSnippet(s.id)}
                       className="text-slate-400 opacity-0 hover:text-rose-400 focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                       aria-label={`Удалить сниппет «${s.name}»`}
                     >
@@ -191,7 +228,7 @@ export function BroadcastPanel(): React.JSX.Element | null {
             {running ? 'Выполняю…' : `${chosen.length} хостов`}
           </span>
           <button
-            onClick={run}
+            onClick={() => void run()}
             disabled={running || !cmd.trim() || chosen.length === 0}
             className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
           >

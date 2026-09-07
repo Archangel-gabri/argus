@@ -44,7 +44,8 @@ export default function App(): React.JSX.Element {
   const refreshLiveness = useDevices((s) => s.refreshLiveness)
 
   useEffect(() => {
-    refresh()
+    // Vault/domain stores own IPC errors; fire-and-forget does not discard a rejection.
+    void refresh()
   }, [refresh])
 
   useEffect(() => {
@@ -91,12 +92,12 @@ export default function App(): React.JSX.Element {
       })
       return
     }
-    loadDevices()
+    void loadDevices()
     // Кросс-доменные сторы для Dashboard/палитры/бейджей.
-    useWallets.getState().load()
-    useSubs.getState().load()
-    useAi.getState().load()
-    useAccounts.getState().load()
+    void useWallets.getState().load()
+    void useSubs.getState().load()
+    void useAi.getState().load()
+    void useAccounts.getState().load()
   }, [status, loadDevices])
 
   // Фоновый сбор — расход из логов, квоты провайдеров, пароли, модели, остатки бирж — идёт
@@ -134,7 +135,7 @@ export default function App(): React.JSX.Element {
     const arm = (): void => {
       if (timer) clearTimeout(timer)
       if (!min) return
-      timer = setTimeout(() => useVault.getState().lock(), min * 60_000)
+      timer = setTimeout(() => void useVault.getState().lock(), min * 60_000)
     }
     const onPrefs = (): void => {
       min = loadPrefs().autolockMin
@@ -157,18 +158,24 @@ export default function App(): React.JSX.Element {
     // Два контура вместо одного: живость дешёвая (TCP, мс) — гоняем часто; полные метрики
     // дорогие (SSH, секунды) — реже. Раньше был один контур раз в 90с, поэтому после входа
     // сетка стояла пустой около минуты.
-    void refreshLiveness()
-    void refreshMetrics()
-    const fast = setInterval(() => void refreshLiveness(), 10000)
-    const t = setInterval(() => refreshMetrics(), 30000)
+    let alive = true
+    const reportFailure = (): void => {
+      if (alive) useDevices.setState({ error: 'Не удалось обновить состояние устройств' })
+    }
+    const pollLiveness = (): void => { void refreshLiveness().catch(reportFailure) }
+    const pollMetrics = (): void => { void refreshMetrics().catch(reportFailure) }
+    pollLiveness()
+    pollMetrics()
+    const fast = setInterval(pollLiveness, 10000)
+    const t = setInterval(pollMetrics, 30000)
     return () => {
+      alive = false
       clearInterval(fast)
       clearInterval(t)
     }
   }, [status, refreshMetrics, refreshLiveness])
 
-  if (status !== 'unlocked')
-    return <LockScreen />
+  if (status !== 'unlocked') return <LockScreen />
 
   return (
     <div className="flex h-screen overflow-hidden bg-bg">

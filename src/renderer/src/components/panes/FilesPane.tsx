@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Folder,
   File as FileIcon,
@@ -26,6 +26,14 @@ function fmtSize(n: number): string {
 }
 
 const joinPath = (dir: string, name: string): string => dir.replace(/\/$/, '') + '/' + name
+const messageOf = (cause: unknown): string => cause instanceof Error ? cause.message : 'Ошибка SFTP'
+
+function closeSession(sid: string): void {
+  try { api?.sftp.close(sid) } catch {
+    // Cleanup is best-effort when preload/main has already gone away.
+    console.warn('Не удалось отправить закрытие SFTP-сессии')
+  }
+}
 
 export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element {
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -35,6 +43,9 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState<Toast | null>(null)
+  const session = useRef<string | null>(null)
+  const generation = useRef(0)
+  const opening = useRef(false)
 
   // Автоскрытие тоста результата (скачано/загружено/удалено/ошибка).
   useEffect(() => {
@@ -55,34 +66,62 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
 
   const load = async (sid: string, p: string): Promise<void> => {
     if (!api) return
+    const epoch = generation.current
+    const current = (): boolean => epoch === generation.current && sid === session.current
     setLoading(true)
     setError(null)
-    const r = await api.sftp.list(sid, p)
-    setLoading(false)
-    if (!r.ok) {
+    try {
+      const r = await api.sftp.list(sid, p)
+      if (!current()) return
+      if (!r.ok) {
       // Срок обрывает сессию: держать её идентификатор дальше незачем, а человеку нужен путь
       // назад — кнопка переподключения вместо мёртвого «Обновить».
-      if (sessionDead(r.error)) setSessionId(null)
-      setError(r.error ?? 'Ошибка чтения')
-      return
+        if (sessionDead(r.error)) {
+          closeSession(sid)
+          session.current = null
+          setSessionId(null)
+        }
+        setError(r.error ?? 'Ошибка чтения')
+        return
+      }
+      setPath(r.path)
+      setEntries(r.entries ?? [])
+    } catch (cause) {
+      if (current()) setError(messageOf(cause))
+    } finally {
+      if (epoch === generation.current) setLoading(false)
     }
-    setPath(r.path)
-    setEntries(r.entries ?? [])
   }
 
   /** Открыть сессию заново после обрыва — тем же путём, что и при первом входе на вкладку. */
-  const reconnect = async (): Promise<void> => {
-    if (!api) return
+  const connect = async (p: string): Promise<void> => {
+    if (!api || opening.current) return
+    const epoch = generation.current
+    opening.current = true
     setLoading(true)
     setError(null)
-    const r = await api.sftp.open(device.id)
-    if (!r.ok || !r.sessionId) {
-      setLoading(false)
-      setError(r.error ?? 'Не удалось открыть файлы')
-      return
+    try {
+      const r = await api.sftp.open(device.id)
+      if (epoch !== generation.current) {
+        if (r.ok && r.sessionId) closeSession(r.sessionId)
+        return
+      }
+      if (!r.ok || !r.sessionId) {
+        setError(r.error ?? 'Не удалось открыть файлы')
+        return
+      }
+      if (session.current) closeSession(session.current)
+      session.current = r.sessionId
+      setSessionId(r.sessionId)
+      await load(r.sessionId, p)
+    } catch (cause) {
+      if (epoch === generation.current) setError(messageOf(cause))
+    } finally {
+      if (epoch === generation.current) {
+        opening.current = false
+        setLoading(false)
+      }
     }
-    setSessionId(r.sessionId)
-    await load(r.sessionId, path)
   }
 
   useEffect(() => {
@@ -90,77 +129,82 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
       setError('Только в десктоп-приложении.')
       return
     }
-    let sid: string | null = null
-    let disposed = false
-    void (async () => {
-      setLoading(true)
-      setError(null)
-      const r = await api.sftp.open(device.id)
-      if (disposed) {
-        // компонент размонтировался, пока открывали — не оставляем сессию в main висеть
-        if (r.ok && r.sessionId && api) api.sftp.close(r.sessionId)
-        return
-      }
-      if (!r.ok || !r.sessionId) {
-        setError(r.error ?? 'Не удалось открыть SFTP')
-        setLoading(false)
-        return
-      }
-      sid = r.sessionId
-      setSessionId(sid)
-      await load(sid, '.')
-    })()
+    setSessionId(null)
+    setEntries([])
+    setPath('.')
+    setToast(null)
+    setBusy(false)
+    void connect('.')
     return () => {
-      disposed = true
-      if (sid && api) api.sftp.close(sid)
-      setSessionId(null)
-      setEntries([])
-      setPath('.')
-      setError(null)
+      generation.current += 1
+      opening.current = false
+      if (session.current) closeSession(session.current)
+      session.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.id])
 
   const enter = (e: SftpEntry): void => {
-    if (sessionId && e.type === 'd') load(sessionId, joinPath(path, e.name))
+    if (sessionId && e.type === 'd') void load(sessionId, joinPath(path, e.name))
   }
   const up = (): void => {
-    if (sessionId) load(sessionId, path.replace(/\/[^/]+\/?$/, '') || '/')
+    if (sessionId) void load(sessionId, path.replace(/\/[^/]+\/?$/, '') || '/')
   }
   const refresh = (): void => {
-    if (sessionId) load(sessionId, path)
+    if (sessionId) void load(sessionId, path)
   }
   const download = async (e: SftpEntry): Promise<void> => {
-    if (!sessionId || !api) return
+    if (!sessionId || !api || busy) return
+    const epoch = generation.current
     setBusy(true)
-    const r = await api.sftp.download(sessionId, joinPath(path, e.name))
-    setBusy(false)
-    if (r.ok) setToast({ kind: 'ok', text: `Скачано: ${e.name}` })
-    else if (r.error && r.error !== 'canceled') setToast({ kind: 'err', text: `Не скачалось: ${r.error}` })
+    try {
+      const r = await api.sftp.download(sessionId, joinPath(path, e.name))
+      if (epoch !== generation.current) return
+      if (r.ok) setToast({ kind: 'ok', text: `Скачано: ${e.name}` })
+      else if (r.error && r.error !== 'canceled') setToast({ kind: 'err', text: `Не скачалось: ${r.error}` })
+    } catch (cause) {
+      if (epoch === generation.current) setToast({ kind: 'err', text: messageOf(cause) })
+    } finally {
+      if (epoch === generation.current) setBusy(false)
+    }
   }
   const upload = async (): Promise<void> => {
-    if (!sessionId || !api) return
+    if (!sessionId || !api || busy) return
+    const epoch = generation.current
     setBusy(true)
-    const r = await api.sftp.upload(sessionId, path)
-    setBusy(false)
-    if (r.ok) {
-      setToast({ kind: 'ok', text: `Загружено: ${r.name ?? 'файл'}` })
-      refresh()
-    } else if (r.error && r.error !== 'canceled') {
-      setToast({ kind: 'err', text: `Не загрузилось: ${r.error}` })
+    try {
+      const r = await api.sftp.upload(sessionId, path)
+      if (epoch !== generation.current) return
+      if (r.ok) {
+        setToast({ kind: 'ok', text: `Загружено: ${r.name ?? 'файл'}` })
+        refresh()
+      } else if (r.error && r.error !== 'canceled') {
+        setToast({ kind: 'err', text: `Не загрузилось: ${r.error}` })
+      }
+    } catch (cause) {
+      if (epoch === generation.current) setToast({ kind: 'err', text: messageOf(cause) })
+    } finally {
+      if (epoch === generation.current) setBusy(false)
     }
   }
   const remove = async (e: SftpEntry): Promise<void> => {
-    if (!sessionId || !api) return
+    if (!sessionId || !api || busy) return
     if (!window.confirm(`Удалить «${e.name}»?`)) return
+    const epoch = generation.current
     setBusy(true)
-    const r = await api.sftp.remove(sessionId, joinPath(path, e.name), e.type === 'd')
-    setBusy(false)
-    if (r.ok) {
-      setToast({ kind: 'ok', text: `Удалено: ${e.name}` })
-      refresh()
-    } else {
-      setToast({ kind: 'err', text: `Не удалось удалить: ${r.error ?? 'ошибка'}` })
+    try {
+      const r = await api.sftp.remove(sessionId, joinPath(path, e.name), e.type === 'd')
+      if (epoch !== generation.current) return
+      if (r.ok) {
+        setToast({ kind: 'ok', text: `Удалено: ${e.name}` })
+        refresh()
+      } else {
+        setToast({ kind: 'err', text: `Не удалось удалить: ${r.error ?? 'ошибка'}` })
+      }
+    } catch (cause) {
+      if (epoch === generation.current) setToast({ kind: 'err', text: messageOf(cause) })
+    } finally {
+      if (epoch === generation.current) setBusy(false)
     }
   }
 
@@ -179,8 +223,8 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
         </button>
         <div className="min-w-0 flex-1 truncate font-mono text-xs text-slate-400">{path}</div>
         <button
-          onClick={upload}
-          disabled={busy}
+          onClick={() => void upload()}
+          disabled={busy || loading || !sessionId}
           className="flex items-center gap-1.5 rounded-md bg-card px-2.5 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover disabled:opacity-50"
         >
           <Upload className="h-3.5 w-3.5" /> Загрузить
@@ -197,7 +241,8 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
             {!sessionId && (
               <div className="mt-3">
                 <button
-                  onClick={() => void reconnect()}
+                  onClick={() => void connect(path)}
+                  disabled={loading}
                   className="rounded-lg bg-card px-3 py-1.5 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
                 >
                   Подключиться заново
@@ -231,11 +276,11 @@ export function FilesPane({ device }: { device: DeviceDTO }): React.JSX.Element 
                 {e.type !== 'd' && <span className="shrink-0 font-mono text-xs text-slate-500">{fmtSize(e.size)}</span>}
                 <div className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
                   {e.type === 'f' && (
-                    <button onClick={() => download(e)} className="rounded p-1 text-slate-400 hover:text-accent" title="Скачать">
+                    <button onClick={() => void download(e)} disabled={busy} className="rounded p-1 text-slate-400 hover:text-accent" title="Скачать">
                       <Download className="h-3.5 w-3.5" />
                     </button>
                   )}
-                  <button onClick={() => remove(e)} className="rounded p-1 text-slate-400 hover:text-rose-400" title="Удалить">
+                  <button onClick={() => void remove(e)} disabled={busy} className="rounded p-1 text-slate-400 hover:text-rose-400" title="Удалить">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>

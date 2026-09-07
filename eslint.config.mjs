@@ -19,7 +19,9 @@ export default tseslint.config(
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
-      'agent/**'
+      'agent/**',
+      // Upstream axe-core bundle is vendored, not maintained TypeScript. Our tools remain linted.
+      'tools/vendor/**'
     ]
   },
   js.configs.recommended,

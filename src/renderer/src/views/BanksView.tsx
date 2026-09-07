@@ -249,7 +249,8 @@ export function BanksView(): React.JSX.Element {
   const accountsError = useAccounts((s) => s.error)
 
   useEffect(() => {
-    if (!loaded) load()
+    // The store owns rejected IPC and exposes its error state to this view.
+    if (!loaded) void load()
   }, [loaded, load])
   useEffect(() => {
     if (!accountsLoaded) void loadAccounts()

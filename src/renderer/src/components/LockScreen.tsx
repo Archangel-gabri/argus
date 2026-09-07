@@ -36,8 +36,12 @@ export function LockScreen(): React.JSX.Element {
       return
     }
     let alive = true
+    setStrength(null)
+    setLocalError(null)
     void checkStrength(pw).then((r) => {
       if (alive) setStrength(r)
+    }).catch(() => {
+      if (alive) setLocalError('Не удалось проверить надёжность пароля')
     })
     return () => {
       alive = false
@@ -49,7 +53,8 @@ export function LockScreen(): React.JSX.Element {
     !setup || (score >= MIN_PASSWORD_SCORE && ack && pw === confirm && pw.length >= 6)
 
   useEffect(() => {
-    refresh()
+    // The vault store handles rejected IPC and exposes a fail-closed error state.
+    void refresh()
   }, [refresh])
 
   const submit = async (e: FormEvent): Promise<void> => {
@@ -67,24 +72,28 @@ export function LockScreen(): React.JSX.Element {
       setLocalError('Подтверди, что понимаешь: восстановления нет')
       return
     }
-    if (setup) {
-      // Авторитетная проверка на сабмите (не полагаемся на async-состояние индикатора).
-      const policyError = await masterPasswordPolicyError(pw)
-      if (policyError) {
-        setLocalError(policyError)
-        return
+    try {
+      if (setup) {
+        // Авторитетная проверка на сабмите (не полагаемся на async-состояние индикатора).
+        const policyError = await masterPasswordPolicyError(pw)
+        if (policyError) {
+          setLocalError(policyError)
+          return
+        }
       }
-    }
-    const ok = setup ? await initialize(pw) : await unlock(pw)
-    if (!ok) {
-      setPw('')
-      setConfirm('')
+      const ok = setup ? await initialize(pw) : await unlock(pw)
+      if (!ok) {
+        setPw('')
+        setConfirm('')
+      }
+    } catch {
+      setLocalError('Не удалось проверить пароль или открыть хранилище')
     }
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-6">
-      <form onSubmit={submit} className="w-full max-w-sm">
+      <form onSubmit={(event) => void submit(event)} className="w-full max-w-sm">
         <div className="mb-6 text-center">
           <img src={wordmark} alt="Argus" className="mx-auto w-56 rounded-xl" />
           <h1 className="mt-4 text-xl font-semibold text-white">

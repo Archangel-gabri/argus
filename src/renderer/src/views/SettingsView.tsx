@@ -64,7 +64,7 @@ function ChangePassword(): React.JSX.Element {
   }
 
   return (
-    <form onSubmit={submit} className="grid grid-cols-3 gap-3">
+    <form onSubmit={(event) => void submit(event)} className="grid grid-cols-3 gap-3">
       <input className={inputCls} type="password" value={cur} onChange={(e) => setCur(e.target.value)} placeholder="Текущий пароль" disabled={!api} />
       <input className={inputCls} type="password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="Новый пароль" disabled={!api} />
       <input className={inputCls} type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Ещё раз" disabled={!api} />
@@ -115,7 +115,7 @@ export function SettingsView(): React.JSX.Element {
             </select>
           </label>
           <button
-            onClick={() => lock()}
+            onClick={() => void lock()}
             className="flex items-center gap-1.5 rounded-lg bg-card px-3 py-2 text-xs font-medium text-slate-200 ring-1 ring-border hover:bg-card-hover"
           >
             <Lock className="h-3.5 w-3.5" /> Заблокировать сейчас

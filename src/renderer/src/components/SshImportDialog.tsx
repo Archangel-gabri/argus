@@ -16,8 +16,10 @@ export function SshImportDialog(): React.JSX.Element | null {
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [added, setAdded] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const generation = useRef(0)
 
   const isTailscale = source === 'tailscale'
 
@@ -30,7 +32,11 @@ export function SshImportDialog(): React.JSX.Element | null {
 
   useEffect(() => {
     if (source === false) return
+    let alive = true
     setAdded(null)
+    setBusy(false)
+    setError(null)
+    setHosts([])
     if (!api) {
       setHosts([])
       return
@@ -38,22 +44,35 @@ export function SshImportDialog(): React.JSX.Element | null {
     setLoading(true)
     const p = source === 'tailscale' ? api.discovery.tailscale() : api.sshconfig.parse()
     p.then((h) => {
+      if (!alive) return
       setHosts(h)
       setSel(Object.fromEntries(h.map((x) => [x.name, true])))
-      setLoading(false)
+    }).catch((cause: unknown) => {
+      if (alive) setError(cause instanceof Error ? cause.message : 'Не удалось найти хосты')
+    }).finally(() => {
+      if (alive) setLoading(false)
     })
+    return () => { alive = false; generation.current += 1 }
   }, [source])
 
   if (source === false) return null
   const chosen = hosts.filter((h) => sel[h.name])
 
   const doImport = async (): Promise<void> => {
-    if (!api) return
+    if (!api || busy) return
+    const epoch = generation.current
     setBusy(true)
-    const r = await api.sshconfig.import(chosen)
-    await reload()
-    setBusy(false)
-    setAdded(r.added)
+    setError(null)
+    try {
+      const r = await api.sshconfig.import(chosen)
+      if (epoch !== generation.current) return
+      await reload()
+      if (epoch === generation.current) setAdded(r.added)
+    } catch (cause) {
+      if (epoch === generation.current) setError(cause instanceof Error ? cause.message : 'Не удалось импортировать хосты')
+    } finally {
+      if (epoch === generation.current) setBusy(false)
+    }
   }
 
   return (
@@ -85,6 +104,7 @@ export function SshImportDialog(): React.JSX.Element | null {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {error && <p role="alert" className="mb-3 text-sm text-rose-400">{error}</p>}
           {!api ? (
             <p className="text-sm text-slate-500">Только в приложении</p>
           ) : loading ? (
@@ -134,7 +154,7 @@ export function SshImportDialog(): React.JSX.Element | null {
           <div className="flex items-center justify-between border-t border-border px-5 py-3">
             <span className="text-xs text-slate-500">Выбрано: {chosen.length}</span>
             <button
-              onClick={doImport}
+              onClick={() => void doImport()}
               disabled={busy || chosen.length === 0}
               className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
             >

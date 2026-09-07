@@ -32,7 +32,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "lint": "eslint src/main src/preload src/shared",
+    "lint": "eslint .",
     "lint:all": "eslint .",
     "test": "vitest run --project unit --project dom",
     "test:watch": "vitest --project unit --project dom",

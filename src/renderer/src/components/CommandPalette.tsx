@@ -98,9 +98,13 @@ export function CommandPalette(): React.JSX.Element | null {
     return () => document.removeEventListener('keydown', onKey)
   }, [open, setPalette])
 
-  const run = (fn: () => void): void => {
+  const run = (fn: () => void | Promise<void>): void => {
     setPalette(false)
-    fn()
+    try {
+      void Promise.resolve(fn()).catch(() => window.alert('Не удалось выполнить команду'))
+    } catch {
+      window.alert('Не удалось выполнить команду')
+    }
   }
 
   if (!open) return null

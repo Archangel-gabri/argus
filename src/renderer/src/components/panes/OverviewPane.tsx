@@ -34,6 +34,18 @@ const api = typeof window !== 'undefined' ? window.api : undefined
 /** Метка «спросить не удалось». Отличается от пустой строки, которая значит «машина выключена». */
 const UNKNOWN_OS = '\u0000unknown'
 
+/** Each async operation owns one mounted/device generation, not a reusable alive boolean. */
+function useRequestScope(deviceId: string): () => () => boolean {
+  const generation = useRef(0)
+  useEffect(() => () => { generation.current += 1 }, [deviceId])
+  return useCallback(() => {
+    const request = generation.current
+    return () => request === generation.current
+  }, [])
+}
+
+const ipcError = (e: unknown): string => e instanceof Error ? e.message : 'связь с приложением не удалась'
+
 // Человекочитаемое сообщение по двухфазному результату питания (main/pc.ts).
 function powerMsg(r: PowerResult): string {
   switch (r.phase) {
@@ -143,73 +155,97 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   const [msg, setMsg] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [diag, setDiag] = useState<string | null>(null)
+  const requestScope = useRequestScope(d.id)
   // Все ОС этой железки: основная (d.os) + доп. (d.altOs).
   const osList = [d.os || 'Linux', ...d.altOs.map((a) => a.os || 'OS')]
   const famOf = (os: string): 'windows' | 'linux' => (/win/i.test(os) ? 'windows' : 'linux')
 
-  // Флаг живости хранится в ref, а не в замыкании: интервал переживает перерисовки,
-  // и без него ответ на запрос, отправленный до закрытия карточки, приходил в уже снятый
-  // с экрана компонент — React ругается, а пользователь на секунду видит чужую ОС.
-  const aliveRef = useRef(true)
-  const refresh = async (): Promise<void> => {
+  const refresh = useCallback(async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setCurrent(null)
-    const r = await api.pc.whichOs(d.id)
-    // «Не знаю» и «выключена» приходят по-разному: у первого пустая метка ОС, но семейство
-    // `unknown`. Раньше различия не было вовсе, и одна осечка опроса рисовала «выключен».
-    if (aliveRef.current) setCurrent(r.family === 'unknown' ? UNKNOWN_OS : r.current)
-  }
+    try {
+      const r = await api.pc.whichOs(d.id)
+      // «Не знаю» и «выключена» — разные состояния, в том числе при отказе самого IPC.
+      if (isCurrent()) setCurrent(r.family === 'unknown' ? UNKNOWN_OS : r.current)
+    } catch {
+      if (isCurrent()) setCurrent(UNKNOWN_OS)
+    }
+  }, [d.id, requestScope])
   // Опрашиваем живую ОС на маунте И каждые 15с, пока карточка открыта — иначе после ребута/
   // boot-switch сегмент «Сейчас: …» навсегда показывал ОС на момент открытия drawer.
   useEffect(() => {
-    aliveRef.current = true
-    refresh()
-    const t = setInterval(refresh, 15000)
-    return () => {
-      aliveRef.current = false
-      clearInterval(t)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d.id])
+    void refresh() // refresh handles rejection and preserves the unknown/off distinction.
+    const t = setInterval(() => { void refresh() }, 15000)
+    return () => clearInterval(t)
+  }, [refresh])
 
   const doBoot = async (targetOs: string): Promise<void> => {
     if (!api) return
     if (!window.confirm(`Загрузить ${targetOs} на «${d.name}»?\nПК перезагрузится в выбранную ОС.`)) return
+    const isCurrent = requestScope()
     setBusy('boot-' + targetOs)
     setMsg(null)
-    const r = await api.pc.boot(d.id, targetOs)
-    setBusy(null)
-    setMsg(r.ok ? `✓ ${r.output || 'команда отправлена, ПК перезагружается'}` : `✖ ${r.error}`)
+    try {
+      const r = await api.pc.boot(d.id, targetOs)
+      if (isCurrent()) setMsg(r.ok ? `✓ ${r.output || 'команда отправлена, ПК перезагружается'}` : `✖ ${r.error}`)
+    } catch (e) {
+      if (isCurrent()) setMsg(`✖ ${ipcError(e)}`)
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
   const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
     if (!api) return
     if (!window.confirm(confirmPowerText(d, action, label))) return
+    const isCurrent = requestScope()
     setBusy(action)
     setMsg(null)
     setDiag(null)
     setFailed(false)
-    const r = await api.pc.power(d.id, action)
-    setBusy(null)
-    setMsg(powerMsg(r))
-    setFailed(powerFailed(r))
-    refresh() // сразу перечитать живую ОС (после ребута/выключения статус обновится)
+    try {
+      const r = await api.pc.power(d.id, action)
+      if (!isCurrent()) return
+      setMsg(powerMsg(r))
+      setFailed(powerFailed(r))
+      void refresh() // refresh handles its own rejection; power's result stays independent.
+    } catch (e) {
+      if (isCurrent()) {
+        setMsg(`✖ ${ipcError(e)}`)
+        setFailed(true)
+      }
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
   const doWake = async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setBusy('wake')
     setMsg(null)
     setDiag(null)
-    const r = await api.pc.wake(d.id)
-    setBusy(null)
-    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — ПК должен проснуться (из сна S3, не из полного выкл.)' : `✖ ${r.error}`)
+    try {
+      const r = await api.pc.wake(d.id)
+      if (isCurrent()) setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — ПК должен проснуться (из сна S3, не из полного выкл.)' : `✖ ${r.error}`)
+    } catch (e) {
+      if (isCurrent()) setMsg(`✖ ${ipcError(e)}`)
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
   const doDiag = async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setBusy('diag')
     setDiag(null)
-    const r = await api.pc.powerDiag(d.id)
-    setBusy(null)
-    setDiag(r.text || '(нет данных)')
+    try {
+      const r = await api.pc.powerDiag(d.id)
+      if (isCurrent()) setDiag(r.text || '(нет данных)')
+    } catch (e) {
+      if (isCurrent()) setDiag(`✖ ${ipcError(e)}`)
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
 
   const badge =
@@ -235,7 +271,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
     const fam = famOf(osLabel)
     return (
       <button
-        onClick={() => (isCurrent ? undefined : doBoot(osLabel))}
+        onClick={() => { if (!isCurrent) void doBoot(osLabel) }}
         disabled={!!busy || isCurrent}
         title={isCurrent ? 'Запущена сейчас' : `Перезагрузить в ${osLabel}`}
         className={cn(
@@ -259,7 +295,7 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
       <div className="mb-2.5 flex items-center justify-between">
         <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Питание и ОС</span>
         <button
-          onClick={refresh}
+          onClick={() => { void refresh() }}
           className={cn('inline-flex items-center gap-1.5 text-[11px] font-medium', badge.cls)}
           title="Обновить статус ОС"
         >
@@ -277,11 +313,11 @@ function DualBootSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
       {/* Питание живой ОС + Включить (WoL). «Включить» видна ВСЕГДА при заданном MAC
           (не прячется во время проверки); disabled только когда ПК подтверждённо online. */}
       <div className="flex flex-wrap gap-2">
-        {d.mac && <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={doWake} active={running} />}
-        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
-        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
-        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
-        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
+        {d.mac && <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={() => { void doWake() }} active={running} />}
+        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => { void doPower('reboot', 'Ребут') }} />
+        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => { void doPower('suspend', 'Сон') }} />
+        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => { void doPower('poweroff', 'Выключить') }} />
+        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={() => { void doDiag() }} />}
       </div>
       {!hasWakePath(d) && <OneWayHint />}
 
@@ -300,37 +336,60 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
   const [msg, setMsg] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [diag, setDiag] = useState<string | null>(null)
+  const requestScope = useRequestScope(d.id)
   const online = d.status === 'online'
 
   // Питание идёт через main (pc.power → живая ОС): -i/inhibitors, двухфазный вердикт, реальный stderr.
   const doPower = async (action: 'reboot' | 'poweroff' | 'suspend', label: string): Promise<void> => {
     if (!api) return
     if (!window.confirm(confirmPowerText(d, action, label))) return
+    const isCurrent = requestScope()
     setBusy(action)
     setMsg(null)
     setDiag(null)
     setFailed(false)
-    const r = await api.pc.power(d.id, action)
-    setBusy(null)
-    setMsg(powerMsg(r))
-    setFailed(powerFailed(r))
+    try {
+      const r = await api.pc.power(d.id, action)
+      if (!isCurrent()) return
+      setMsg(powerMsg(r))
+      setFailed(powerFailed(r))
+    } catch (e) {
+      if (isCurrent()) {
+        setMsg(`✖ ${ipcError(e)}`)
+        setFailed(true)
+      }
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
   const doWake = async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setBusy('wake')
     setMsg(null)
     setDiag(null)
-    const r = await api.pc.wake(d.id)
-    setBusy(null)
-    setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — устройство должно проснуться' : `✖ ${r.error}`)
+    try {
+      const r = await api.pc.wake(d.id)
+      if (isCurrent()) setMsg(r.ok ? '✓ magic-пакет отправлен (WoL) — устройство должно проснуться' : `✖ ${r.error}`)
+    } catch (e) {
+      if (isCurrent()) setMsg(`✖ ${ipcError(e)}`)
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
   const doDiag = async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setBusy('diag')
     setDiag(null)
-    const r = await api.pc.powerDiag(d.id)
-    setBusy(null)
-    setDiag(r.text || '(нет данных)')
+    try {
+      const r = await api.pc.powerDiag(d.id)
+      if (isCurrent()) setDiag(r.text || '(нет данных)')
+    } catch (e) {
+      if (isCurrent()) setDiag(`✖ ${ipcError(e)}`)
+    } finally {
+      if (isCurrent()) setBusy(null)
+    }
   }
 
   return (
@@ -340,7 +399,7 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
         {/* «Включить»: WoL при заданном MAC (видна всегда, disabled когда уже online);
             иначе — ссылка на консоль хостера; иначе — disabled-подсказка. Честно, без фейка. */}
         {d.mac ? (
-          <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={doWake} active={online} />
+          <ActionButton busy={busy} id="wake" label="Включить" icon={Zap} onClick={() => { void doWake() }} active={online} />
         ) : d.consoleUrl ? (
           <a
             href={d.consoleUrl}
@@ -359,10 +418,10 @@ function PowerSection({ device: d }: { device: DeviceDTO }): React.JSX.Element {
             <Zap className="h-3.5 w-3.5" /> Включить
           </button>
         )}
-        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => doPower('reboot', 'Ребут')} />
-        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => doPower('suspend', 'Сон')} />
-        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => doPower('poweroff', 'Выключить')} />
-        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={doDiag} />}
+        <ActionButton busy={busy} id="reboot" label="Ребут" icon={RotateCw} onClick={() => { void doPower('reboot', 'Ребут') }} />
+        <ActionButton busy={busy} id="suspend" label="Сон" icon={Moon} onClick={() => { void doPower('suspend', 'Сон') }} />
+        <ActionButton busy={busy} id="poweroff" label="Выключить" icon={Power} danger onClick={() => { void doPower('poweroff', 'Выключить') }} />
+        {failed && <ActionButton busy={busy} id="diag" label="Диагностика" icon={Stethoscope} onClick={() => { void doDiag() }} />}
       </div>
       {!hasWakePath(d) && <OneWayHint />}
       {msg && <div className="mt-2 whitespace-pre-wrap text-[11px] text-slate-500">{msg}</div>}
@@ -465,33 +524,44 @@ function HardwareSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
   const [collectedAt, setCollectedAt] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const requestScope = useRequestScope(d.id)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!api) return
+    const isCurrent = requestScope()
     setLoading(true)
     setErr(null)
-    const r = await api.hw.refresh(d.id)
-    setLoading(false)
-    if (r.ok && r.info) {
-      setHw(r.info)
-      setCollectedAt(r.info.collectedAt ?? Date.now())
-    } else setErr(r.error ?? 'не удалось собрать сводку')
-  }, [d.id])
+    try {
+      const r = await api.hw.refresh(d.id)
+      if (!isCurrent()) return
+      if (r.ok && r.info) {
+        setHw(r.info)
+        setCollectedAt(r.info.collectedAt ?? Date.now())
+      } else setErr(r.error ?? 'не удалось собрать сводку')
+    } catch (e) {
+      if (isCurrent()) setErr(ipcError(e))
+    } finally {
+      if (isCurrent()) setLoading(false)
+    }
+  }, [d.id, requestScope])
 
   useEffect(() => {
-    let alive = true
     if (!api) return
-    void api.hw.get(d.id).then((c) => {
-      if (!alive) return
-      if (c) {
-        setHw(c.info)
-        setCollectedAt(c.collectedAt)
-      } else void refresh() // авто-сбор, если кэша ещё нет
-    })
-    return () => {
-      alive = false
+    const isCurrent = requestScope()
+    const load = async (): Promise<void> => {
+      try {
+        const c = await api.hw.get(d.id)
+        if (!isCurrent()) return
+        if (c) {
+          setHw(c.info)
+          setCollectedAt(c.collectedAt)
+        } else await refresh() // авто-сбор, если кэша ещё нет
+      } catch (e) {
+        if (isCurrent()) setErr(ipcError(e))
+      }
     }
-  }, [d.id, refresh])
+    void load() // Both cache lookup and automatic refresh handle rejection.
+  }, [d.id, refresh, requestScope])
 
   const when = collectedAt ? new Date(collectedAt).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) : null
   const mhz = hw?.cpuMhzMax ? `до ${(hw.cpuMhzMax / 1000).toFixed(1)} ГГц` : ''
@@ -511,9 +581,8 @@ function HardwareSection({ device: d }: { device: DeviceDTO }): React.JSX.Elemen
           {when ? `собрано ${when}` : 'собрать'}
         </button>
       </div>
-      {err && !hw ? (
-        <p className="py-1 text-center text-xs text-slate-500">{err}</p>
-      ) : !hw ? (
+      {err && <p className="py-1 text-center text-xs text-slate-500">{err}</p>}
+      {!hw ? (
         <p className="py-2 text-center text-xs text-slate-400">{loading ? 'Собираю сводку…' : 'Нет данных.'}</p>
       ) : (
         <>
@@ -559,13 +628,32 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
   const devices = useDevices((s) => s.devices)
   const refreshOne = useDevices((s) => s.refreshOne)
   const st = STATUS[d.status]
+  const [metricsErr, setMetricsErr] = useState<string | null>(null)
 
   // Учащённый live-опрос пока карточка открыта (каждые 12с) — метрики «в реальном времени».
   useEffect(() => {
+    setMetricsErr(null)
     if (!isSshCapable(d.kind)) return
-    refreshOne(d.id)
-    const t = setInterval(() => refreshOne(d.id), 12000)
-    return () => clearInterval(t)
+    let alive = true
+    let inFlight = false
+    const refresh = async (): Promise<void> => {
+      if (inFlight) return
+      inFlight = true
+      try {
+        await refreshOne(d.id)
+        if (alive) setMetricsErr(null)
+      } catch (e) {
+        if (alive) setMetricsErr(ipcError(e))
+      } finally {
+        inFlight = false
+      }
+    }
+    void refresh()
+    const t = setInterval(() => { void refresh() }, 12000)
+    return () => {
+      alive = false
+      clearInterval(t)
+    }
   }, [d.id, d.kind, refreshOne])
   const jump = d.jumpId ? (devices.find((x) => x.id === d.jumpId)?.name ?? d.jumpId) : null
   const ramPct = d.ram.total ? (d.ram.used / d.ram.total) * 100 : 0
@@ -652,6 +740,7 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
           )}
 
           <MetricChips device={d} />
+          {metricsErr && <p className="text-xs text-rose-400">Не удалось обновить метрики: {metricsErr}</p>}
 
           {(d.disk != null || d.uptime != null) && (
             <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-card/50 p-3 text-xs">
@@ -678,9 +767,9 @@ export function OverviewPane({ device: d }: { device: DeviceDTO }): React.JSX.El
             </div>
           )}
 
-          <HardwareSection device={d} />
+          <HardwareSection key={`hardware:${d.id}`} device={d} />
 
-          {d.altOs.length > 0 ? <DualBootSection device={d} /> : <PowerSection device={d} />}
+          {d.altOs.length > 0 ? <DualBootSection key={`dual:${d.id}`} device={d} /> : <PowerSection key={`power:${d.id}`} device={d} />}
         </>
       ) : (
         // Паспорт-устройство: показываем то, что осмысленно, без SSH-полей и метрик.

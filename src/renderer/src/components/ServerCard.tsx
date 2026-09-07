@@ -245,11 +245,12 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
                 </>
               )}
               <button
-                onClick={async () => {
+                onClick={() => {
                   setMenu(false)
                   if (!window.confirm(`Удалить «${s.name}»? Отменить будет нельзя.`)) return
-                  const r = await remove(s.id)
-                  if (!r.ok) window.alert(`Не удалось удалить: ${r.error ?? 'неизвестная ошибка'}`)
+                  void remove(s.id).then((r) => {
+                    if (!r.ok) window.alert(`Не удалось удалить: ${r.error ?? 'неизвестная ошибка'}`)
+                  }).catch(() => window.alert('Не удалось удалить устройство'))
                 }}
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-rose-400 hover:bg-rose-500/10"
               >

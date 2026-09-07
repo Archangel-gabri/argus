@@ -137,7 +137,11 @@ export const useDevices = create<DevicesStore>((set, get) => ({
       }),
       loaded: true
     })
-    void get().refreshLiveness()
+    try {
+      await get().refreshLiveness()
+    } catch {
+      set({ error: 'Не удалось проверить доступность устройств' })
+    }
   },
 
   create: async (input) => {

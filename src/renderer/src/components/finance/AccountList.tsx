@@ -281,12 +281,32 @@ function CredsForm({
   const [secret, setSecret] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const needsPassphrase = /okx/i.test(`${account.institution} ${account.name}`)
   // У Т-Инвестиций один токен и никакого секрета: показывать пустые поля «Secret» и
   // «Passphrase» рядом с ним значит спрашивать то, чего не существует.
   const tokenOnly = account.kind === 'broker'
   const field =
     'w-full rounded border border-border bg-bg/60 px-2 py-1 text-xs text-slate-200 outline-none focus:border-accent/40'
+
+  const save = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const ok = await onSave(account.id, {
+        apiKey: apiKey.trim(),
+        // У токена секрета нет: подпись не строится, ключ передаётся как есть.
+        secret: tokenOnly ? apiKey.trim() : secret.trim(),
+        passphrase: !tokenOnly && needsPassphrase ? passphrase.trim() : undefined
+      })
+      if (ok) onClose()
+    } catch {
+      setError('Не удалось сохранить ключи')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="mb-2 rounded-lg border border-border bg-card/40 p-3">
@@ -311,23 +331,11 @@ function CredsForm({
           <input className={field} type="password" placeholder="Passphrase" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} aria-label="Passphrase" />
         )}
       </div>
+      {error && <p role="alert" className="mt-2 text-xs text-rose-400">{error}</p>}
       <div className="mt-2 flex items-center gap-2">
         <button
           disabled={busy || !apiKey.trim() || (!tokenOnly && (!secret.trim() || (needsPassphrase && !passphrase.trim())))}
-          onClick={async () => {
-            setBusy(true)
-            try {
-              const ok = await onSave(account.id, {
-                apiKey: apiKey.trim(),
-                // У токена секрета нет: подпись не строится, ключ передаётся как есть.
-                secret: tokenOnly ? apiKey.trim() : secret.trim(),
-                passphrase: !tokenOnly && needsPassphrase ? passphrase.trim() : undefined
-              })
-              if (ok) onClose()
-            } finally {
-              setBusy(false)
-            }
-          }}
+          onClick={() => void save()}
           className="rounded bg-accent px-2.5 py-1 text-xs font-medium text-bg disabled:opacity-40"
         >
           {busy ? 'Проверяю…' : 'Сохранить и спросить остаток'}

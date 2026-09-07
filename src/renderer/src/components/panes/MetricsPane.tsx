@@ -193,11 +193,16 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
 
   // История (снапшоты поллинга) — нижний график CPU/RAM.
   const [rows, setRows] = useState<MetricSnapshot[]>([])
+  const [historyError, setHistoryError] = useState<string | null>(null)
   useEffect(() => {
     let alive = true
+    setRows([])
+    setHistoryError(null)
     if (!api) return
     api.metrics.history(device.id, 200).then((r) => {
       if (alive) setRows(r)
+    }).catch(() => {
+      if (alive) setHistoryError('Не удалось загрузить историю метрик')
     })
     return () => {
       alive = false
@@ -316,6 +321,7 @@ export function MetricsPane({ device }: { device: DeviceDTO }): React.JSX.Elemen
         </div>
       )}
 
+      {historyError && <p role="alert" className="text-xs text-rose-400">{historyError}</p>}
       {hist.length >= 2 && (
         <div className="rounded-lg border border-border bg-surface/40 p-3">
           <div className="mb-2 flex items-center gap-4 text-[11px] text-slate-400">

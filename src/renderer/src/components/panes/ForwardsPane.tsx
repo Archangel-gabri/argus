@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Plus, Loader2, Trash2, ArrowRight, ArrowRightLeft, RefreshCw, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { browserUrlForForward, forwardedRemotePorts, isForwardPort } from '@/lib/forward-policy'
@@ -30,45 +30,79 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
   const [rport, setRport] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [listErr, setListErr] = useState<string | null>(null)
 
   const [ports, setPorts] = useState<ListeningPort[]>([])
   const [portsErr, setPortsErr] = useState<string | null>(null)
   const [portsLoading, setPortsLoading] = useState(false)
+  // Invalidate pending replies on device change/unmount, including StrictMode effect replay.
+  const generation = useRef(0)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const refresh = async (): Promise<void> => {
+  const refresh = useCallback(async (): Promise<void> => {
     if (!api) return
-    setList(await api.forward.list(device.id))
-  }
-  const loadPorts = async (): Promise<void> => {
+    const request = generation.current
+    try {
+      const result = await api.forward.list(device.id)
+      if (request !== generation.current) return
+      setList(result)
+      setListErr(null)
+    } catch (e) {
+      if (request === generation.current) setListErr(e instanceof Error ? e.message : 'не удалось получить туннели')
+    }
+  }, [device.id])
+  const loadPorts = useCallback(async (): Promise<void> => {
     if (!api) return
+    const request = generation.current
     setPortsLoading(true)
     setPortsErr(null)
-    const r = await api.ports.list(device.id)
-    setPortsLoading(false)
-    if (r.ok) setPorts(r.ports)
-    else {
-      setPorts([])
-      setPortsErr(r.error ?? 'не удалось получить список')
+    try {
+      const r = await api.ports.list(device.id)
+      if (request !== generation.current) return
+      if (r.ok) setPorts(r.ports)
+      else {
+        setPorts([])
+        setPortsErr(r.error ?? 'не удалось получить список')
+      }
+    } catch (e) {
+      if (request === generation.current) setPortsErr(e instanceof Error ? e.message : 'не удалось получить список')
+    } finally {
+      if (request === generation.current) setPortsLoading(false)
     }
-  }
+  }, [device.id])
 
   useEffect(() => {
-    refresh()
-    loadPorts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [device.id])
+    setList([])
+    setPorts([])
+    setListErr(null)
+    setError(null)
+    setBusy(false)
+    void refresh() // refresh/loadPorts handle IPC rejection before returning.
+    void loadPorts()
+    return () => {
+      generation.current += 1
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current)
+    }
+  }, [refresh, loadPorts])
 
   const usedLocalPorts = new Set(list.map((f) => f.localPort))
   const activeRemotePorts = forwardedRemotePorts(list)
 
   const openTunnel = async (localPort: number, remotePort: number): Promise<void> => {
     if (!api) return
+    const request = generation.current
     setBusy(true)
     setError(null)
-    const r = await api.forward.open(device.id, localPort, '127.0.0.1', remotePort)
-    setBusy(false)
-    if (!r.ok) setError(r.error ?? 'не удалось открыть туннель')
-    refresh()
+    try {
+      const r = await api.forward.open(device.id, localPort, '127.0.0.1', remotePort)
+      if (request !== generation.current) return
+      if (!r.ok) setError(r.error ?? 'не удалось открыть туннель')
+      await refresh()
+    } catch (e) {
+      if (request === generation.current) setError(e instanceof Error ? e.message : 'не удалось открыть туннель')
+    } finally {
+      if (request === generation.current) setBusy(false)
+    }
   }
 
   const add = async (): Promise<void> => {
@@ -79,22 +113,35 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
       return
     }
     if (!api) return
+    const request = generation.current
     setBusy(true)
     setError(null)
-    const r = await api.forward.open(device.id, lp, rhost.trim() || '127.0.0.1', rp)
-    setBusy(false)
-    if (!r.ok) {
-      setError(r.error ?? 'не удалось')
-      return
+    try {
+      const r = await api.forward.open(device.id, lp, rhost.trim() || '127.0.0.1', rp)
+      if (request !== generation.current) return
+      if (!r.ok) {
+        setError(r.error ?? 'не удалось')
+        return
+      }
+      setLport('')
+      setRport('')
+      await refresh()
+    } catch (e) {
+      if (request === generation.current) setError(e instanceof Error ? e.message : 'не удалось открыть туннель')
+    } finally {
+      if (request === generation.current) setBusy(false)
     }
-    setLport('')
-    setRport('')
-    refresh()
   }
   const stop = (id: string): void => {
     if (!api) return
-    api.forward.close(id)
-    setTimeout(refresh, 120)
+    try {
+      // close is a fire-and-forget IPC send, not a promise/close acknowledgement.
+      api.forward.close(id)
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current)
+      closeTimer.current = setTimeout(() => { void refresh() }, 120)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'не удалось отправить закрытие туннеля')
+    }
   }
 
   return (
@@ -104,7 +151,8 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[11px] uppercase tracking-wide text-slate-500">Слушают на сервере</span>
           <button
-            onClick={loadPorts}
+            onClick={() => { void loadPorts() }}
+            disabled={portsLoading}
             className="rounded-md p-1 text-slate-400 hover:bg-white/5 hover:text-slate-200"
             title="Обновить"
           >
@@ -138,7 +186,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
                       <span className="shrink-0 text-[10px] font-medium text-accent">открыт</span>
                     ) : (
                       <button
-                        onClick={() => openTunnel(p.port, p.port)}
+                        onClick={() => { void openTunnel(p.port, p.port) }}
                         disabled={busy}
                         className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-slate-300 opacity-0 ring-1 ring-border transition hover:bg-white/5 group-hover:opacity-100 disabled:opacity-40"
                         title={`Туннель localhost:${p.port} → сервер`}
@@ -156,7 +204,9 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
       {/* ── Активные туннели ── */}
       <div className="rounded-lg border border-border bg-surface/40 p-3">
         <div className="mb-2 text-[11px] uppercase tracking-wide text-slate-500">Активные туннели</div>
-        {list.length === 0 ? (
+        {listErr ? (
+          <p className="py-1 text-center text-xs text-rose-400">{listErr}</p>
+        ) : list.length === 0 ? (
           <p className="py-1 text-center text-xs text-slate-400">Нет активных туннелей.</p>
         ) : (
           <ul className="space-y-1">
@@ -227,7 +277,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
             className="w-16 rounded border border-border bg-bg/60 px-2 py-1 text-slate-200 outline-none focus:border-accent/40"
           />
           <button
-            onClick={add}
+            onClick={() => { void add() }}
             disabled={busy}
             className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-bold text-bg hover:bg-accent-hover disabled:opacity-60"
           >
@@ -238,7 +288,7 @@ export function ForwardsPane({ device }: { device: DeviceDTO }): React.JSX.Eleme
           {PRESETS.map((p) => (
             <button
               key={p.port}
-              onClick={() => openTunnel(p.port, p.port)}
+              onClick={() => { void openTunnel(p.port, p.port) }}
               disabled={busy || usedLocalPorts.has(p.port)}
               className="rounded-full border border-border px-2.5 py-1 text-[11px] text-slate-300 transition hover:bg-white/5 disabled:opacity-40"
               title={`Туннель localhost:${p.port} → сервер:${p.port}`}

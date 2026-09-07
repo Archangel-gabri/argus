@@ -193,7 +193,8 @@ export function SubscriptionsView(): React.JSX.Element {
   const [editing, setEditing] = useState<Subscription | null>(null)
 
   useEffect(() => {
-    if (!loaded) loadSubs()
+    // load handles IPC rejection and publishes error in the store.
+    if (!loaded) void loadSubs()
   }, [loaded, loadSubs])
 
   // Устройство, за которое уже платит подписка, отдельной строкой НЕ показывается.

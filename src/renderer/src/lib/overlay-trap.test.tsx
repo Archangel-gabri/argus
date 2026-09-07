@@ -10,7 +10,8 @@ import userEvent from '@testing-library/user-event'
 import { useRef } from 'react'
 import { useOverlayA11y, resetOverlayStack } from './overlay'
 
-function Окно(): React.JSX.Element {
+// rules-of-hooks identifies component names by ASCII uppercase; the UI text stays Russian.
+function OverlayFixture(): React.JSX.Element {
   const box = useRef<HTMLDivElement>(null)
   useOverlayA11y({ open: true, onEscape: () => {}, containerRef: box })
   return (
@@ -30,7 +31,7 @@ describe('фокус в открытом окне', () => {
 
   it('с последнего элемента Tab возвращается на первый, а не уходит наружу', async () => {
     const user = userEvent.setup()
-    render(<Окно />)
+    render(<OverlayFixture />)
     screen.getByText('последняя').focus()
     await user.tab()
     expect(document.activeElement).toBe(screen.getByText('первая'))
@@ -38,7 +39,7 @@ describe('фокус в открытом окне', () => {
 
   it('Shift+Tab с первого элемента переходит на последний внутри окна', async () => {
     const user = userEvent.setup()
-    render(<Окно />)
+    render(<OverlayFixture />)
     screen.getByText('первая').focus()
     await user.tab({ shift: true })
     expect(document.activeElement).toBe(screen.getByText('последняя'))

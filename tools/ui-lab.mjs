@@ -16,7 +16,7 @@
 //   npm run ui:lab -- --keep    — не закрывать приложение (для ручного осмотра)
 
 import { _electron as electron } from 'playwright'
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

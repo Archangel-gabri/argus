@@ -202,7 +202,7 @@ function DeviceForm({
           </button>
         </div>
 
-        <form onSubmit={submit} className="max-h-[70vh] overflow-y-auto px-5 py-4">
+        <form onSubmit={(event) => void submit(event)} className="max-h-[70vh] overflow-y-auto px-5 py-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Имя" full hint="Как называть в списке.">
               <input ref={nameRef} className={inputCls} value={f.name} onChange={set('name')} placeholder="HubVPN · Tokyo" />
