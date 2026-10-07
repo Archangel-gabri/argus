@@ -47,24 +47,30 @@ const family = (osLabel: string): 'linux' | 'windows' => (/win/i.test(osLabel) ?
 // Отдельным вызовом, а не заменой `echo argus-ok`: тот же `isAlive` проверяет, ПОГАСЛА ли машина
 // после poweroff, и команда, которой на Windows нет, соврала бы там «погасла».
 const famCache = new Map<string, 'linux' | 'windows'>()
+
+/** Семейство ОС по ответу машины; `null` — ответ не прочитан (связи не было), а не догадка. */
+async function probeFamily(conn: OsEndpoint['conn']): Promise<'linux' | 'windows' | null> {
+  const r = await execOnConn(conn, 'uname -s', 8000, 8000)
+  const text = `${r.output}\n${r.error ?? ''}`
+  // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
+  // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
+  if (/linux|darwin|bsd|sunos|aix/i.test(text)) return 'linux'
+  if (/not recognized|not found|CommandNotFound|не является|не найден/i.test(text)) return 'windows'
+  return null
+}
+
 async function resolveFamily(ep: OsEndpoint): Promise<'linux' | 'windows'> {
   if (ep.os.trim()) return family(ep.os)
   const key = `${ep.conn.host}:${ep.conn.port}`
   const hit = famCache.get(key)
   if (hit) return hit
-  const r = await execOnConn(ep.conn, 'uname -s', 8000, 8000)
-  const text = `${r.output}\n${r.error ?? ''}`
-  // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
-  // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
-  const sawPosix = /linux|darwin|bsd|sunos|aix/i.test(text)
-  const sawWindowsShell = /not recognized|not found|CommandNotFound|не является|не найден/i.test(text)
-  const fam: 'linux' | 'windows' = sawPosix ? 'linux' : sawWindowsShell ? 'windows' : 'linux'
+  const measured = await probeFamily(ep.conn)
   // Кэшируем ТОЛЬКО измеренное. Ветка «ничего не поняли → linux» — это догадка по умолчанию,
   // и она возникает ровно тогда, когда связи не было вовсе. Раньше такая догадка ложилась в
   // кэш бессрочно: одна неудачная попытка навсегда назначала Windows-машине Linux-семейство,
   // после чего к ней уходил Linux-зонд, а починить это можно было только перезапуском.
-  if (sawPosix || sawWindowsShell) famCache.set(key, fam)
-  return fam
+  if (measured) famCache.set(key, measured)
+  return measured ?? 'linux'
 }
 
 /**
@@ -118,7 +124,31 @@ function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
  *  выключенная половина съедала весь 8-секундный SSH-таймаут, и опрос ПК стоил 9.4с, упирая в себя
  *  весь параллельный проход по парку. Стало: дешёвый TCP-отсев (~200мс) + гонка за первым живым. */
 async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
-  const eps = getOsEndpoints(deviceId)
+  // Одинаковый адрес у двух ОС — обычное дело на двухзагрузочной машине с одной сетевой картой.
+  // Различить их по достижимости нельзя: оба подключения физически одно и то же, и «какая ОС
+  // сейчас запущена» решалось гонкой. Склеиваем такие эндпоинты, а ОС спрашиваем у машины.
+  // Пользователь входит в разные ОС под разными учётными записями — это разные подключения.
+  const groups = new Map<string, OsEndpoint[]>()
+  const addrKey = (e: OsEndpoint): string => `${e.conn.host}:${e.conn.port}:${e.conn.user}`
+  for (const e of getOsEndpoints(deviceId)) groups.set(addrKey(e), [...(groups.get(addrKey(e)) ?? []), e])
+  const live = await liveAmong([...groups.values()].map((g) => g[0]))
+  if (!live) return null
+  const group = groups.get(addrKey(live)) ?? []
+  return group.length > 1 ? settleShared(group) : live
+}
+
+/** Эндпоинты с общим адресом: живая ОС — та, что назвала себя, а не та, чья метка первая. */
+async function settleShared(group: OsEndpoint[]): Promise<LiveEp | null> {
+  // Без кэша: после перезагрузки по этому же адресу отвечает другая ОС.
+  const fam = await probeFamily(group[0].conn)
+  // Не поняли ответ — не гадаем по метке: промах будет засчитан как «не знаю», а не как ОС.
+  if (!fam) return null
+  const match = group.find((e) => family(e.os) === fam)
+  // Метки ни одной нужной ОС нет: отдаём измеренное семейство и не приписываем чужую метку.
+  return match ? { ...match, family: fam } : { ...group[0], os: '', bootEntry: undefined, family: fam }
+}
+
+async function liveAmong(eps: OsEndpoint[]): Promise<LiveEp | null> {
   if (!eps.length) return null
   if (eps.length === 1) return firstAlive(eps)
 
