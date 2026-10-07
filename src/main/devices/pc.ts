@@ -51,9 +51,11 @@ const famCache = new Map<string, 'linux' | 'windows'>()
 /** Семейство ОС по ответу машины; `null` — ответ не прочитан (связи не было), а не догадка. */
 async function probeFamily(conn: OsEndpoint['conn']): Promise<'linux' | 'windows' | null> {
   const r = await execOnConn(conn, 'uname -s', 8000, 8000)
-  const text = `${r.output}\n${r.error ?? ''}`
+  // Свидетель — только вывод команды (stderr входит в него): ошибка подключения («host not found»,
+  // отказ входа) ответом машины не является и за Windows приниматься не должна.
+  const text = r.output
   // uname есть в любой POSIX-системе. Если вместо имени системы пришло «команда не найдена» —
-  // мы не на POSIX. Текст ошибки тут такой же ответ, как и удачный вывод.
+  // мы не на POSIX.
   if (/linux|darwin|bsd|sunos|aix/i.test(text)) return 'linux'
   if (/not recognized|not found|CommandNotFound|не является|не найден/i.test(text)) return 'windows'
   return null
@@ -100,20 +102,83 @@ interface LiveEp extends OsEndpoint {
   family: 'linux' | 'windows'
 }
 
-/** Гонка: отдаём ПЕРВЫЙ ответивший эндпоинт, не дожидаясь таймаута остальных. */
-function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
+/** Машина отвечает, но какая ОС запущена — не выяснено. Это не «выключена» и не повод гадать по метке. */
+interface UnknownLive {
+  family: 'unknown'
+}
+const UNKNOWN: UnknownLive = { family: 'unknown' }
+
+/** `null` — не отвечает ни один эндпоинт. */
+type Live = LiveEp | UnknownLive | null
+
+const addrOf = (e: OsEndpoint): string => `${e.conn.host}:${e.conn.port}`
+
+/** Эндпоинт, ответивший на `echo`: ОС по метке (или, если метка пуста, по ответу машины). */
+async function aliveSingle(ep: OsEndpoint): Promise<LiveEp | null> {
+  return (await isConnAlive(ep.conn)) ? { ...ep, family: await resolveFamily(ep) } : null
+}
+
+/**
+ * Эндпоинты с общим host:port — это одна сетевая карта двухзагрузочной машины, и по достижимости
+ * их не различить. Пользователь у ОС может быть разный (на Windows и Linux обычно разные
+ * учётные записи), поэтому группа складывается только по адресу, а ОС спрашивается у самой
+ * машины: каждый эндпоинт пробует войти СВОИМИ учётными данными и назвать систему.
+ *
+ * Вернётся тот эндпоинт, под которым вошли и чья метка совпала с ответом машины, — его `conn`
+ * (пользователь) и годится для дальнейших команд. Кэша нет: после перезагрузки по этому же
+ * адресу отвечает другая ОС.
+ */
+async function settleShared(group: OsEndpoint[]): Promise<LiveEp | UnknownLive | null> {
+  const probes = await Promise.all(
+    group.map(async (ep) => {
+      try {
+        if (!(await isConnAlive(ep.conn))) return null
+        return { ep, fam: await probeFamily(ep.conn) }
+      } catch {
+        return null // эндпоинт, до которого не дошли (чужой пользователь, отказ), — не свидетель
+      }
+    })
+  )
+  const reached = probes.filter((p) => p !== null)
+  if (!reached.length) return null
+  famCache.delete(addrOf(group[0])) // догадка по умолчанию для этого адреса больше не нужна
+  const measured = reached.filter((p) => p.fam !== null)
+  // Вошли, но ответ не разобран: машина жива, ОС неизвестна. Метку первого эндпоинта не берём.
+  if (!measured.length) return UNKNOWN
+  const labelFam = (e: OsEndpoint): 'linux' | 'windows' | null => (e.os.trim() ? family(e.os) : null)
+  const pick =
+    measured.find((p) => labelFam(p.ep) === p.fam) ?? measured.find((p) => labelFam(p.ep) === null)
+  if (pick?.fam) return { ...pick.ep, family: pick.fam }
+  // Метки ни одной нужной ОС нет: измеренное семейство и рабочее подключение, чужая метка не приписывается.
+  const first = measured[0]
+  return first.fam ? { ...first.ep, os: '', bootEntry: undefined, family: first.fam } : UNKNOWN
+}
+
+/** Одна группа эндпоинтов → живой эндпоинт. `confirmed` — отсев по SSH-баннеру уже указал на неё. */
+async function resolveGroup(group: OsEndpoint[], confirmed: boolean): Promise<Live> {
+  if (group.length > 1) return settleShared(group)
+  const [ep] = group
+  return confirmed ? { ...ep, family: await resolveFamily(ep) } : aliveSingle(ep)
+}
+
+/** Гонка групп: первая, давшая определённую ОС, не дожидаясь таймаута остальных. */
+function firstLive(groups: OsEndpoint[][]): Promise<Live> {
   return new Promise((resolve) => {
-    let pending = eps.length
-    if (!pending) return resolve(null)
-    for (const ep of eps) {
-      void isConnAlive(ep.conn)
-        .then(async (ok) => {
-          if (ok) resolve({ ...ep, family: await resolveFamily(ep) })
-          else if (--pending === 0) resolve(null)
+    let pending = groups.length
+    let unknown = false
+    const settle = (): void => {
+      if (--pending === 0) resolve(unknown ? UNKNOWN : null)
+    }
+    for (const g of groups) {
+      void resolveGroup(g, false)
+        .then((r) => {
+          if (r && r.family !== 'unknown') resolve(r)
+          else {
+            unknown ||= r !== null
+            settle()
+          }
         })
-        .catch(() => {
-          if (--pending === 0) resolve(null)
-        })
+        .catch(settle)
     }
   })
 }
@@ -123,47 +188,30 @@ function firstAlive(eps: OsEndpoint[]): Promise<LiveEp | null> {
  *  Было: Promise.all по ВСЕМ эндпоинтам — значит ждали самый медленный. У двухзагрузочного ПК
  *  выключенная половина съедала весь 8-секундный SSH-таймаут, и опрос ПК стоил 9.4с, упирая в себя
  *  весь параллельный проход по парку. Стало: дешёвый TCP-отсев (~200мс) + гонка за первым живым. */
-async function liveEndpoint(deviceId: string): Promise<LiveEp | null> {
-  // Одинаковый адрес у двух ОС — обычное дело на двухзагрузочной машине с одной сетевой картой.
-  // Различить их по достижимости нельзя: оба подключения физически одно и то же, и «какая ОС
-  // сейчас запущена» решалось гонкой. Склеиваем такие эндпоинты, а ОС спрашиваем у машины.
-  // Пользователь входит в разные ОС под разными учётными записями — это разные подключения.
+async function liveEndpoint(deviceId: string): Promise<Live> {
   const groups = new Map<string, OsEndpoint[]>()
-  const addrKey = (e: OsEndpoint): string => `${e.conn.host}:${e.conn.port}:${e.conn.user}`
-  for (const e of getOsEndpoints(deviceId)) groups.set(addrKey(e), [...(groups.get(addrKey(e)) ?? []), e])
-  const live = await liveAmong([...groups.values()].map((g) => g[0]))
-  if (!live) return null
-  const group = groups.get(addrKey(live)) ?? []
-  return group.length > 1 ? settleShared(group) : live
+  for (const e of getOsEndpoints(deviceId)) groups.set(addrOf(e), [...(groups.get(addrOf(e)) ?? []), e])
+  return liveAmong([...groups.values()])
 }
 
-/** Эндпоинты с общим адресом: живая ОС — та, что назвала себя, а не та, чья метка первая. */
-async function settleShared(group: OsEndpoint[]): Promise<LiveEp | null> {
-  // Без кэша: после перезагрузки по этому же адресу отвечает другая ОС.
-  const fam = await probeFamily(group[0].conn)
-  // Не поняли ответ — не гадаем по метке: промах будет засчитан как «не знаю», а не как ОС.
-  if (!fam) return null
-  const match = group.find((e) => family(e.os) === fam)
-  // Метки ни одной нужной ОС нет: отдаём измеренное семейство и не приписываем чужую метку.
-  return match ? { ...match, family: fam } : { ...group[0], os: '', bootEntry: undefined, family: fam }
-}
-
-async function liveAmong(eps: OsEndpoint[]): Promise<LiveEp | null> {
-  if (!eps.length) return null
-  if (eps.length === 1) return firstAlive(eps)
+async function liveAmong(groups: OsEndpoint[][]): Promise<Live> {
+  if (!groups.length) return null
+  if (groups.length === 1) return resolveGroup(groups[0], false)
 
   // Хост за бастионом напрямую недостижим ПО ОПРЕДЕЛЕНИЮ: прямая TCP-проба всегда промахнётся
   // и отсеет живой эндпоинт. `liveness.ts` от этого уже защищается явной оговоркой, а здесь
   // защиты не было — двухзагрузочный ПК за бастионом отбраковывался целиком.
-  if (eps.some((e) => e.conn.jump)) return firstAlive(eps)
+  if (groups.some((g) => g.some((e) => e.conn.jump))) return firstLive(groups)
 
-  const reach = await Promise.all(eps.map(async (ep) => ({ ep, r: await tcpAlive(ep.conn.host, ep.conn.port, 2500) })))
-  const open = reach.filter((x) => x.r.status === 'online').map((x) => x.ep)
-  // Ровно один эндпоинт отдал SSH-баннер — этого достаточно: одновременно две ОС на одной
-  // железке не работают. Второе SSH-подключение ради `echo` стоило бы ещё ~2с на ровном месте.
-  if (open.length === 1) return { ...open[0], family: await resolveFamily(open[0]) }
+  const reach = await Promise.all(
+    groups.map(async (group) => ({ group, r: await tcpAlive(group[0].conn.host, group[0].conn.port, 2500) }))
+  )
+  const open = reach.filter((x) => x.r.status === 'online').map((x) => x.group)
+  // Ровно один адрес отдал SSH-баннер — этого достаточно: одновременно две ОС на разных адресах
+  // не работают. Второе SSH-подключение ради `echo` стоило бы ещё ~2с на ровном месте.
+  if (open.length === 1) return resolveGroup(open[0], true)
   // Никто не ответил (фаервол/нестандартный порт) или ответили несколько — проверяем по-честному.
-  return firstAlive(open.length ? open : eps)
+  return firstLive(open.length ? open : groups)
 }
 
 /**
@@ -177,6 +225,9 @@ async function liveAmong(eps: OsEndpoint[]): Promise<LiveEp | null> {
 export function whichOs(deviceId: string): Promise<{ current: string; family: OsFamily }> {
   return singleFlight(`whichOs:${deviceId}`, async () => {
     const r = await whichOsNow(deviceId)
+    // Машина отвечает, но ОС не определена: это не наблюдение «выключена» и не «работает»,
+    // серию промахов не трогаем.
+    if (r.family === 'unknown') return r
     const status = trackedReach('pc-os', deviceId, r.family === 'off' ? 'offline' : 'online')
     // «Не знаю» не выдаём за «выключено»: пустая метка ОС читается интерфейсом как offline,
     // поэтому на неподтверждённом промахе оставляем прежнюю неопределённость.
@@ -186,6 +237,7 @@ export function whichOs(deviceId: string): Promise<{ current: string; family: Os
 
 async function whichOsNow(deviceId: string): Promise<{ current: string; family: OsFamily }> {
   const ep = await liveEndpoint(deviceId)
+  if (ep?.family === 'unknown') return { current: '', family: 'unknown' }
   return ep ? { current: ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux'), family: ep.family } : { current: '', family: 'off' }
 }
 
@@ -370,6 +422,7 @@ function parseWinMetrics(out: string): { cpu?: number; ramUsed?: number; ramTota
 export function metrics(deviceId: string): Promise<PcMetrics> {
   return singleFlight(`pcMetrics:${deviceId}`, async () => {
     const r = await metricsNow(deviceId)
+    if (r.family === 'unknown') return { ...r, status: 'unknown' as const }
     return { ...r, status: trackedReach('pc-metrics', deviceId, r.family === 'off' ? 'offline' : 'online') }
   })
 }
@@ -377,6 +430,7 @@ export function metrics(deviceId: string): Promise<PcMetrics> {
 async function metricsNow(deviceId: string): Promise<PcMetrics> {
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { current: '', family: 'off' }
+  if (ep.family === 'unknown') return { current: '', family: 'unknown' }
   const label = ep.os || (ep.family === 'windows' ? 'Windows' : 'Linux')
   if (ep.family === 'windows') {
     const r = await execOnConn(ep.conn, WIN_METRICS_V2, 15000, 30000)
@@ -537,14 +591,18 @@ const isDropped = (err: string | undefined): boolean =>
  *  Замерено на живом стенде: канал до дальней ноды флапает примерно в одном случае из шести, и
  *  ОДНА неудачная проверка молча превращала команду питания в отказ «не в сети» — при полностью
  *  живом сервере. Команда просто не выполнялась, а пользователь видел враньё. */
-async function liveEndpointRetry(deviceId: string, attempts = 3): Promise<LiveEp | null> {
+async function liveEndpointRetry(deviceId: string, attempts = 3): Promise<Live> {
+  let last: Live = null
   for (let i = 0; i < attempts; i++) {
     const ep = await liveEndpoint(deviceId)
-    if (ep) return ep
+    if (ep && ep.family !== 'unknown') return ep
+    last = ep ?? last // «ОС не определена» не затирается последующим молчанием канала
     if (i < attempts - 1) await delay(1200)
   }
-  return null
+  return last
 }
+
+const OS_UNKNOWN_ERROR = 'машина отвечает, но запущенная ОС не определена — попробуй ещё раз'
 
 export async function power(
   deviceId: string,
@@ -558,6 +616,8 @@ export async function power(
       phase: 'no-endpoint',
       error: 'не отвечает ни одна ОС (проверено 3 раза) — устройство выключено или канал недоступен'
     }
+  // Команда питания у Linux и Windows разная: на неопределённую ОС наугад её не шлём.
+  if (ep.family === 'unknown') return { ok: false, os: '', phase: 'unreachable', error: OS_UNKNOWN_ERROR }
   const cmd = CMD[ep.family][action]
   // Оба таймаута: третий аргумент ограничивает только рукопожатие, и без четвёртого зависшая
   // команда питания держала бы интерфейс до общего потолка в 90 секунд.
@@ -629,6 +689,7 @@ const DIAG_WIN =
 export async function powerDiag(deviceId: string): Promise<PowerDiag> {
   const ep = await liveEndpointRetry(deviceId)
   if (!ep) return { ok: false, os: '', text: 'не отвечает ни одна ОС (проверено 3 раза)' }
+  if (ep.family === 'unknown') return { ok: false, os: '', text: OS_UNKNOWN_ERROR }
   const r = await execOnConn(ep.conn, ep.family === 'windows' ? DIAG_WIN : DIAG_LINUX, 12000, 30000)
   return { ok: r.ok, os: ep.os, text: (r.output || r.error || 'нет вывода').slice(0, 1500) }
 }
@@ -653,6 +714,7 @@ export async function bootEntries(
 ): Promise<{ ok: boolean; os: string; entries: BootEntry[]; error?: string }> {
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { ok: false, os: '', entries: [], error: 'машина не в сети' }
+  if (ep.family === 'unknown') return { ok: false, os: '', entries: [], error: OS_UNKNOWN_ERROR }
   if (ep.family === 'linux') {
     const r = await execOnConn(ep.conn, 'efibootmgr -v 2>/dev/null || sudo -n efibootmgr -v 2>/dev/null', 10000, 20000)
     const result = bootEntryListResult(r.ok, r.output, parseEfibootmgr(r.output), r.error)
@@ -730,6 +792,7 @@ export async function boot(
 ): Promise<{ ok: boolean; os: string; output?: string; error?: string }> {
   const ep = await liveEndpoint(deviceId)
   if (!ep) return { ok: false, os: '', error: 'ПК не в сети — сначала разбуди (WoL)' }
+  if (ep.family === 'unknown') return { ok: false, os: '', error: OS_UNKNOWN_ERROR }
   if ((ep.os || '') === targetOs) return { ok: true, os: ep.os, output: `Уже в ${targetOs}` }
 
   const target = getOsEndpoints(deviceId).find((e) => e.os === targetOs)
