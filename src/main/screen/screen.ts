@@ -237,6 +237,8 @@ const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Устройства, на которых RDP уже включали в этом запуске приложения (операция идемпотентная). */
 const rdpReady = new Set<string>()
+/** Оговорки последнего включения RDP: повторные открытия вердикт не пересчитывают, но не должны его терять. */
+const rdpWarnings = new Map<string, string[]>()
 
 /** Не кэшировать попытку: только exit=0 доказывает, что повторный enable можно пропустить. */
 export function rememberRdpEnableResult(
@@ -369,6 +371,8 @@ export interface ScreenStartResult {
   wsPort?: number
   token?: string
   error?: string
+  /** Оговорки по включению RDP (например, «порт открыт не только из tailnet») — для показа человеку. */
+  warnings?: string[]
 }
 
 export type AgentScreenDecision =
@@ -428,6 +432,7 @@ export async function screenStart(
             // не-прерывающий отказ по правам давал exit=0 и выглядел как успех.
             const result = rdpEnableOutcome(raw)
             rememberRdpEnableResult(rdpReady, deviceId, result)
+            if (result.ok) rdpWarnings.set(deviceId, result.warnings)
             return result
           })
           .catch((e: unknown) => ({ ok: false, output: '', error: e instanceof Error ? e.message : String(e) })),
@@ -461,7 +466,8 @@ export async function screenStart(
       }
     }
   })
-  return { ok: true, wsPort, token }
+  const warnings = rdpWarnings.get(deviceId)
+  return { ok: true, wsPort, token, ...(warnings?.length ? { warnings } : {}) }
 }
 
 // ── Сеансы в отдельных окнах ───────────────────────────────────────────────────────────────────
@@ -487,7 +493,7 @@ const deviceName = (deviceId: string): string =>
 export async function screenOpen(
   deviceId: string,
   opts: { password: string; remember?: boolean }
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warnings?: string[] }> {
   const accessTicket = beginAccess()
   if (!isUnlocked()) return { ok: false, error: 'Argus заблокирован' }
   // Второе окно на то же устройство открывать НЕЛЬЗЯ: Windows-клиент держит один сеанс, и
@@ -514,7 +520,7 @@ async function openScreenOnce(
   deviceId: string,
   opts: { password: string; remember?: boolean },
   accessTicket: number
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; warnings?: string[] }> {
   const existing = [...sessions.entries()].find(([, s]) => s.deviceId === deviceId)
   if (existing) {
     const w = BrowserWindow.fromId(existing[1].winId)
@@ -599,7 +605,8 @@ async function openScreenOnce(
   if (opts.remember && opts.password) pendingPasswords.set(deviceId, opts.password)
   else pendingPasswords.delete(deviceId)
 
-  return openWindow({ deviceId, mode: 'rdp', wsPort: r.wsPort, token: r.token })
+  const opened = openWindow({ deviceId, mode: 'rdp', wsPort: r.wsPort, token: r.token })
+  return opened.ok && r.warnings ? { ...opened, warnings: r.warnings } : opened
 }
 
 /**
@@ -677,6 +684,7 @@ export function closeAllScreens(): void {
   guacHttpServer = null
   guacPort = 0
   rdpReady.clear()
+  rdpWarnings.clear()
   // Пароль, набранный с галочкой «запомнить», но не подтверждённый рабочим столом, лежит в
   // памяти ОТКРЫТЫМ ТЕКСТОМ. Смысл границы блокировки — уронить секреты ДО закрытия базы;
   // без этой строки он переживал и блокировку, и удаление устройства, оставаясь в куче
