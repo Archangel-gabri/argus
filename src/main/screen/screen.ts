@@ -527,7 +527,10 @@ async function openScreenOnce(
     if (w && !w.isDestroyed()) {
       if (w.isMinimized()) w.restore()
       w.focus()
-      return { ok: true }
+      // Окно уже живо, включение RDP не повторялось: оговорки берём из памяти, иначе повторное
+      // нажатие «Экран» (интерфейс очищает их перед вызовом) их стирало бы.
+      const kept = existing[1].mode === 'rdp' ? rdpWarnings.get(deviceId) : undefined
+      return { ok: true, ...(kept?.length ? { warnings: kept } : {}) }
     }
     sessions.delete(existing[0])
   }
