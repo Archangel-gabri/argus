@@ -231,7 +231,7 @@ export interface ArgusApi {
     open: (
       deviceId: string,
       opts: { password: string; remember?: boolean }
-    ) => Promise<{ ok: boolean; error?: string }>
+    ) => Promise<{ ok: boolean; error?: string; warnings?: string[] }>
     forgetPassword: (deviceId: string) => Promise<{ ok: boolean }>
     /** Рабочий стол отрисовался: до этого введённый пароль в хранилище не попадает. */
     confirmPassword: (handle: string) => Promise<{ ok: boolean }>

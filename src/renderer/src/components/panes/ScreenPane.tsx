@@ -26,6 +26,8 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
   const [pfLoading, setPfLoading] = useState(false)
   const [opening, setOpening] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  /** Оговорки открытого сеанса (например, RDP доступен не только из tailnet): сеанс идёт, но молчать о них нельзя. */
+  const [openWarnings, setOpenWarnings] = useState<string[]>([])
   const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(true)
   const [agent, setAgent] = useState<AgentStatus | null>(null)
@@ -88,6 +90,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
     }
     setOpening(true)
     setErr(null)
+    setOpenWarnings([])
     const r = await api.screen.open(device.id, { password, remember: remember && !!password })
     setOpening(false)
     if (!r.ok) {
@@ -102,6 +105,7 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
     // по NLA: при опечатке интерфейс говорил «сохранён», а в хранилище не появлялось ничего.
     // Признак приходит из самого устройства (`hasScreenSecret`) после подтверждения рабочим
     // столом — до тех пор честнее сказать, что произойдёт, чем утверждать, что уже произошло.
+    setOpenWarnings(r.warnings ?? [])
     if (password && remember) setPendingSave(true)
     setPassword('') // пароль ушёл в main и больше в интерфейсе не нужен
   }
@@ -233,6 +237,15 @@ export function ScreenPane({ device }: { device: DeviceDTO }): React.JSX.Element
         )}
       </div>
       {err && <div className="text-xs text-rose-400">{err}</div>}
+      {openWarnings.map((w, i) => (
+        <div
+          key={i}
+          className="flex items-start gap-2 rounded-md bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200/90 ring-1 ring-amber-500/20"
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{w}</span>
+        </div>
+      ))}
 
       {/* Готовность ПК (preflight) */}
       <div className="rounded-lg border border-border bg-card/50 p-3">
