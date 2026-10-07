@@ -6,11 +6,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   execOnce: vi.fn(),
   resolveConn: vi.fn(),
-  whichOs: vi.fn()
+  whichOs: vi.fn(),
+  fromId: vi.fn(() => null as unknown),
+  createScreenWindow: vi.fn()
 }))
 
 vi.mock('electron', () => ({
-  BrowserWindow: { fromId: vi.fn(() => null) },
+  BrowserWindow: { fromId: mocks.fromId },
   screen: { getPrimaryDisplay: vi.fn(() => ({ workAreaSize: { width: 1920, height: 1080 } })) }
 }))
 vi.mock('guacamole-lite', () => ({ default: class GuacamoleLite {} }))
@@ -20,14 +22,14 @@ vi.mock('../devices/pc', () => ({
   osReachable: () => true,
   unreachableReason: () => 'недоступен'
 }))
-vi.mock('../windows', () => ({ createScreenWindow: vi.fn() }))
+vi.mock('../windows', () => ({ createScreenWindow: mocks.createScreenWindow }))
 vi.mock('../vault/vault', () => ({
   getScreenPassword: vi.fn(),
   setScreenPassword: vi.fn(),
   listDevices: vi.fn(() => []),
   isUnlocked: vi.fn(() => true)
 }))
-vi.mock('./agent', () => ({ agentEndpoint: vi.fn(), agentStatus: vi.fn() }))
+vi.mock('./agent', () => ({ agentEndpoint: vi.fn(async () => ({ ok: false })), agentStatus: vi.fn() }))
 vi.mock('../remote/session', () => ({ ensureScreenUnlocked: vi.fn() }))
 // guacd «жив»: сокет сразу сообщает о соединении, без настоящей сети и Docker.
 vi.mock('node:net', async () => {
@@ -50,7 +52,7 @@ vi.mock('node:http', async () => {
   return { default: { createServer }, createServer }
 })
 
-import { screenStart } from './screen'
+import { screenOpen, screenStart } from './screen'
 
 const rdpOutput = (wide: number): string =>
   ['ARGUS_RDP_DENY=0', 'ARGUS_RDP_NLA=1', 'ARGUS_RDP_RULE=1', `ARGUS_RDP_WIDE=${wide}`, 'ARGUS_RDP_DONE'].join('\n')
@@ -82,5 +84,34 @@ describe('screenStart: оговорки включения RDP', () => {
     const r = await screenStart('pc-clean', { password: 'x' })
     expect(r.ok).toBe(true)
     expect(r.warnings).toBeUndefined()
+  })
+})
+
+describe('screenOpen: оговорки на всех путях открытия', () => {
+  const win = { id: 7, on: vi.fn(), isDestroyed: () => false, isMinimized: () => false, restore: vi.fn(), focus: vi.fn() }
+  let closeWindow: () => void
+
+  beforeEach(() => {
+    mocks.whichOs.mockResolvedValue({ current: 'Windows', family: 'windows' })
+    mocks.resolveConn.mockResolvedValue({ host: '100.64.0.7', user: 'vadim' })
+    mocks.execOnce.mockResolvedValue({ ok: true, output: rdpOutput(2) })
+    win.on.mockImplementation((_e: string, cb: () => void) => (closeWindow = cb))
+    mocks.createScreenWindow.mockReturnValue(win)
+    mocks.fromId.mockReturnValue(win)
+  })
+
+  it('повторный screenOpen при живом окне возвращает те же оговорки, а не пустой ответ', async () => {
+    const first = await screenOpen('pc-open', { password: 'x' })
+    expect(first.warnings?.join(' ')).toMatch(/2 широких правил/)
+    const second = await screenOpen('pc-open', { password: 'x' })
+    expect(mocks.createScreenWindow).toHaveBeenCalledTimes(1)
+    expect(second).toEqual(first)
+  })
+
+  it('после закрытия окна новое открытие снова возвращает оговорки', async () => {
+    const first = await screenOpen('pc-reopen', { password: 'x' })
+    closeWindow()
+    const again = await screenOpen('pc-reopen', { password: 'x' })
+    expect(again.warnings).toEqual(first.warnings)
   })
 })
