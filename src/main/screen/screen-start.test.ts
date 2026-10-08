@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   execOnce: vi.fn(),
   resolveConn: vi.fn(),
   whichOs: vi.fn(),
-  fromId: vi.fn(() => null as unknown),
+  fromId: vi.fn((): unknown => null),
   createScreenWindow: vi.fn()
 }))
 
