@@ -2,7 +2,7 @@
 // Живой машины нет, поэтому сеть и SSH подставные, но устроены как настоящая машина: одна
 // запущенная ОС, у неё свой пользователь; чужой пользователь войти не может; `uname` на Windows
 // отвечает «не распознано». Тест воспроизводит то, что видел бы Argus при одинаковом адресе у двух ОС.
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { OsEndpoint } from '../vault/vault'
 
 interface Call {
@@ -20,6 +20,8 @@ interface State {
   users: { linux: string | null; windows: string | null }
   uname: 'normal' | 'timeout' | 'garbage'
   calls: { user: string; cmd: string }[]
+  /** Неудачные входы: машина ответила, но не пустила пользователя (за них sshd штрафует адрес). */
+  denied: number
 }
 
 const m = vi.hoisted(
@@ -29,24 +31,32 @@ const m = vi.hoisted(
     upHosts: null,
     users: { linux: 'linux-user', windows: 'windows-user' },
     uname: 'normal',
-    calls: []
+    calls: [],
+    denied: 0
   })
 )
 
 vi.mock('../vault/vault', () => ({ getOsEndpoints: () => m.endpoints, getDeviceMac: () => null }))
 vi.mock('./liveness', () => ({ tcpAlive: async () => ({ status: 'online', ms: 1 }) }))
 vi.mock('../remote/ssh', () => {
-  const login = (c: { host: string; user: string }): boolean => {
-    if (!m.booted) return false
-    if (m.upHosts && !m.upHosts.includes(c.host)) return false
+  const DENIED = { ok: false, output: '', error: 'All configured authentication methods failed' }
+  const DOWN = { ok: false, output: '', error: 'connect ECONNREFUSED' }
+  /** null — вошли; иначе ответ отказа. Отказ во входе считается: это и есть «неудачный вход». */
+  const login = (c: { host: string; user: string }): typeof DENIED | null => {
+    if (!m.booted) return DOWN
+    if (m.upHosts && !m.upHosts.includes(c.host)) return DOWN
     const allowed = m.users[m.booted]
-    return allowed === null || allowed === c.user
+    if (allowed === null || allowed === c.user) return null
+    m.denied++
+    return DENIED
   }
   return {
-    isConnAlive: async (c: { host: string; user: string }) => login(c),
+    isConnAlive: async (c: { host: string; user: string }) => login(c) === null,
     execOnConn: async (c: { host: string; user: string }, cmd: string) => {
       m.calls.push({ user: c.user, cmd })
-      if (!login(c)) return { ok: false, output: '', error: 'All configured authentication methods failed' }
+      const refused = login(c)
+      if (refused) return refused
+      if (cmd === 'echo argus-ok') return { ok: true, output: 'argus-ok' }
       if (cmd === 'uname -s') {
         if (m.uname === 'timeout') return { ok: false, output: '', error: 'команда не ответила за 8с' }
         if (m.uname === 'garbage') return { ok: true, output: 'что-то непонятное' }
@@ -59,7 +69,7 @@ vi.mock('../remote/ssh', () => {
   }
 })
 
-import { whichOs, bootEntries } from './pc'
+import { whichOs, bootEntries, metrics, powerDiag } from './pc'
 
 const ep = (os: string, host: string, user: string, port = 22): OsEndpoint => ({
   os,
@@ -67,6 +77,8 @@ const ep = (os: string, host: string, user: string, port = 22): OsEndpoint => ({
 })
 const calls = (): Call[] => m.calls
 const unames = (): number => calls().filter((c) => c.cmd === 'uname -s').length
+/** Рабочие команды — всё, кроме проб входа и ОС. */
+const work = (): Call[] => calls().filter((c) => c.cmd !== 'uname -s' && c.cmd !== 'echo argus-ok')
 
 let n = 0
 const id = (): string => `dual-${++n}`
@@ -86,6 +98,7 @@ beforeEach(() => {
   m.upHosts = null
   m.users = { linux: 'linux-user', windows: 'windows-user' }
   m.uname = 'normal'
+  m.denied = 0
 })
 
 describe('whichOs: общий адрес, одна учётная запись', () => {
@@ -157,7 +170,7 @@ describe('whichOs: общий адрес, у ОС разные пользова�
     m.users = { ...users }
     const r = await bootEntries(id())
     expect(r.os).toBe(WIN)
-    const cmds = calls().filter((c) => c.cmd !== 'uname -s')
+    const cmds = work()
     expect(cmds.length).toBeGreaterThan(0)
     // Ни одна рабочая команда не ушла под Linux-пользователем, и это не efibootmgr.
     expect(cmds.every((c) => c.user === 'windows-user')).toBe(true)
@@ -174,7 +187,7 @@ describe('whichOs: общий адрес, у ОС разные пользова�
   it('bootEntries при загруженном Linux идёт под Linux-пользователем', async () => {
     m.endpoints = pair().reverse()
     await bootEntries(id())
-    const cmds = calls().filter((c) => c.cmd !== 'uname -s')
+    const cmds = work()
     expect(cmds.length).toBeGreaterThan(0)
     expect(cmds.every((c) => c.user === 'linux-user' && c.cmd.includes('efibootmgr'))).toBe(true)
   })
@@ -192,7 +205,7 @@ describe('whichOs: машина жива, ОС не определена (кон
     m.uname = 'timeout'
     const r = await bootEntries(id())
     expect(r.ok).toBe(false)
-    expect(calls().filter((c) => c.cmd !== 'uname -s')).toEqual([])
+    expect(work()).toEqual([])
   })
 })
 
@@ -243,3 +256,119 @@ describe('whichOs: прежнее поведение', () => {
   })
 })
 
+
+// Штрафы OpenSSH (PerSourcePenalties, 9.8+): каждый неудачный вход — 5 с штрафа адресу источника,
+// при 15 с sshd сбрасывает все его подключения. Вкладка «Метрики» опрашивает ПК раз в ~3 с, и вход
+// «под всеми учётками сразу» копил штраф быстрее, чем он сгорает (docs/audit/2026-10-14-n38-ssh-penalties.md).
+describe('общий адрес: неудачных входов нет в устойчивом состоянии (штрафы sshd)', () => {
+  // Свой адрес на тест: память «под кем вошли» живёт по host:port весь процесс.
+  let a = 0
+  const pairAt = (): OsEndpoint[] => {
+    const host = `10.38.0.${++a}`
+    return [ep(ARCH, host, 'linux-user'), ep(WIN, host, 'windows-user')]
+  }
+  const cycles = async (deviceId: string, k: number): Promise<string[]> => {
+    const out: string[] = []
+    for (let i = 0; i < k; i++) out.push((await metrics(deviceId)).family)
+    return out
+  }
+
+  it.each(['linux', 'windows'] as const)('загружена %s: 20 циклов «Метрик» — ноль неудачных входов', async (os) => {
+    m.endpoints = pairAt()
+    m.booted = os
+    const deviceId = id()
+    await metrics(deviceId) // первый опрос ещё не знает, с кого начать
+    m.denied = 0
+    expect(await cycles(deviceId, 20)).toEqual(Array(20).fill(os))
+    expect(m.denied).toBe(0)
+  })
+
+  it('перезагрузка в другую ОС стоит ровно одного неудачного входа', async () => {
+    const pair = pairAt()
+    m.endpoints = pair
+    const deviceId = id()
+    expect(await whichOs(deviceId)).toEqual({ current: ARCH, family: 'linux' })
+    m.booted = 'windows'
+    m.denied = 0
+    expect(await whichOs(deviceId)).toEqual({ current: WIN, family: 'windows' })
+    expect(m.denied).toBe(1)
+    expect(await cycles(deviceId, 20)).toEqual(Array(20).fill('windows'))
+    expect(m.denied).toBe(1)
+    m.booted = 'linux'
+    expect(await whichOs(deviceId)).toEqual({ current: ARCH, family: 'linux' })
+    expect(m.denied).toBe(2)
+  })
+
+  it('пускают обоих: после перезагрузки берётся метка запущенной ОС, а не запомненного эндпоинта', async () => {
+    m.endpoints = pairAt()
+    m.users = { linux: null, windows: null }
+    const deviceId = id()
+    expect(await whichOs(deviceId)).toEqual({ current: ARCH, family: 'linux' })
+    m.booted = 'windows'
+    expect(await polls(deviceId)).toEqual(Array(3).fill({ current: WIN, family: 'windows' }))
+    expect(m.denied).toBe(0)
+  })
+
+  it('ОС не определилась: unknown, а не off, и чужую учётку не перебираем', async () => {
+    m.endpoints = pairAt()
+    const deviceId = id()
+    await whichOs(deviceId)
+    m.denied = 0
+    m.uname = 'garbage'
+    expect(await polls(deviceId, 5)).toEqual(Array(5).fill({ current: '', family: 'unknown' }))
+    expect(m.denied).toBe(0)
+  })
+
+  it('ОС не определилась с первого опроса: unknown, дальше без неудачных входов', async () => {
+    m.endpoints = pairAt()
+    m.uname = 'timeout'
+    const deviceId = id()
+    expect(await polls(deviceId, 5)).toEqual(Array(5).fill({ current: '', family: 'unknown' }))
+    expect(m.denied).toBe(1) // только первый опрос, пока не знали, чья учётка входит
+  })
+
+  it('машина выключена: off, по адресу стучится только запомненный эндпоинт', async () => {
+    m.endpoints = pairAt()
+    const deviceId = id()
+    await whichOs(deviceId)
+    m.booted = null
+    m.calls = []
+    const r = await polls(deviceId)
+    expect(r.at(-1)).toEqual({ current: '', family: 'off' })
+    expect(calls().every((c) => c.user === 'linux-user')).toBe(true)
+    expect(calls()).toHaveLength(3)
+  })
+
+  describe('повторы питания и диагностики', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+    const diag = async (deviceId: string): Promise<string> => {
+      const p = powerDiag(deviceId)
+      await vi.runAllTimersAsync()
+      return (await p).text
+    }
+
+    it('три попытки на неопределённой ОС не дают трёх неудачных входов', async () => {
+      m.endpoints = pairAt()
+      m.uname = 'timeout'
+      expect(await diag(id())).toMatch(/не определена/)
+      expect(m.denied).toBe(1) // первая попытка без памяти; две следующие — только своя учётка
+    })
+
+    it('ОС ответила: диагностика идёт под её учёткой без чужих входов', async () => {
+      m.endpoints = pairAt()
+      m.booted = 'windows'
+      const deviceId = id()
+      await whichOs(deviceId)
+      m.denied = 0
+      m.calls = []
+      await diag(deviceId)
+      expect(m.denied).toBe(0)
+      expect(calls().every((c) => c.user === 'windows-user')).toBe(true)
+    })
+  })
+})

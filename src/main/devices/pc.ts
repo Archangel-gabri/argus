@@ -118,36 +118,89 @@ async function aliveSingle(ep: OsEndpoint): Promise<LiveEp | null> {
   return (await isConnAlive(ep.conn)) ? { ...ep, family: await resolveFamily(ep) } : null
 }
 
+/** Вошли под эндпоинтом; `fam` — что назвала машина (`null` — ответ не разобран). */
+interface Probe {
+  ep: OsEndpoint
+  fam: 'linux' | 'windows' | null
+}
+
+// До адреса не дошли вовсе. Отказ во входе сюда не относится: он значит, что машина ответила,
+// но не пустила ЭТОГО пользователя, — а другого пустить может.
+const ADDRESS_DOWN = /ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|handshake/i
+
+/** Войти своими учётными данными и спросить ОС. `'down'` — адрес не ответил, `'denied'` — не вошли. */
+async function knock(ep: OsEndpoint): Promise<Probe | 'denied' | 'down'> {
+  try {
+    const r = await execOnConn(ep.conn, 'echo argus-ok', 8000, 8000)
+    if (!(r.ok && r.output.includes('argus-ok'))) return ADDRESS_DOWN.test(r.error ?? '') ? 'down' : 'denied'
+    return { ep, fam: await probeFamily(ep.conn) }
+  } catch {
+    return 'denied' // эндпоинт, до которого не дошли по неизвестной причине, — не свидетель
+  }
+}
+
+const labelFam = (e: OsEndpoint): 'linux' | 'windows' | null => (e.os.trim() ? family(e.os) : null)
+
+/**
+ * Под кем на общем адресе вошли в прошлый раз: host:port → пользователь и метка эндпоинта.
+ *
+ * Каждая попытка войти под чужой ОС — неудачный вход, а OpenSSH с 9.8 штрафует за них адрес
+ * источника (`PerSourcePenalties`: 5 с за попытку, при 15 с сбрасывает ВСЕ подключения с адреса).
+ * Вкладка «Метрики» опрашивает ПК раз в ~3 с, и опрос «под всеми учётками сразу» копил штраф
+ * быстрее, чем он сгорает: через несколько циклов sshd переставал пускать и правильную ОС, и ПК
+ * показывался выключенным (docs/audit/2026-10-14-n38-ssh-penalties.md). Это не кэш ответа — ОС
+ * всё равно спрашивается у машины, запоминается только, с кого начать.
+ */
+const lastLogin = new Map<string, string>()
+const whoOf = (e: OsEndpoint): string => `${e.conn.user}\n${e.os}`
+
 /**
  * Эндпоинты с общим host:port — это одна сетевая карта двухзагрузочной машины, и по достижимости
  * их не различить. Пользователь у ОС может быть разный (на Windows и Linux обычно разные
  * учётные записи), поэтому группа складывается только по адресу, а ОС спрашивается у самой
- * машины: каждый эндпоинт пробует войти СВОИМИ учётными данными и назвать систему.
+ * машины: эндпоинт входит СВОИМИ учётными данными и называет систему.
+ *
+ * Сначала — эндпоинт, под которым вошли в прошлый раз (`lastLogin`); остальные пробуются, только
+ * если он не вошёл или его метка не сходится с ответом машины. В устойчивом состоянии неудачных
+ * входов нет, после перезагрузки в другую ОС — один.
  *
  * Вернётся тот эндпоинт, под которым вошли и чья метка совпала с ответом машины, — его `conn`
- * (пользователь) и годится для дальнейших команд. Кэша нет: после перезагрузки по этому же
- * адресу отвечает другая ОС.
+ * (пользователь) и годится для дальнейших команд. Ответ машины не кэшируется: после перезагрузки
+ * по этому же адресу отвечает другая ОС.
  */
 async function settleShared(group: OsEndpoint[]): Promise<LiveEp | UnknownLive | null> {
-  const probes = await Promise.all(
-    group.map(async (ep) => {
-      try {
-        if (!(await isConnAlive(ep.conn))) return null
-        return { ep, fam: await probeFamily(ep.conn) }
-      } catch {
-        return null // эндпоинт, до которого не дошли (чужой пользователь, отказ), — не свидетель
-      }
-    })
-  )
-  const reached = probes.filter((p) => p !== null)
+  const addr = addrOf(group[0])
+  const known = lastLogin.get(addr)
+  const prev = group.find((e) => whoOf(e) === known)
+  const results = new Map<OsEndpoint, Probe | 'denied' | 'down'>()
+  if (prev) {
+    const k = await knock(prev)
+    // Адрес молчит — остальным эндпоинтам того же адреса стучаться некуда.
+    if (k === 'down') return null
+    if (k !== 'denied') {
+      famCache.delete(addr)
+      // Вошли, ответ не разобран: тот же `uname` на той же машине под другой учёткой ничего не
+      // прояснит, а чужой ОС стоил бы неудачного входа.
+      if (!k.fam) return UNKNOWN
+      const lf = labelFam(prev)
+      const settled = lf === k.fam || (lf === null && !group.some((e) => e !== prev && labelFam(e) === k.fam))
+      if (settled) return { ...prev, family: k.fam }
+    }
+    results.set(prev, k)
+  }
+  const rest = group.filter((e) => e !== prev)
+  ;(await Promise.all(rest.map(knock))).forEach((k, i) => results.set(rest[i], k))
+
+  // Порядок группы, а не порядок опроса: при равных кандидатах решает список эндпоинтов, как раньше.
+  const reached = group.map((e) => results.get(e)).filter((p): p is Probe => typeof p === 'object')
   if (!reached.length) return null
-  famCache.delete(addrOf(group[0])) // догадка по умолчанию для этого адреса больше не нужна
+  famCache.delete(addr) // догадка по умолчанию для этого адреса больше не нужна
   const measured = reached.filter((p) => p.fam !== null)
-  // Вошли, но ответ не разобран: машина жива, ОС неизвестна. Метку первого эндпоинта не берём.
-  if (!measured.length) return UNKNOWN
-  const labelFam = (e: OsEndpoint): 'linux' | 'windows' | null => (e.os.trim() ? family(e.os) : null)
   const pick =
     measured.find((p) => labelFam(p.ep) === p.fam) ?? measured.find((p) => labelFam(p.ep) === null)
+  lastLogin.set(addr, whoOf((pick ?? measured[0] ?? reached[0]).ep))
+  // Вошли, но ответ не разобран: машина жива, ОС неизвестна. Метку первого эндпоинта не берём.
+  if (!measured.length) return UNKNOWN
   if (pick?.fam) return { ...pick.ep, family: pick.fam }
   // Метки ни одной нужной ОС нет: измеренное семейство и рабочее подключение, чужая метка не приписывается.
   const first = measured[0]
@@ -590,7 +643,11 @@ const isDropped = (err: string | undefined): boolean =>
  *
  *  Замерено на живом стенде: канал до дальней ноды флапает примерно в одном случае из шести, и
  *  ОДНА неудачная проверка молча превращала команду питания в отказ «не в сети» — при полностью
- *  живом сервере. Команда просто не выполнялась, а пользователь видел враньё. */
+ *  живом сервере. Команда просто не выполнялась, а пользователь видел враньё.
+ *
+ *  На общем адресе двухзагрузочного ПК повторы не перебирают чужую ОС: каждая попытка начинает с
+ *  эндпоинта, под которым вошли в прошлый раз (`settleShared`), и при живой ОС с неразобранным
+ *  ответом остальных не трогает — три попытки не дают трёх неудачных входов подряд (= 15 с штрафа sshd). */
 async function liveEndpointRetry(deviceId: string, attempts = 3): Promise<Live> {
   let last: Live = null
   for (let i = 0; i < attempts; i++) {
