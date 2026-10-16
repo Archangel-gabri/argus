@@ -76,3 +76,5 @@ npm run dev
 ## License
 
 [MIT](LICENSE)
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
