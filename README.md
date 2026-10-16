@@ -1,257 +1,78 @@
+**[Русская версия →](README.ru.md)**
+
 # Argus
 
-Личный командный центр для своих машин, денег, подписок и ИИ-доступов. Один десктоп на Electron,
-всё локально, ничего в облаке.
+Argus is a local-first desktop command center for people who run their own servers and want
+subscriptions, balances, and AI-provider quotas in one place.
 
-Версия 0.1.0 · один пользователь · **в активной разработке** (последний коммит кода — 10.08.2026) ·
-релизная сборка сейчас закреплена за AppImage для Linux x86_64.
+![Argus fleet view with three demo devices](assets/readme/fleet.png)
 
-> Каталог проекта называется `Nexus-One` — историческое имя. Приложение, пакет (`package.json`
-> → `"name": "argus"`), файл хранилища и AppImage называются **Argus**. Переименование было
-> 11.07.2026; каталог не трогали, чтобы не рвать пути в воркспейсе.
+<p align="center">
+  <img src="assets/readme/finance.png" alt="Argus finance view with demo balances and allocation chart" width="49%">
+  <img src="assets/readme/subscriptions.png" alt="Argus subscriptions view with demo renewals and monthly costs" width="49%">
+</p>
 
----
+<p align="center"><sub>Captured from the Electron app with an isolated demo vault. No personal data.</sub></p>
 
-## Зачем оно
+**Stack:** Electron · React 19 · TypeScript · Tailwind CSS 4 · SQLCipher · Argon2id · Go
 
-У человека, который держит свои серверы, копятся разрозненные вещи: SSH-доступы в конфиге,
-подписки в письмах, остатки в приложениях банков, ключи ИИ в переменных окружения. Каждая по
-отдельности живёт нормально, а вместе не отвечает на простые вопросы: сколько уходит в месяц,
-какая нода не отвечает прямо сейчас, где лежит ключ от этой биржи, за что списали вчера.
+**Tests:** 1,330 unit/DOM tests in 103 files · 17 Playwright/Electron E2E checks
 
-Argus не заменяет ни банк, ни Termius, ни панель хостера. Он собирает **обзор и частые действия**
-в одно окно — и, в отличие от дашборда, умеет нажимать кнопки: подключиться, перезагрузить,
-разбудить, скопировать ключ.
+## What it does
 
-Три вещи, которые определяют всё остальное:
+- Keeps a fleet inventory with reachability, hardware metrics, open ports, and cost history.
+- Opens SSH terminals, transfers files over SFTP, forwards ports, sends Wake-on-LAN, and handles
+  power or dual-boot actions.
+- Streams a remote screen through a separate Go agent, with an RDP fallback for Windows.
+- Tracks manually entered balances and optional read-only integrations for exchanges, investments,
+  and public blockchain addresses.
+- Tracks subscription prices and renewal dates, and links infrastructure costs to devices so the
+  same expense is not counted twice.
+- Organizes AI accounts, plans, key locations, local tool usage, and quotas exposed by providers.
 
-- **Один пользователь и его собственный парк.** Не управление чужой инфраструктурой как услуга.
-- **Local-first.** Данные лежат в зашифрованном файле на этой машине. Никакого своего облака.
-- **Заполняет человек.** Внутри нет никаких LLM: приложение не додумывает данные за владельца.
+## How it works
 
-## Что умеет
-
-Пять экранов: **Парк**, **Финансы**, **Подписки**, **ИИ**, **Настройки** (+ экран машины в
-отдельном окне).
-
-**Парк и SSH.** Устройства заводятся руками или импортом `~/.ssh/config`, находятся через
-Tailscale. Терминал (xterm.js), передача файлов по SFTP, проброс портов, прыжок через бастион,
-закрепление ключа хоста при первом подключении (TOFU). Метрики с историей, список открытых портов,
-инвентарь железа. Питание, Wake-on-LAN и выбор системы у машин с двумя ОС (`bcdedit /enum firmware`
-/ `efibootmgr`).
-
-**Экран машины.** Отдельное окно (`src/renderer/screen.html`). Основной путь — свой агент на Go
-(`agent/`), который ставится на целевую машину по SSH; H.264 через WebSocket, декодирование
-WebCodecs. Для Windows есть запасной путь через RDP → guacd. Подробности протокола — в
-[`agent/README.md`](agent/README.md).
-
-**Финансы.** Счета и остатки вносятся руками. Биржи с ключом «только чтение» отдают остаток сами,
-Т-Инвестиции — по токену, адреса в блокчейне читаются через публичные узлы. У Т-Банка — вход в
-кабинет внутри приложения; выписки оттуда не парсятся, это решение принято осознанно.
-
-**Подписки.** Суммы, валюты, периоды, даты продления, признак «плачу руками». Платёж за сервер
-связывается с самим сервером, чтобы одна трата не считалась дважды. Автоматического поиска
-подписок по почте нет.
-
-**ИИ-доступы.** Реестр аккаунтов, каналов и ключей: где что лежит, что чем оплачено, чем
-заменить. Расход считается по локальным журналам инструментов (Claude Code, Codex); цены —
-из вшитого каталога `resources/ai/model-prices.json`. Квоты берутся у тех провайдеров, которые
-их отдают (Anthropic, Cursor, OpenRouter, Firecrawl, Tavily).
-
-## Чего он не делает намеренно
-
-- Не хранит ничего в облаке и не синхронизируется между устройствами.
-- Не содержит LLM и не заполняет поля за человека.
-- Не парсит банковские выписки и не притворяется бухгалтерией.
-- Не управляет чужими серверами и не работает как многопользовательский сервис.
-- **Не шлёт уведомлений и не показывает полос тревог** — решение владельца от 06.08.2026. Канал до
-  дальних нод флапает, и уведомление, которое чаще неверно, приучает не смотреть на уведомления
-  вообще. Оценка тревог в коде осталась (`src/main/watchdog.ts`, `alerts.ts`), подача снята:
-  состояние живёт на карточке машины, в метриках, в строке подписки.
-
-## Как это устроено
-
-```
-src/main/       процесс с полномочиями: хранилище, SSH, сеть, IPC. Только здесь есть секреты.
-src/preload/    мост между процессами. Через него не проходит ни один секрет.
-src/renderer/   интерфейс: React 19, Tailwind v4, Zustand, Recharts. Два входа: index.html
-                (основное окно) и screen.html (окно трансляции экрана).
-src/shared/     то, что нужно обеим сторонам: деньги, даты, опознание компаний, сроки (deadline.ts).
-agent/          агент трансляции экрана на Go (без cgo), ставится на целевую машину.
-resources/      собранные бинари агента, каталог цен на модели, корень УЦ для Т-Инвестиций.
-tools/          инструменты разработки: осмотр интерфейса, доступность, замер времени, логотипы.
-docs/           решения, планы и разборы. Архивные помечены прямо в заголовке.
-e2e/            проверки на собранном приложении (Playwright + Electron).
+```text
+React renderer
+      │ typed preload API
+      ▼
+Electron main process ─── SSH / provider APIs / Go screen agent
+      │
+      ▼
+Argon2id-derived key ─── SQLCipher vault
 ```
 
-Внутри `src/main/` — оболочка приложения в корне и восемь предметных папок. В корне лежит только
-то, что не относится ни к одной теме и живёт ровно в одном экземпляре:
+Secrets stay in the Electron main process; the renderer receives status and data-transfer objects,
+not stored secret values. App windows use context isolation and sandboxing with Node integration
+disabled. Argus has no built-in LLM and no application cloud.
 
-```
-src/main/
-├── index.ts        точка входа: CSP, пиннинг сертификата агента, watchdog
-├── ipc.ts          единственная граница с renderer — все handle/send объявлены здесь
-├── windows.ts      ЕДИНСТВЕННОЕ место с hardened webPreferences
-├── watchdog.ts     присмотр за живостью процессов
-├── navigation.ts   что окну разрешено открывать
-├── types.ts        типы, общие для main
-│
-├── vault/          SQLCipher, Argon2id, миграции хранилища, файлы засева
-├── ai/             доступы к ИИ: модели, цены, квоты, расход, привязка к подпискам
-├── finance/        счета, биржи, банки, ончейн, курсы
-├── devices/        машины парка: метрики, живость, питание, обнаружение, утилизация
-├── remote/         как до них дотянуться: SSH, SFTP, туннели, сеанс, приватность IP
-├── screen/         трансляция экрана и её агент
-├── security/       блокировка приложения и чтение секретов браузера
-└── support/        мелкая инфраструктура: повторы, склейка одинаковых запросов, оповещения
-```
+## Run it
 
-Тесты лежат рядом с модулем, который проверяют, а не в отдельном дереве: `vault/vault.test.ts`
-рядом с `vault/vault.ts`. Файл вида `*.vault.test.ts` требует нативного SQLCipher и запускается
-отдельной командой (`npm run test:vault`), `*.net.test.ts` — с сетью, `*.live.test.ts` — по живым
-доступам.
-
-Все окна создаются в одном месте — `src/main/windows.ts` (единственное место с hardened
-`webPreferences`: contextIsolation, sandbox, без nodeIntegration).
-
-**Где данные.** Зашифрованная база SQLCipher `argus-vault.db` + файл метаданных в каталоге данных
-Electron (`app.getPath('userData')`, на Linux — `~/.config/argus/`), **не в репозитории**. Ключ
-выводится из мастер-пароля через Argon2id: **восстановления нет**. Секреты живут исключительно в
-процессе с полномочиями — интерфейс получает признаки «ключ заведён», но не сам ключ. Старое имя
-файла `nexus-vault.db` мигрируется автоматически.
-
-**Файлы засева.** `fleet.local.json`, `finance.local.json`, `subs.local.json`, `ai.local.json` —
-gitignored, значений ключей в них нет (только имена переменных окружения). Ищутся в
-`userData` → каталоге приложения → рабочем каталоге (`src/main/seed-file.ts`), применяются один
-раз на запись.
-
-## Сборка и запуск
-
-Нужны Node.js с npm. Для `npm run dist` дополнительно нужны Bash и Go toolchain: команда
-кросс-компилирует пять агентов, а сам релизный AppImage намеренно собирает для Linux x86_64.
+Requires Node.js 26 and npm 11.16 or newer.
 
 ```bash
-npm ci               # Node 26 + npm >=11.16; unreviewed install scripts fail closed
-npm run rebuild      # пересобрать native-модули под ABI встроенного Electron
-npm run dev          # запустить в разработке (electron-vite dev)
-npm run build        # сборка трёх бандлов в out/
-npm run check        # typecheck + lint + тесты + тесты агента + сборка
-npm run dist         # сам делает rebuild, собирает AppImage и проверяет native ABI артефакта
+git clone https://github.com/Archangel-gabri/argus.git
+cd argus
+npm ci
+npm run rebuild
+npm run dev
 ```
 
-Отдельные проверки:
+`npm run dist` builds the Linux x86_64 AppImage and also requires Bash and Go. See the dated
+[development status and verification notes](docs/STATUS.md) for the full test matrix.
 
-```bash
-npm test             # 994 теста в 87 файлах, ~4.5 с (прогон 10.08.2026): unit (node) + dom (jsdom)
-npm run lint         # eslint по src/main, src/preload, src/shared — держится на нуле замечаний
-npm run typecheck    # tsc по node- и web-проектам
-npm run test:vault   # SQLCipher на настоящем файле, ПОД ABI Electron (см. грабли)
-npm run test:net     # интеграция с настоящим sshd в Docker
-npm run test:agent   # агент: gofmt -l, go vet, go test -race (нужен Go)
-npm run test:e2e     # 17 проверок на собранном приложении; global-setup собирает его сам
-npm run test:live    # живой парк и внешние API, только по явному запуску (ARGUS_LIVE=1)
-npm run check:full   # check + Electron rebuild + vault + net + e2e
-```
+## Limits
 
-Инструменты ревью (каждый поднимает собранное приложение — сначала `npm run build`):
+- Argus is a single-user application with no cloud sync or multi-user server.
+- There is no master-password recovery. Losing it means losing access to the vault.
+- It does not discover subscriptions from email or parse bank statements; data is entered manually
+  or comes from an explicitly configured integration.
+- Remote screen and control depend on the target OS and its capture permissions. The RDP fallback
+  requires `guacd`.
+- Release packaging currently targets a Linux x86_64 AppImage. There are no Windows or macOS
+  packages and no auto-update channel.
+- Version 0.1.0 is under active development.
 
-```bash
-npm run ui:lab             # сам делает build: снимки экранов, обрезанный текст, контраст, мелкие кнопки
-node tools/user-walk.mjs   # проход интерфейса КЛИКАМИ, как человек (e2e ходит через мост и это пропускает)
-node tools/a11y-lab.mjs    # axe-core (движок лежит локально в tools/vendor/, в зависимости не добавлен)
-node tools/timing-lab.mjs  # сколько миллисекунд ждёт человек при открытии каждого экрана
-```
+## License
 
-Служебное: `npm run agent:build` (бинари агента под 5 платформ), `npm run ai:prices` (пересобрать
-каталог цен), `npm run brand:logos` (пересобрать монохромные логотипы), `npm run rebuild`
-(electron-rebuild нативных модулей под ABI версии Electron из lockfile). После чистого `npm ci`
-обычный `npm run check` намеренно не трогает SQLCipher; релизным доказательством служат
-`npm run check:full` и `npm run dist`, которые rebuild выполняют сами.
-
-Установить собранный образ себе:
-
-```bash
-npm run dist
-cp dist/Argus-0.1.0.AppImage ~/Applications/.Argus.new
-chmod +x ~/Applications/.Argus.new
-mv -f ~/Applications/.Argus.new ~/Applications/Argus.AppImage
-```
-
-Переименование атомарно, поэтому запущенная копия доживёт до перезапуска.
-Если в системе нет `libfuse.so.2` (Arch без пакета `fuse2`), тот же образ запускается
-через встроенную распаковку: `APPIMAGE_EXTRACT_AND_RUN=1 ~/Applications/Argus.AppImage`.
-
-## Состояние (на 10.08.2026)
-
-Проект живой: за 05–07.08.2026 — 76 коммитов, `npm test` зелёный (994/994).
-
-| Область | Состояние |
-|---|---|
-| Парк, SSH, терминал, файлы, порты | работает |
-| Метрики и история, питание, WoL, две ОС | работает |
-| Экран машины через своего агента | работает; агент ставится на целевую машину по SSH |
-| Экран Windows через RDP | работает, но требует Docker с guacd рядом с приложением |
-| Финансы: счета, биржи, блокчейн, Т-Инвестиции | работает |
-| Т-Банк | только вход в кабинет; выписки не парсятся |
-| Подписки, связь платежа с сервером | работает |
-| ИИ-доступы, расход по локальным логам, квоты | работает |
-| Каталог моделей ИИ | только чтение: модель нельзя завести или удалить руками |
-| Связи «объект ↔ объект» | есть в хранилище, интерфейса к ним нет |
-| Создание SSH-ключей внутри приложения | не сделано (импорт и использование работают) |
-| Recovery Kit, экспорт/импорт хранилища | не сделано |
-| Сборки для macOS и Windows | не собираются — в `electron-builder.yml` только Linux AppImage |
-| Автообновление | нет |
-
-## Ограничения и грабли
-
-Всё ниже уже стоило кому-то времени. Подробные разборы — в [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md).
-
-- **Мастер-пароль не восстанавливается.** Забыл — данных нет. Об этом спрашивают подтверждение при
-  первом запуске, и это не формальность.
-- **AppImage не подхватывает правки.** Пока не пересобрал и не переустановил образ — владелец
-  смотрит на старую сборку и правки «не видны».
-- **После правки любого `*.local.json` копируй его в `~/.config/argus/`** (права 600). В AppImage
-  эти файлы не входят (в сборку кладутся только `out/**` и `package.json`), поэтому установленная
-  копия видит только то, что лежит в каталоге данных.
-- **`npm run test:vault` нельзя гонять обычным node.** После `npm run rebuild` нативный SQLCipher
-  собран под ABI Electron
-  и падает с `ERR_DLOPEN_FAILED` — поэтому у него отдельная команда с
-  `ELECTRON_RUN_AS_NODE=1 electron … vitest.mjs`. Это не неудобство конфига, а невозможность.
-- **`npm install`: vite пришпилен к `^7`.** electron-vite@5 не берёт vite 8, а
-  `@vitejs/plugin-react@6` его тянет. Обновлять эту пару только вместе.
-- **Живость проверяется по SSH-баннеру, а не по факту TCP-коннекта.** На машине владельца поднят
-  VPN в режиме fake-ip TUN: коннект «успешно» устанавливается к любому адресу, и выключенный сервер
-  показывался онлайн. Бюджет 8 с (замер на живом парке 06.08.2026).
-- **«Не знаю» ≠ «выключено».** Одна неудача опроса ничего не значит; выключенной машина считается
-  с трёх молчаний подряд. Сравнений с `'off'` в коде быть не должно — только `osReachable()`.
-- **Экран блокировки и экран приветствия транслировать нельзя** — проверено, вопрос закрыт
-  (NVIDIA не отдаёт плоскости через DRM; на Windows экран блокировки на защищённом рабочем столе).
-  Запертый сеанс KDE при этом снимается по SSH без пароля (`src/main/session.ts`).
-- **macOS-агент: просмотр без управления** — инъекция ввода через CGEvent требует cgo, а агент
-  собирается без него.
-- **Расход ИИ по локальным логам — это расход ОДНОЙ машины,** то есть нижняя оценка расхода
-  аккаунта. Для подписки токены вообще не равны деньгам: цифра подписана «эквивалент по ценам API».
-- **Удалённые операции ходят через `src/shared/deadline.ts`.** Если канал «почернел» (соединение
-  живо, данные не идут), обратный вызов не придёт никогда. Срок сначала атомарно забирает право
-  завершить, потом отменяет источник — иначе поздний ответ заведёт сессию, которой никто не владеет,
-  или опубликует обрубок под именем настоящего файла. Новый удалённый вызов заводить через эти ворота.
-- **Не мешать React и ручной DOM в одном узле** — `replaceChildren()` на контейнере, куда React
-  рендерит детей, роняет всё дерево в чёрное окно. Canvas монтируется только в лист-узел.
-
-## Куда смотреть дальше
-
-- [`docs/ENGINEERING-NOTES.md`](docs/ENGINEERING-NOTES.md) — полная история решений, замеров и подводных камней (главный документ).
-- [`docs/UX-MAP-2026-08.md`](docs/UX-MAP-2026-08.md) — карта интерфейса по факту кода: кто приходит
-  на экран, что вводит, что видит дальше, что может пойти не так.
-- [`DESIGN.md`](DESIGN.md) — визуальный контракт (палитра Graphite & Ember).
-- [`docs/MASTER-PLAN.md`](docs/MASTER-PLAN.md) — утверждённая архитектура и честные пределы интеграций.
-- [`docs/OS-MATRIX.md`](docs/OS-MATRIX.md) — что поддержано на Linux / Windows / macOS / FreeBSD.
-- [`docs/audit/`](docs/audit/) · [`docs/research/`](docs/research/) · [`docs/testing/`](docs/testing/) —
-  реестр находок аудита, технические разборы, тестовая стратегия.
-- [`agent/README.md`](agent/README.md) — протокол агента трансляции и его честные пробелы.
-
-## Безопасность
-
-- Не коммитить `node_modules/`, `out/`, `dist/`, любые `*.db`/`*.sqlite` и `*.local.json`.
-- Хранилище живёт в Electron `userData`, а не в этой папке.
-- Значения секретов не попадают ни в логи, ни в коммиты, ни в чат.
+[MIT](LICENSE)
