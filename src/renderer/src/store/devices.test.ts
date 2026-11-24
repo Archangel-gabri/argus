@@ -48,6 +48,62 @@ async function deviceWorld() {
   return { api, confirm, lifetime, ...module }
 }
 
+describe('freshness of device reachability', () => {
+  it('shows an inconclusive direct check immediately and keeps the last successful contact', async () => {
+    const { api, useDevices } = await deviceWorld()
+    const poll = useDevices.getState().refreshLiveness
+    api.devices.liveness
+      .mockResolvedValueOnce({ synthetic: { status: 'online' } })
+      .mockResolvedValueOnce({ synthetic: { status: 'unknown' } })
+      .mockResolvedValueOnce({ synthetic: { status: 'online' } })
+    const clock = vi.spyOn(Date, 'now')
+    try {
+      clock.mockReturnValue(1000)
+      await poll()
+      expect(useDevices.getState().devices[0]).toMatchObject({ status: 'online', lastReachableAt: 1000 })
+      clock.mockReturnValue(2000)
+      await poll()
+      expect(useDevices.getState().devices[0]).toMatchObject({ status: 'unknown', lastReachableAt: 1000, ram: device.ram })
+      clock.mockReturnValue(3000)
+      await poll()
+      expect(useDevices.getState().devices[0]).toMatchObject({ status: 'online', lastReachableAt: 3000 })
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('preserves actual SSH evidence when the quick probe skips a jump host', async () => {
+    const { api, useDevices } = await deviceWorld()
+    useDevices.setState({ devices: [{ ...device, jumpId: 'bastion' }] })
+    useDevices.getState().updateMetrics(device.id, { status: 'online', cpu: 8 })
+    const confirmed = useDevices.getState().devices[0]
+    api.devices.liveness.mockResolvedValue({ synthetic: { status: 'unknown', skipped: 'jump' } })
+    await useDevices.getState().refreshLiveness()
+    expect(useDevices.getState().devices[0]).toEqual(confirmed)
+    expect(confirmed.lastReachableAt).toBeGreaterThan(0)
+  })
+
+  it('removes a cached online label for a legacy device with no endpoint or current evidence', async () => {
+    const { api, useDevices } = await deviceWorld()
+    useDevices.setState({ devices: [{ ...device, ip: '', hasSecret: false }] })
+    api.devices.liveness.mockResolvedValue({ synthetic: { status: 'unknown' } })
+    await useDevices.getState().refreshLiveness()
+    expect(useDevices.getState().devices[0].status).toBe('unknown')
+    expect(useDevices.getState().devices[0].lastReachableAt).toBeUndefined()
+  })
+
+  it('discards an older successful poll if a newer poll already reported loss', async () => {
+    const { api, useDevices } = await deviceWorld()
+    const older = deferred<unknown>()
+    api.devices.liveness.mockReturnValueOnce(older.promise).mockResolvedValueOnce({ synthetic: { status: 'unknown' } })
+    const first = useDevices.getState().refreshLiveness()
+    await useDevices.getState().refreshLiveness()
+    older.resolve({ synthetic: { status: 'online' } })
+    await first
+    expect(useDevices.getState().devices[0].status).toBe('unknown')
+  })
+})
+
 describe('device requests cannot outlive the renderer session', () => {
   it.each(['create', 'update', 'remove'] as const)('ignores an old %s result instead of modifying a new session', async (operation) => {
     const { api, lifetime, useDevices } = await deviceWorld()

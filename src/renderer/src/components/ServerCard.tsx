@@ -148,6 +148,7 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
   }, [menu])
 
   const st = STATUS[s.status]
+  const lastContact = s.lastReachableAt ?? s.lastSeen
   const ramPct = s.ram.total ? (s.ram.used / s.ram.total) * 100 : 0
   // live bars stay lit for online + degraded; muted for down/unknown/maintenance/reboot
   const dim = s.status !== 'online' && s.status !== 'degraded'
@@ -260,6 +261,15 @@ export function ServerCard({ s }: { s: DeviceDTO }): React.JSX.Element {
           )}
         </div>
       </div>
+
+      {ssh && lastContact != null && (
+        <div className="mt-2 text-[10px] text-slate-400">
+          Последняя связь{' '}
+          <time dateTime={new Date(lastContact).toISOString()}>
+            {new Date(lastContact).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'medium' })}
+          </time>
+        </div>
+      )}
 
       {ssh ? (
         <>

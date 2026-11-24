@@ -48,7 +48,7 @@ export interface ArgusApi {
   devices: {
     list: () => Promise<DeviceDTO[]>
     /** Быстрая SSH-живость; unknown = из этой точки измерить нельзя. */
-    liveness: () => Promise<Record<string, { status: 'online' | 'offline' | 'unknown'; ms: number }>>
+    liveness: () => Promise<Record<string, { status: 'online' | 'offline' | 'unknown'; ms: number; skipped?: 'jump' }>>
     /** Диалог выбора своей картинки устройства → data-URL. */
     pickIcon: () => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
     create: (input: DeviceInput) => Promise<DeviceResult>

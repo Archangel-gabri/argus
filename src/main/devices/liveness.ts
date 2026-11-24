@@ -43,6 +43,7 @@ function verdictFor(code?: string): Reachability {
 export interface Reach {
   status: Reachability
   ms: number
+  skipped?: 'jump'
 }
 
 /**
@@ -126,7 +127,7 @@ export async function deviceReach(deviceId: string, timeoutMs = REACH_BUDGET_MS)
   // Хост за бастионом напрямую недостижим по определению: прямая TCP-проба всегда промахнётся
   // и пометила бы устройство мёртвым. Такие проверяем только полным опросом, который умеет
   // ходить туннелем, — а здесь честно говорим «не знаю», не роняя статус.
-  if (conns.some((c) => c.jump)) return { status: 'unknown', ms: 0 }
+  if (conns.some((c) => c.jump)) return { status: 'unknown', ms: 0, skipped: 'jump' }
   const results = await Promise.all(
     // Отказ пробы одного эндпоинта не должен ронять вердикт по устройству целиком.
     conns.map((c) =>
@@ -198,7 +199,7 @@ export async function fleetReach(timeoutMs = REACH_BUDGET_MS): Promise<Record<st
   const pairs = await Promise.all(
     // И то же на уровне парка: сломанная запись портит вердикт только о себе. Раньше её
     // исключение всплывало в обработчик IPC, где ловить было уже некому.
-    devices.map(async (d) => {
+    devices.map(async (d): Promise<readonly [string, Reach]> => {
       try {
         return [d.id, await deviceReach(d.id, timeoutMs)] as const
       } catch {

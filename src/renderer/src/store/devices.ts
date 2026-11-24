@@ -13,6 +13,10 @@ type PcMetrics = Awaited<ReturnType<NonNullable<typeof api>['pc']['metrics']>>
 /** Идёт ли полный опрос прямо сейчас — чтобы проходы не накладывались друг на друга. */
 let metricsInFlight = false
 
+// Автоопрос и ручное обновление могут завершиться в обратном порядке.
+let nextReachRequest = 0
+let lastAppliedReachRequest = 0
+
 /** Подряд идущие промахи быстрой проверки живости, по устройствам (гасим флаппинг). */
 const missStreak = new Map<string, number>()
 
@@ -66,6 +70,7 @@ function withPcMetrics(x: DeviceDTO, r: PcMetrics, runningOs: string | null): De
   return {
     ...x,
     status: r.status,
+    lastReachableAt: r.status === 'online' || measured ? Date.now() : x.lastReachableAt,
     runningOs,
     cpu: r.cpu ?? x.cpu,
     ram: { used: r.ramUsed ?? x.ram.used, total: r.ramTotal ?? x.ram.total },
@@ -136,10 +141,11 @@ export const useDevices = create<DevicesStore>((set, get) => ({
               swapTotal: p.swapTotal,
               tempCpu: p.tempCpu,
               lastSeen: p.lastSeen,
+              lastReachableAt: p.lastReachableAt,
               metricsKnown: p.metricsKnown,
               metricsFresh: p.metricsFresh
             }
-          : d
+          : { ...d, status: d.status === 'online' ? 'unknown' : d.status }
       }),
       loaded: true
     })
@@ -253,6 +259,8 @@ export const useDevices = create<DevicesStore>((set, get) => ({
               cpu: m.cpu ?? d.cpu,
               ram: { used: m.ramUsed ?? d.ram.used, total: m.ramTotal ?? d.ram.total },
               status: m.status ?? d.status,
+              lastReachableAt: m.status === 'online' || m.cpu != null || m.ramTotal != null || m.ramUsed != null
+                ? Date.now() : d.lastReachableAt,
               disk: m.disk ?? d.disk,
               uptime: m.uptime ?? d.uptime,
               load1: m.load1 ?? d.load1,
@@ -283,23 +291,30 @@ export const useDevices = create<DevicesStore>((set, get) => ({
   refreshLiveness: async () => {
     const ticket = captureSession()
     if (!api || ticket === null) return
+    const request = ++nextReachRequest
+    const startedAt = Date.now()
     const reach = await api.devices.liveness().catch((error: unknown) => {
       if (!isSessionCurrent(ticket)) return null
       throw error
     })
-    if (!isSessionCurrent(ticket) || !reach) return
+    if (!isSessionCurrent(ticket) || !reach || request < lastAppliedReachRequest) return
+    lastAppliedReachRequest = request
+    const checkedAt = Date.now()
     set({
       devices: get().devices.map((d) => {
         const r = reach[d.id]
-        if (!r) return d
-        // «unknown» от быстрой проверки — это «мерить было нечем», а не промах. Так отвечают
-        // устройства за бастионом: прямая TCP-проба к ним недостижима по определению. Считать
-        // это неудачей значило бы ронять статус, ДОКАЗАННЫЙ полным опросом, до «не знаю».
-        if (r.status === 'unknown') return d
+        // Для узла за бастионом замера по прямому каналу нет. Статус задаёт полный SSH-опрос.
+        if (!r || r.skipped === 'jump') return d
+        if (r.status === 'unknown' && ['maintenance', 'reboot', 'degraded'].includes(d.status)) return d
+        if (r.status !== 'online' && (d.lastReachableAt ?? 0) > startedAt) return d
         const next = nextReachability(missStreak.get(d.id) ?? 0, r.status)
         if (next.misses) missStreak.set(d.id, next.misses)
         else missStreak.delete(d.id)
-        return { ...d, status: next.status }
+        return {
+          ...d,
+          status: next.status,
+          lastReachableAt: r.status === 'online' ? checkedAt : d.lastReachableAt
+        }
       })
     })
   },
